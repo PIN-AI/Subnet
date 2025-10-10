@@ -1,0 +1,199 @@
+# Runtime configuration
+# WARNING: This configuration uses real implementations.
+# For production use, ensure all security settings are properly configured.
+
+subnet_id: "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+# Timeout configurations (new unified config)
+timeouts:
+  # Consensus timeouts
+  propose_timeout: 5s
+  collect_timeout: 10s
+  finalize_timeout: 2s
+  checkpoint_interval: 30s
+
+  # Authentication and caching
+  auth_cache_ttl: 5m
+  auth_cache_cleanup: 10m
+
+  # Task management
+  task_response_timeout: 30s
+  task_send_timeout: 5s
+  task_cleanup_interval: 1h
+  task_reassign_min_time: 30s
+  rootlayer_submit_timeout: 5s
+
+  # Network and retry
+  nats_reconnect_wait: 2s
+  window_check_interval: 1s
+  retry_interval: 5s
+
+  # SDK specific
+  sdk_task_timeout: 30s
+  sdk_stream_retry_interval: 5s
+  sdk_submit_bid_timeout: 5s
+  sdk_client_timeout: 5s
+
+  # Health and monitoring
+  health_check_interval: 30s
+  metrics_interval: 30s
+
+  # Mock and testing
+  intent_generate_interval: 15s
+  status_report_interval: 30s
+
+# Network configuration (new unified config)
+network:
+  nats_url: "nats://127.0.0.1:4222"
+  validator_grpc_port: ":9090"
+  matcher_grpc_port: ":8090"
+  metrics_port: ":9095"
+  matcher_default_addr: "localhost:8090"
+  validator_default_addr: "localhost:9090"
+  rootlayer_default_addr: "localhost:9090"
+
+# Identity configuration (new unified config)
+identity:
+  subnet_id: "0x1111111111111111111111111111111111111111111111111111111111111111"
+  validator_id: "validator-1"
+  matcher_id: "matcher-1"
+  agent_id: "agent-1"
+
+# Limits configuration (new unified config)
+limits:
+  max_bids_per_intent: 100
+  bidding_window_sec: 10
+  max_retries: 3
+  max_concurrent_tasks: 100
+  duplicate_check_window: 1s
+
+validator_set:
+  min_validators: 4
+  threshold_num: 3
+  threshold_denom: 4
+  validators:
+    - id: "v1"
+      endpoint: "127.0.0.1:7001"
+    - id: "v2"
+      endpoint: "127.0.0.1:7002"
+    - id: "v3"
+      endpoint: "127.0.0.1:7003"
+    - id: "v4"
+      endpoint: "127.0.0.1:7004"
+
+consensus:
+  propose_timeout_ms: 1500
+  collect_timeout_ms: 2000
+  challenge_window_ms: 300000
+
+storage:
+  leveldb_path: "./data/validator.db"
+
+rpc:
+  listen_addr: "0.0.0.0:8080"
+  auth:
+    enabled: false
+    # Static bearer tokens for agent services (MVP only). Use mTLS/JWT in production.
+    bearer_tokens: []
+
+metrics:
+  enabled: true
+  listen_addr: "0.0.0.0:9090"
+
+# Agent configuration
+agent:
+  # Executor configuration
+  executor:
+    type: "script"  # Use real script executor instead of dummy
+    config:
+      work_dir: "/tmp/subnet-executor"
+      scripts_dir: "./scripts"
+      enable_sandbox: true
+      max_cpu_ms: 60000
+      max_memory_mb: 512
+      max_disk_mb: 100
+      max_network_bytes: 10485760
+
+  # Matcher configuration
+  matcher:
+    id: "matcher-1"  # Unique matcher ID
+    strategy: "weighted"  # Use real weighted strategy
+    config:
+      price_weight: 0.4
+      reputation_weight: 0.3
+      capability_weight: 0.2
+      latency_weight: 0.1
+      min_score: 0.5
+      max_assignments: 1
+      default_lease_seconds: 300
+
+    # Signer configuration
+    signer:
+      type: "ecdsa"  # Use real ECDSA signer
+      # NOTE: In production, use secure key management (HSM, KMS, etc.)
+      # This is an example key - DO NOT USE IN PRODUCTION
+      private_key: "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+# Validator configuration
+validator:
+  # Validation policy
+  policy:
+    type: "verification"  # Use real verification policy
+    config:
+      require_all_validators: false
+      min_confidence: 0.7
+      fail_fast: false
+      weighted_scoring: true
+      lease_weight: 0.3
+      evidence_weight: 0.4
+      output_weight: 0.3
+
+# NATS configuration for consensus broadcasting
+nats:
+  url: "nats://localhost:4222"
+  subject_propose: "checkpoint.propose"
+  subject_signature: "checkpoint.signature"
+  subject_finalized: "checkpoint.finalized"
+  dedupe_ttl_seconds: 60
+  dedupe_max: 10000
+
+# Recovery configuration
+recovery:
+  mode: "fast"  # Options: fast, full, none
+
+# TLS configuration (optional)
+tls:
+  enabled: false
+  cert_file: ""
+  key_file: ""
+
+# RootLayer configuration
+rootlayer:
+  # HTTP API endpoint for RootLayer
+  http_url: "http://3.17.208.238:8081/api"
+
+  # WebSocket endpoint for real-time subscriptions
+  ws_url: "ws://3.17.208.238:8081/ws"
+
+  # gRPC endpoint for matcher/validator services
+  grpc_endpoint: "3.17.208.238:9001"
+
+  # Authentication token (if required)
+  auth_token: ""
+
+  # Connection settings
+  connect_timeout: 10s
+  request_timeout: 30s
+
+  # Retry settings
+  max_retries: 3
+  retry_delay: 1s
+
+blockchain:
+  enabled: false
+  rpc_url: "https://sepolia.base.org"
+  subnet_contract: "${SUBNET_CONTRACT_ADDRESS}"
+  cache_ttl: 5m
+  cache_size: 1024
+  enable_fallback: true
+  allow_unverified: true

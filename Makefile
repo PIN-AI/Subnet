@@ -1,0 +1,86 @@
+SHELL := /bin/bash
+
+.PHONY: all build test proto clean
+
+all: build
+
+build: build-matcher build-simple-agent build-mock-rootlayer build-registry build-validator
+
+build-all:
+	@echo "Building all Go packages..."
+	@go build ./...
+
+build-matcher:
+	@echo "Building Matcher..."
+	@go build -o bin/matcher cmd/matcher/main.go
+
+build-simple-agent:
+	@echo "Building Simple Agent..."
+	@go build -o bin/simple-agent cmd/simple-agent/main.go
+
+build-mock-rootlayer:
+	@echo "Building Mock RootLayer..."
+	@go build -o bin/mock-rootlayer cmd/mock-rootlayer/main.go
+
+build-validator:
+	@echo "Building Validator..."
+	@go build -o bin/validator cmd/validator/main.go
+
+build-registry:
+	@echo "Building Registry Service..."
+	@go build -o bin/registry cmd/registry/main.go
+
+test:
+	@echo "Running tests..."
+	@go test ./...
+
+# Protobuf codegen
+# GOOGLEAPIS path for google/api/annotations.proto
+GOOGLEAPIS := $(shell find $(HOME)/go/pkg/mod -path "*/grpc-gateway*/third_party/googleapis" -type d 2>/dev/null | head -1)
+
+proto: proto-from-pin proto-rootlayer proto-common
+
+# Generate from canonical definitions under pin_protocol/proto (authoritative)
+.PHONY: proto-from-pin proto-rootlayer
+proto-from-pin:
+	@echo "[INFO] Generating Subnet protobuf code from ../pin_protocol/proto/subnet into ./proto/subnet ..."
+	@mkdir -p ./proto/subnet
+	@find ./proto/subnet -type f -name '*.pb.go' -delete
+	@protoc -I ../pin_protocol \
+		--go_out=paths=source_relative:. \
+		--go-grpc_out=paths=source_relative:. \
+		../pin_protocol/proto/subnet/*.proto
+	@echo "[INFO] Protobuf code generation from pin_protocol (subnet) complete"
+
+proto-rootlayer:
+	@echo "[INFO] Generating RootLayer protobuf code into ./proto/rootlayer ..."
+	@if [ -z "$(GOOGLEAPIS)" ]; then \
+		echo "ERROR: googleapis not found. Install: go get github.com/grpc-ecosystem/grpc-gateway"; \
+		exit 1; \
+	fi
+	@echo "[INFO] Using googleapis from: $(GOOGLEAPIS)"
+	@mkdir -p ./proto/rootlayer
+	@find ./proto/rootlayer -type f -name '*.pb.go' -delete
+	@find ./proto/rootlayer -type f -name 'compat.go' -delete
+	@find ./proto/rootlayer -type f -name 'service_types.go' -delete
+	@protoc -I ../pin_protocol/proto \
+		-I $(GOOGLEAPIS) \
+		--go_out=paths=source_relative:. \
+		--go-grpc_out=paths=source_relative:. \
+		../pin_protocol/proto/rootlayer/*.proto
+	@echo "[INFO] Protobuf code generation from pin_protocol (rootlayer) complete"
+
+proto-common:
+	@echo "[INFO] Generating common protobuf code into ./proto/common ..."
+	@mkdir -p ./proto/common
+	@find ./proto/common -type f -name '*.pb.go' -delete
+	@protoc -I ../pin_protocol \
+		--go_out=paths=source_relative:. \
+		../pin_protocol/proto/common/*.proto
+	@echo "[INFO] Protobuf code generation from pin_protocol (common) complete"
+
+clean:
+	@echo "Cleaning build artifacts..."
+	@rm -rf bin dist validator agent
+	@rm -f proto/*.pb.go
+	@rm -rf proto/subnet proto/rootlayer proto/common
