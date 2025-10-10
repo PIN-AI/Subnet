@@ -18,3 +18,4 @@ node_modules/
 cspell.json
 package-lock.json
 package.json
+e2e-test-logs/

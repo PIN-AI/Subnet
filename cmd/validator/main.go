@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -34,9 +35,10 @@ func main() {
 		registryEndpoint = flag.String("registry-endpoint", "", "Validator endpoint advertised via registry")
 
 		// Validator set configuration
-		validatorCount = flag.Int("validators", 4, "Total number of validators")
-		thresholdNum   = flag.Int("threshold-num", 3, "Threshold numerator")
-		thresholdDenom = flag.Int("threshold-denom", 4, "Threshold denominator")
+		validatorCount  = flag.Int("validators", 4, "Total number of validators")
+		thresholdNum    = flag.Int("threshold-num", 3, "Threshold numerator")
+		thresholdDenom  = flag.Int("threshold-denom", 4, "Threshold denominator")
+		validatorPubkey = flag.String("validator-pubkeys", "", "Comma-separated list of validator_id:pubkey_hex pairs (e.g. 'val1:04abc...,val2:04def...')")
 
 		chainEnabled    = flag.Bool("chain-enabled", false, "Enable on-chain agent verification")
 		chainRPCURL     = flag.String("chain-rpc", "", "RPC URL for on-chain verification")
@@ -45,6 +47,13 @@ func main() {
 		chainCacheSize  = flag.Int("chain-cache-size", 1024, "Verification cache size")
 		chainFallback   = flag.Bool("chain-fallback", true, "Allow operations when chain verification fails")
 		allowUnverified = flag.Bool("allow-unverified-agents", true, "Allow agents that fail verification")
+
+		// RootLayer configuration
+		rootlayerEndpoint = flag.String("rootlayer-endpoint", "", "RootLayer gRPC endpoint (e.g. 3.17.208.238:9001)")
+		enableRootlayer   = flag.Bool("enable-rootlayer", false, "Enable ValidationBundle submission to RootLayer")
+
+		// Subnet configuration
+		subnetID = flag.String("subnet-id", "0x1111111111111111111111111111111111111111111111111111111111111111", "Subnet ID (32-byte hex string)")
 	)
 	flag.Parse()
 
@@ -78,11 +87,12 @@ func main() {
 		"nats_url", *natsURL)
 
 	// Create validator set (simplified for MVP)
-	validatorSet := createValidatorSet(*validatorCount, *thresholdNum, *thresholdDenom, *validatorID, *privateKey)
+	validatorSet := createValidatorSet(*validatorCount, *thresholdNum, *thresholdDenom, *validatorID, *privateKey, *validatorPubkey)
 
 	// Create validator configuration
 	config := &validator.Config{
 		ValidatorID:      *validatorID,
+		SubnetID:         *subnetID,
 		PrivateKey:       *privateKey,
 		ValidatorSet:     validatorSet,
 		StoragePath:      *storagePath,
@@ -99,6 +109,10 @@ func main() {
 		// Execution report config
 		MaxReportsPerEpoch: 100,
 		ReportScoreDecay:   0.9,
+
+		// RootLayer configuration
+		RootLayerEndpoint:     *rootlayerEndpoint,
+		EnableRootLayerSubmit: *enableRootlayer,
 	}
 
 	var chainVerifier *blockchain.ParticipantVerifier
@@ -195,27 +209,64 @@ func main() {
 }
 
 // createValidatorSet creates a simple validator set for MVP testing
-func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey string) *types.ValidatorSet {
-	validators := make([]types.Validator, 0, count)
+// IMPORTANT: All validators must use the SAME order for consensus to work correctly!
+func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey, validatorPubkeys string) *types.ValidatorSet {
+	// Parse validator pubkeys from the comma-separated list
+	pubkeyMap := make(map[string][]byte)
+	if validatorPubkeys != "" {
+		pairs := splitAndTrim(validatorPubkeys, ",")
+		for _, pair := range pairs {
+			parts := splitAndTrim(pair, ":")
+			if len(parts) == 2 {
+				id := parts[0]
+				pubkeyHex := parts[1]
+				// Remove 0x prefix if present
+				if len(pubkeyHex) >= 2 && pubkeyHex[:2] == "0x" {
+					pubkeyHex = pubkeyHex[2:]
+				}
+				pubkeyBytes, err := hex.DecodeString(pubkeyHex)
+				if err != nil {
+					log.Printf("Warning: invalid pubkey hex for %s: %v", id, err)
+					continue
+				}
+				pubkeyMap[id] = pubkeyBytes
+			}
+		}
+	}
 
-	// Add ourselves
+	// Get my signer
 	mySigner, _ := crypto.NewECDSASignerFromHex(myPrivKey)
-	validators = append(validators, types.Validator{
-		ID:     myID,
-		PubKey: mySigner.PublicKey(),
-		Weight: 1,
-	})
 
-	// Add other validators (simplified for testing)
-	for i := 2; i <= count; i++ {
-		id := fmt.Sprintf("validator-%d", i)
-		// Generate dummy keys for other validators
-		dummySigner, _ := crypto.GenerateECDSAKey()
-		validators = append(validators, types.Validator{
-			ID:     id,
-			PubKey: dummySigner.PublicKey(),
-			Weight: 1,
-		})
+	// Create validators in FIXED order (sorted by ID) so all validators agree on leader
+	validators := make([]types.Validator, 0, count)
+	for i := 1; i <= count; i++ {
+		id := fmt.Sprintf("validator-e2e-%d", i)
+
+		if id == myID {
+			// Use my actual signer
+			validators = append(validators, types.Validator{
+				ID:     id,
+				PubKey: mySigner.PublicKey(),
+				Weight: 1,
+			})
+		} else {
+			// Use provided pubkey if available, otherwise generate dummy key
+			if pubkey, ok := pubkeyMap[id]; ok {
+				validators = append(validators, types.Validator{
+					ID:     id,
+					PubKey: pubkey,
+					Weight: 1,
+				})
+			} else {
+				log.Printf("Warning: no pubkey found for %s, using dummy key", id)
+				dummySigner, _ := crypto.GenerateECDSAKey()
+				validators = append(validators, types.Validator{
+					ID:     id,
+					PubKey: dummySigner.PublicKey(),
+					Weight: 1,
+				})
+			}
+		}
 	}
 
 	return &types.ValidatorSet{
@@ -224,4 +275,47 @@ func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey
 		ThresholdNum:   thresholdNum,
 		ThresholdDenom: thresholdDenom,
 	}
+}
+
+// splitAndTrim splits a string by delimiter and trims whitespace from each part
+func splitAndTrim(s, sep string) []string {
+	parts := []string{}
+	for _, p := range splitString(s, sep) {
+		trimmed := trimWhitespace(p)
+		if trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return parts
+}
+
+// splitString splits a string by a separator
+func splitString(s, sep string) []string {
+	if s == "" {
+		return []string{}
+	}
+	result := []string{}
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if i+len(sep) <= len(s) && s[i:i+len(sep)] == sep {
+			result = append(result, s[start:i])
+			start = i + len(sep)
+			i += len(sep) - 1
+		}
+	}
+	result = append(result, s[start:])
+	return result
+}
+
+// trimWhitespace trims whitespace from a string
+func trimWhitespace(s string) string {
+	start := 0
+	end := len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
 }
