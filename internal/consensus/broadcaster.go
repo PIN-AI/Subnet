@@ -9,6 +9,7 @@ type Broadcaster interface {
 	// Checkpoint related broadcasts
 	BroadcastProposal(header *pb.CheckpointHeader) error
 	BroadcastSignature(sig *pb.Signature) error
+	BroadcastFinalized(header *pb.CheckpointHeader) error // Broadcast finalized checkpoint
 
 	// Execution report broadcast
 	BroadcastExecutionReport(report *pb.ExecutionReport) error
@@ -16,6 +17,7 @@ type Broadcaster interface {
 	// Subscriptions
 	SubscribeToProposals(handler func(*pb.CheckpointHeader)) error
 	SubscribeToSignatures(handler func(*pb.Signature)) error
+	SubscribeToFinalized(handler func(*pb.CheckpointHeader)) error // Subscribe to finalized checkpoints
 	SubscribeToExecutionReports(handler func(*pb.ExecutionReport)) error
 
 	// Lifecycle

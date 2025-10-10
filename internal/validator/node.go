@@ -69,6 +69,8 @@ type Node struct {
 	currentEpoch      uint64
 	currentCheckpoint *pb.CheckpointHeader
 	signatures        map[string]*pb.Signature // validator_id -> signature
+	lastCheckpointAt  time.Time                // Track last checkpoint time
+	isLeader          bool                     // Track current leadership status
 
 	// Configuration
 	config *Config
@@ -217,11 +219,13 @@ func (n *Node) Start(ctx context.Context) error {
 	// Register validator in registry and start heartbeat
 	n.startValidatorRegistry()
 
-	// Start consensus loop
-	go n.consensusLoop()
+	// Initialize leadership status
+	_, leader := n.leaderTracker.Leader(n.currentEpoch)
+	n.isLeader = leader != nil && leader.ID == n.id
+	n.logger.Info("Initial leadership status", "is_leader", n.isLeader, "epoch", n.currentEpoch)
 
-	// Start checkpoint creation timer
-	go n.checkpointTimer()
+	// Start consensus loop - this will handle checkpoint creation dynamically
+	go n.consensusLoop()
 
 	n.logger.Info("Validator node started successfully")
 	return nil
@@ -333,6 +337,15 @@ func (n *Node) connectNATS() error {
 		return fmt.Errorf("failed to subscribe to execution reports: %w", err)
 	}
 
+	// Subscribe to finalized checkpoints
+	if err := broadcaster.SubscribeToFinalized(func(header *pb.CheckpointHeader) {
+		if err := n.HandleFinalized(header); err != nil {
+			n.logger.Error("Failed to handle finalized checkpoint", "error", err)
+		}
+	}); err != nil {
+		return fmt.Errorf("failed to subscribe to finalized checkpoints: %w", err)
+	}
+
 	n.logger.Info("Connected to NATS with broadcaster", "url", n.config.NATSUrl, "subnet", subnetID)
 	return nil
 }
@@ -348,6 +361,7 @@ func (n *Node) consensusLoop() {
 			return
 		case <-ticker.C:
 			n.checkConsensusState()
+			n.checkCheckpointTrigger() // Check if leader should create checkpoint
 		}
 	}
 }
@@ -374,23 +388,71 @@ func (n *Node) checkConsensusState() {
 		// Check if we have threshold signatures
 		hasThreshold := n.fsm.HasThreshold()
 		isTimedOut := n.fsm.IsTimedOut(n.config.CollectTimeout)
+		isLeader := false
+		_, leader := n.leaderTracker.Leader(n.currentEpoch)
+		if leader != nil && leader.ID == n.id {
+			isLeader = true
+		}
 		n.mu.Unlock()
 
 		// Call finalize or reset without holding the lock
 		if hasThreshold {
 			n.finalizeCheckpoint()
 		} else if isTimedOut {
-			n.logger.Warn("Signature collection timeout", "epoch", n.currentEpoch)
-			n.mu.Lock()
-			n.fsm.Reset()
-			n.mu.Unlock()
+			// Only leader can reset and retry - followers just wait
+			if isLeader {
+				n.logger.Warn("Signature collection timeout, leader will retry", "epoch", n.currentEpoch)
+				n.mu.Lock()
+				n.fsm.Reset()
+				n.mu.Unlock()
+			} else {
+				n.logger.Warn("Signature collection timeout, waiting for leader", "epoch", n.currentEpoch)
+				// Followers don't reset - they keep waiting for leader's next proposal
+			}
 		}
+
+	case consensus.StateThreshold:
+		// FSM has reached threshold - finalize the checkpoint
+		n.mu.Unlock()
+		n.finalizeCheckpoint()
 
 	case consensus.StateFinalized:
 		// Move to next epoch
+		oldEpoch := n.currentEpoch
 		n.currentEpoch++
 		n.fsm.Reset()
-		n.clearEpochData()
+		// DON'T clear epoch data here anymore - will be cleared after ValidationBundle submission
+		// Only clear signatures since they're epoch-specific
+		n.signatures = make(map[string]*pb.Signature)
+
+		// Check if leader changed - update leadership status for dynamic rotation
+		_, oldLeader := n.leaderTracker.Leader(oldEpoch)
+		_, newLeader := n.leaderTracker.Leader(n.currentEpoch)
+
+		wasLeader := n.isLeader
+		n.isLeader = newLeader != nil && newLeader.ID == n.id
+
+		if oldLeader != nil && newLeader != nil {
+			if oldLeader.ID != newLeader.ID {
+				n.logger.Info("Leader rotation",
+					"old_epoch", oldEpoch,
+					"old_leader", oldLeader.ID,
+					"new_epoch", n.currentEpoch,
+					"new_leader", newLeader.ID,
+					"i_am_new_leader", n.isLeader)
+			}
+		}
+
+		// Reset checkpoint timer if leadership changed
+		if wasLeader != n.isLeader {
+			n.lastCheckpointAt = time.Time{} // Reset timer
+			if n.isLeader {
+				n.logger.Info("Became leader - checkpoint timer reset", "epoch", n.currentEpoch)
+			} else {
+				n.logger.Info("No longer leader", "epoch", n.currentEpoch)
+			}
+		}
+
 		n.mu.Unlock()
 
 	default:
@@ -400,7 +462,12 @@ func (n *Node) checkConsensusState() {
 
 // proposeCheckpoint creates and broadcasts a new checkpoint proposal
 func (n *Node) proposeCheckpoint() {
+	// Build checkpoint header first (without lock, as it needs to acquire RLock)
 	header := n.buildCheckpointHeader()
+
+	// Now acquire lock for FSM updates and state changes
+	n.mu.Lock()
+	defer n.mu.Unlock()
 
 	// Update FSM state
 	if err := n.fsm.ProposeHeader(header); err != nil {
@@ -416,13 +483,24 @@ func (n *Node) proposeCheckpoint() {
 	}
 	n.signatures[n.id] = sig
 
+	// Set current checkpoint BEFORE broadcasting so it's ready when signatures arrive
+	n.currentCheckpoint = header
+
+	// Add leader's own signature to FSM - this transitions FSM to StateCollecting
+	// and enables timeout mechanism!
+	if err := n.fsm.AddSignature(sig); err != nil {
+		n.logger.Error("Failed to add leader signature to FSM", "error", err)
+		return
+	}
+
 	// Broadcast proposal
 	if err := n.broadcastProposal(header); err != nil {
 		n.logger.Error("Failed to broadcast proposal", "error", err)
 		return
 	}
 
-	n.logger.Info("Proposed checkpoint", "epoch", header.Epoch)
+	n.logger.Info("Proposed checkpoint", "epoch", header.Epoch,
+		"fsm_state", n.fsm.GetState())
 }
 
 // buildCheckpointHeader creates a new checkpoint header
@@ -589,6 +667,10 @@ func (n *Node) finalizeCheckpoint() {
 		"epoch", header.Epoch,
 		"signatures", len(n.signatures))
 
+	// Broadcast finalized checkpoint to all validators
+	// This helps followers sync their state even if they missed some signatures
+	go n.broadcastFinalized(header)
+
 	// Submit to RootLayer if we are the leader
 	_, leader := n.leaderTracker.Leader(n.currentEpoch)
 	if leader != nil && leader.ID == n.id {
@@ -596,55 +678,52 @@ func (n *Node) finalizeCheckpoint() {
 	}
 }
 
-// checkpointTimer periodically triggers checkpoint creation
-func (n *Node) checkpointTimer() {
-	// Use configured checkpoint interval
-	checkpointInterval := n.getCheckpointInterval()
-
-	ticker := time.NewTicker(checkpointInterval)
-	defer ticker.Stop()
-
-	n.logger.Info("Checkpoint timer started", "interval", checkpointInterval)
-
-	for {
-		select {
-		case <-n.ctx.Done():
-			n.logger.Info("Checkpoint timer stopped")
-			return
-		case <-ticker.C:
-			n.triggerCheckpoint()
-		}
-	}
-}
-
-// triggerCheckpoint initiates a new checkpoint if conditions are met
-func (n *Node) triggerCheckpoint() {
+// checkCheckpointTrigger checks if it's time for the leader to create a checkpoint
+// ONLY creates checkpoints when there are pending execution reports (on-demand checkpointing)
+func (n *Node) checkCheckpointTrigger() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+
+	// Only leaders should create checkpoints
+	if !n.isLeader {
+		return
+	}
 
 	// Check if we're already in a checkpoint process
 	state := n.fsm.GetState()
 	if state != consensus.StateIdle {
-		n.logger.Debug("Skipping checkpoint trigger, FSM not idle", "state", state)
 		return
 	}
 
-	// Check if we have any reports to include
+	// SOLUTION B: Only create checkpoint if we have pending reports
 	if len(n.pendingReports) == 0 {
-		n.logger.Debug("No pending reports, skipping checkpoint")
+		// No reports to validate - skip checkpoint creation
 		return
 	}
 
-	// Check if we're the leader for current epoch
-	_, leader := n.leaderTracker.Leader(n.currentEpoch)
-	if leader == nil {
-		n.logger.Warn("No leader for current epoch", "epoch", n.currentEpoch)
-		return
-	}
+	// Check if enough time has passed since last checkpoint
+	checkpointInterval := n.getCheckpointInterval()
+	now := time.Now()
 
-	if leader.ID == n.id {
-		n.logger.Info("Triggering checkpoint as leader", "epoch", n.currentEpoch, "reports", len(n.pendingReports))
+	if n.lastCheckpointAt.IsZero() {
+		// First checkpoint for this leader - we have reports, trigger immediately
+		n.logger.Info("🎯 Leader triggering first checkpoint with execution reports",
+			"epoch", n.currentEpoch,
+			"pending_reports", len(n.pendingReports))
+		n.lastCheckpointAt = now
+		n.mu.Unlock()
 		n.proposeCheckpoint()
+		n.mu.Lock()
+	} else if now.Sub(n.lastCheckpointAt) >= checkpointInterval {
+		// Time for next checkpoint - we have reports
+		n.logger.Info("🎯 Leader triggering checkpoint with execution reports",
+			"epoch", n.currentEpoch,
+			"pending_reports", len(n.pendingReports),
+			"interval", checkpointInterval)
+		n.lastCheckpointAt = now
+		n.mu.Unlock()
+		n.proposeCheckpoint()
+		n.mu.Lock()
 	}
 }
 
@@ -1020,15 +1099,22 @@ func (n *Node) clearEpochData() {
 
 // submitToRootLayer submits the finalized checkpoint to RootLayer
 func (n *Node) submitToRootLayer(header *pb.CheckpointHeader) {
+	n.logger.Info("Attempting to submit checkpoint to RootLayer",
+		"epoch", header.Epoch,
+		"is_connected", n.rootlayerClient != nil && n.rootlayerClient.IsConnected())
+
 	if n.rootlayerClient == nil || !n.rootlayerClient.IsConnected() {
-		n.logger.Warn("Cannot submit to RootLayer: client not connected")
+		n.logger.Warn("Cannot submit to RootLayer: client not connected",
+			"client_nil", n.rootlayerClient == nil,
+			"epoch", header.Epoch)
 		return
 	}
 
 	// Build ValidationBundle from checkpoint
 	bundle := n.buildValidationBundle(header)
 	if bundle == nil {
-		n.logger.Error("Failed to build validation bundle")
+		n.logger.Error("⚠️ Failed to build validation bundle - see detailed logs above",
+			"epoch", header.Epoch)
 		return
 	}
 
@@ -1036,14 +1122,33 @@ func (n *Node) submitToRootLayer(header *pb.CheckpointHeader) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	n.logger.Info("Submitting ValidationBundle to RootLayer",
+		"epoch", header.Epoch,
+		"intent_id", bundle.IntentId)
+
 	if err := n.rootlayerClient.SubmitValidationBundle(ctx, bundle); err != nil {
-		n.logger.Error("Failed to submit validation bundle to RootLayer", "error", err)
+		n.logger.Error("Failed to submit validation bundle to RootLayer",
+			"error", err,
+			"epoch", header.Epoch,
+			"intent_id", bundle.IntentId)
 		return
 	}
 
-	n.logger.Info("Successfully submitted validation bundle to RootLayer",
+	n.logger.Info("✅ Successfully submitted validation bundle to RootLayer",
 		"epoch", header.Epoch,
+		"intent_id", bundle.IntentId,
 		"signatures", len(n.signatures))
+
+	// SOLUTION B: Clear pending reports ONLY after successful submission
+	n.mu.Lock()
+	reportsCount := len(n.pendingReports)
+	n.pendingReports = make(map[string]*pb.ExecutionReport)
+	n.reportScores = make(map[string]int32)
+	n.mu.Unlock()
+
+	n.logger.Info("🧹 Cleared execution reports after successful ValidationBundle submission",
+		"epoch", header.Epoch,
+		"cleared_reports", reportsCount)
 }
 
 // buildValidationBundle creates a ValidationBundle from the checkpoint
@@ -1051,15 +1156,56 @@ func (n *Node) buildValidationBundle(header *pb.CheckpointHeader) *rootpb.Valida
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 
+	n.logger.Info("Building ValidationBundle",
+		"epoch", header.Epoch,
+		"pending_reports_count", len(n.pendingReports),
+		"signatures_count", len(n.signatures))
+
+	// If there are no pending reports, this is an empty consensus checkpoint - skip it
+	if len(n.pendingReports) == 0 {
+		n.logger.Warn("⚠️ ValidationBundle construction skipped: no pending execution reports",
+			"epoch", header.Epoch,
+			"reason", "empty_consensus_checkpoint",
+			"action", "This is expected for checkpoints without execution activity")
+		return nil
+	}
+
+	// Extract IntentID and AgentID from first execution report
+	// Note: In current design, each checkpoint contains reports for a single intent
+	var intentID, assignmentID, agentID string
+	for reportID, report := range n.pendingReports {
+		intentID = report.IntentId
+		assignmentID = report.AssignmentId
+		agentID = report.AgentId
+		n.logger.Debug("Extracting metadata from execution report",
+			"report_id", reportID,
+			"intent_id", intentID,
+			"assignment_id", assignmentID,
+			"agent_id", agentID)
+		break // Use first report's metadata
+	}
+
+	// Validate that we have real intent data
+	if intentID == "" {
+		n.logger.Error("⚠️ ValidationBundle construction failed: missing IntentID",
+			"epoch", header.Epoch,
+			"pending_reports_count", len(n.pendingReports),
+			"reason", "intent_id_empty",
+			"action", "Check execution report structure and ensure IntentId field is populated")
+		return nil
+	}
+
 	// Convert checkpoint signatures to ValidationSignatures
 	var validationSigs []*rootpb.ValidationSignature
 	for validatorID, sig := range n.signatures {
 		validationSigs = append(validationSigs, &rootpb.ValidationSignature{
-			Validator: validatorID,  // Changed from ValidatorId to Validator
+			Validator: validatorID,
 			Signature: sig.Der,
-			// MsgHash field removed - not in new proto definition
 		})
 	}
+
+	n.logger.Debug("Converted checkpoint signatures to ValidationSignatures",
+		"validation_sigs_count", len(validationSigs))
 
 	// Calculate result hash from checkpoint header
 	resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
@@ -1068,13 +1214,17 @@ func (n *Node) buildValidationBundle(header *pb.CheckpointHeader) *rootpb.Valida
 	var proofHash []byte
 	if header.Roots != nil && len(header.Roots.EventRoot) > 0 {
 		proofHash = header.Roots.EventRoot
+		n.logger.Debug("Using EventRoot as proof hash",
+			"proof_hash_len", len(proofHash))
+	} else {
+		n.logger.Warn("EventRoot is empty or nil, proof hash will be empty")
 	}
 
 	bundle := &rootpb.ValidationBundle{
 		SubnetId:     n.config.SubnetID,
-		IntentId:     fmt.Sprintf("checkpoint-%d", header.Epoch), // Use epoch as intent ID for checkpoints
-		AssignmentId: fmt.Sprintf("epoch-%d", header.Epoch),
-		AgentId:      "subnet-consensus", // Special agent ID for consensus checkpoints
+		IntentId:     intentID,       // Use real IntentID from execution report
+		AssignmentId: assignmentID,   // Use real AssignmentID from execution report
+		AgentId:      agentID,        // Use real AgentID from execution report
 		RootHeight:   header.Epoch,
 		RootHash:     fmt.Sprintf("%x", header.ParentCpHash),
 		ExecutedAt:   header.Timestamp,
@@ -1086,6 +1236,17 @@ func (n *Node) buildValidationBundle(header *pb.CheckpointHeader) *rootpb.Valida
 		AggregatorId: n.id, // Current validator as aggregator
 		CompletedAt:  time.Now().Unix(),
 	}
+
+	n.logger.Info("✅ ValidationBundle constructed successfully",
+		"epoch", header.Epoch,
+		"subnet_id", bundle.SubnetId,
+		"intent_id", bundle.IntentId,
+		"assignment_id", bundle.AssignmentId,
+		"agent_id", bundle.AgentId,
+		"root_height", bundle.RootHeight,
+		"signatures_count", len(bundle.Signatures),
+		"total_weight", bundle.TotalWeight,
+		"aggregator_id", bundle.AggregatorId)
 
 	return bundle
 }

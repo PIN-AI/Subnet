@@ -85,9 +85,15 @@ func (b *NATSBroadcaster) BroadcastProposal(header *pb.CheckpointHeader) error {
 		return fmt.Errorf("failed to publish proposal: %w", err)
 	}
 
-	b.logger.Debug("Broadcasted checkpoint proposal",
+	// Flush to ensure message is sent
+	if err := b.nc.Flush(); err != nil {
+		b.logger.Warn("Failed to flush after proposal broadcast", "error", err)
+	}
+
+	b.logger.Info("Broadcasted checkpoint proposal",
 		"epoch", header.Epoch,
-		"subject", subject)
+		"subject", subject,
+		"data_size", len(data))
 
 	return nil
 }
@@ -111,9 +117,47 @@ func (b *NATSBroadcaster) BroadcastSignature(sig *pb.Signature) error {
 		return fmt.Errorf("failed to publish signature: %w", err)
 	}
 
-	b.logger.Debug("Broadcasted signature",
+	// Flush to ensure message is sent
+	if err := b.nc.Flush(); err != nil {
+		b.logger.Warn("Failed to flush after signature broadcast", "error", err)
+	}
+
+	b.logger.Info("Broadcasted signature",
 		"signer", sig.SignerId,
-		"subject", subject)
+		"subject", subject,
+		"data_size", len(data))
+
+	return nil
+}
+
+// BroadcastFinalized broadcasts a finalized checkpoint to all validators
+func (b *NATSBroadcaster) BroadcastFinalized(header *pb.CheckpointHeader) error {
+	b.mu.RLock()
+	if b.closed {
+		b.mu.RUnlock()
+		return fmt.Errorf("broadcaster is closed")
+	}
+	b.mu.RUnlock()
+
+	data, err := json.Marshal(header)
+	if err != nil {
+		return fmt.Errorf("failed to marshal finalized header: %w", err)
+	}
+
+	subject := fmt.Sprintf("subnet.%s.checkpoint.finalized", b.subnetID)
+	if err := b.nc.Publish(subject, data); err != nil {
+		return fmt.Errorf("failed to publish finalized: %w", err)
+	}
+
+	// Flush to ensure message is sent immediately
+	if err := b.nc.Flush(); err != nil {
+		b.logger.Warn("Failed to flush after finalized broadcast", "error", err)
+	}
+
+	b.logger.Info("🏁 Broadcasted finalized checkpoint",
+		"epoch", header.Epoch,
+		"subject", subject,
+		"signatures", header.Signatures.SignatureCount)
 
 	return nil
 }
@@ -156,9 +200,10 @@ func (b *NATSBroadcaster) SubscribeToProposals(handler func(*pb.CheckpointHeader
 			return
 		}
 
-		b.logger.Debug("Received checkpoint proposal",
+		b.logger.Info("Received checkpoint proposal",
 			"epoch", header.Epoch,
-			"from", msg.Subject)
+			"subject", msg.Subject,
+			"data_size", len(msg.Data))
 
 		handler(&header)
 	})
@@ -191,9 +236,10 @@ func (b *NATSBroadcaster) SubscribeToSignatures(handler func(*pb.Signature)) err
 			return
 		}
 
-		b.logger.Debug("Received signature",
+		b.logger.Info("Received signature",
 			"from", sig.SignerId,
-			"subject", msg.Subject)
+			"subject", msg.Subject,
+			"data_size", len(msg.Data))
 
 		handler(&sig)
 	})
@@ -207,6 +253,37 @@ func (b *NATSBroadcaster) SubscribeToSignatures(handler func(*pb.Signature)) err
 	b.mu.Unlock()
 
 	b.logger.Info("Subscribed to checkpoint signatures", "subject", subject)
+	return nil
+}
+
+// SubscribeToFinalized subscribes to finalized checkpoints
+func (b *NATSBroadcaster) SubscribeToFinalized(handler func(*pb.CheckpointHeader)) error {
+	subject := fmt.Sprintf("subnet.%s.checkpoint.finalized", b.subnetID)
+
+	sub, err := b.nc.Subscribe(subject, func(msg *nats.Msg) {
+		var header pb.CheckpointHeader
+		if err := json.Unmarshal(msg.Data, &header); err != nil {
+			b.logger.Error("Failed to unmarshal finalized checkpoint", "error", err)
+			return
+		}
+
+		b.logger.Info("🏁 Received finalized checkpoint",
+			"epoch", header.Epoch,
+			"subject", msg.Subject,
+			"signatures", header.Signatures.SignatureCount)
+
+		handler(&header)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to finalized: %w", err)
+	}
+
+	b.mu.Lock()
+	b.subscriptions["finalized"] = sub
+	b.mu.Unlock()
+
+	b.logger.Info("Subscribed to finalized checkpoints", "subject", subject)
 	return nil
 }
 

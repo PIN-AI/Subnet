@@ -137,7 +137,21 @@ func (sm *StateMachine) AddSignature(sig *pb.Signature) error {
 	}
 
 	// Check if we reached threshold
-	if sm.checkThreshold() {
+	signCount := len(sm.signatures)
+	required := sm.validatorSet.RequiredSignatures()
+	thresholdMet := sm.checkThreshold()
+
+	// Log detailed threshold check info
+	if signCount >= required-1 {
+		// Log when we're close to or at threshold
+		signers := make([]string, 0, len(sm.signatures))
+		for signerID := range sm.signatures {
+			signers = append(signers, signerID)
+		}
+		// Note: We'll log this from the caller since we don't have logger here
+	}
+
+	if thresholdMet {
 		sm.state = StateThreshold
 		sm.thresholdTime = time.Now()
 	}
