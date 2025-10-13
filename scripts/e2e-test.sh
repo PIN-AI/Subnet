@@ -584,53 +584,78 @@ run_e2e_test() {
         print_warning "Validator processing not confirmed"
     fi
 
-    # Step 7: Check for Checkpoint creation
-    print_step "Step 7: Waiting for Checkpoint creation..."
-    sleep 10  # Wait for checkpoint interval
+    # Step 7: Wait for ExecutionReport to be broadcast to all validators
+    print_step "Step 7: Waiting for ExecutionReport to propagate to all validators..."
+    sleep 3  # Brief wait for NATS broadcast
 
-    if monitor_logs "$LOG_DIR/validator-1.log" "Proposed checkpoint" 5; then
-        print_success "Checkpoint proposed"
-    else
-        print_warning "Checkpoint not created yet (timing dependent)"
+    if grep -q "📡 Broadcasted execution report" "$LOG_DIR/validator-1.log" 2>/dev/null; then
+        print_success "ExecutionReport broadcasted to all validators"
     fi
 
-    # Step 8: Check for signature collection
-    print_step "Step 8: Checking signature collection..."
-    if monitor_logs "$LOG_DIR/validator-1.log" "signature" 5; then
-        print_success "Signature collection in progress"
-    else
-        print_warning "Signature collection status unknown"
+    # Step 8: Wait for first checkpoint to complete (should skip ValidationBundle)
+    print_step "Step 8: Waiting for first checkpoint cycle to complete..."
+    sleep 12  # Wait for checkpoint interval (10s) + buffer
+
+    # Verify first checkpoint was created
+    if monitor_logs "$LOG_DIR/validator-1.log" "Proposed checkpoint" 3; then
+        print_success "First checkpoint proposed"
     fi
 
-    # Step 9: Wait for second checkpoint with real ExecutionReport
-    print_step "Step 9: Waiting for second checkpoint with ExecutionReport (15s)..."
-    sleep 15  # Wait for new leader to trigger checkpoint with pending reports
+    # Step 9: Wait for NEXT checkpoint (should include ExecutionReport)
+    print_step "Step 9: Waiting for next checkpoint with ExecutionReport (20s+)..."
+    print_info "This checkpoint should include the ExecutionReport and submit ValidationBundle"
+    sleep 20  # Wait for next checkpoint interval + signature collection
 
     # Check all validators for ValidationBundle submission
     print_step "Step 9a: Checking for ValidationBundle submission..."
     local bundle_submitted=0
+
+    # Check for successful submission
     for i in 1 2 3 4; do
-        if grep -q "Successfully submitted validation bundle" "$LOG_DIR/validator-$i.log" 2>/dev/null; then
+        if grep -q "✅ Successfully submitted validation bundle to RootLayer" "$LOG_DIR/validator-$i.log" 2>/dev/null; then
             bundle_submitted=1
-            print_success "Validator $i successfully submitted ValidationBundle to RootLayer"
-            grep "Successfully submitted" "$LOG_DIR/validator-$i.log" | tail -1
+            print_success "Validator $i successfully submitted ValidationBundle to RootLayer!"
+            grep "✅ Successfully submitted" "$LOG_DIR/validator-$i.log" | tail -1
+
+            # Show the bundle details
+            print_info "ValidationBundle details:"
+            grep -A2 "Building ValidationBundle" "$LOG_DIR/validator-$i.log" | tail -3
             break
         fi
     done
 
     if [ $bundle_submitted -eq 0 ]; then
-        # Check if bundle was skipped due to no reports (expected for first checkpoint)
-        if grep -q "Failed to build validation bundle" "$LOG_DIR/validator-1.log" 2>/dev/null; then
-            print_info "First checkpoint correctly skipped ValidationBundle (no ExecutionReports)"
+        # Check which epochs had reports
+        print_info "Checking checkpoint history for ExecutionReports..."
+
+        for i in 1 2 3 4; do
+            local epochs_with_reports=$(grep "pending_reports_count=1" "$LOG_DIR/validator-$i.log" 2>/dev/null | wc -l || echo "0")
+            if [ "$epochs_with_reports" -gt 0 ]; then
+                print_info "Validator $i received ExecutionReport: $(grep 'pending_reports_count=1' "$LOG_DIR/validator-$i.log" | head -1 | grep -o 'epoch=[0-9]*')"
+            fi
+        done
+
+        # Check if bundle was skipped due to no reports
+        local skip_count=$(grep -c "ValidationBundle construction skipped" "$LOG_DIR"/*.log 2>/dev/null || echo "0")
+        if [ "$skip_count" -gt 0 ]; then
+            print_warning "ValidationBundle skipped $skip_count times (no ExecutionReports at checkpoint time)"
         fi
 
-        # Check if second checkpoint was created
-        local checkpoint_count=$(grep -c "Finalized checkpoint" "$LOG_DIR/validator-2.log" 2>/dev/null || echo "0")
-        if [ "$checkpoint_count" -gt 0 ]; then
-            print_warning "Second checkpoint created but ValidationBundle submission not detected"
-            print_info "Check validator-2.log (new leader) for ValidationBundle logs"
+        # Check for the leader at the time ExecutionReport arrived
+        print_info "Checking which epoch had pending reports..."
+        local report_epoch=$(grep -h "pending_reports_count=1" "$LOG_DIR"/validator-*.log | head -1 | grep -o 'Building ValidationBundle.*epoch=[0-9]*' | grep -o 'epoch=[0-9]*' | cut -d= -f2)
+
+        if [ -n "$report_epoch" ]; then
+            local leader_num=$(( (report_epoch % 4) + 1 ))
+            print_info "Epoch $report_epoch should have reports - Leader is validator-$leader_num"
+            print_info "Check $LOG_DIR/validator-$leader_num.log for ValidationBundle submission"
+
+            # Show last few ValidationBundle related logs
+            print_info "Recent ValidationBundle logs:"
+            grep -h "ValidationBundle\|validation bundle" "$LOG_DIR/validator-$leader_num.log" | tail -5
         else
-            print_warning "Second checkpoint not yet created - test may need more time"
+            print_warning "No epoch found with pending_reports_count=1"
+            print_info "ExecutionReport may have arrived too late - test needs to wait longer"
         fi
     fi
 }
@@ -761,7 +786,28 @@ main() {
 
     # Check if no-interactive mode
     if [ "$NO_INTERACTIVE" = "1" ]; then
-        print_info "Non-interactive mode. Services will stop now."
+        print_info "Non-interactive mode. Waiting 30 more seconds for ValidationBundle submission..."
+        sleep 30
+
+        # Check again for ValidationBundle submission
+        print_step "Final check for ValidationBundle..."
+        local bundle_found=0
+        for i in 1 2 3 4; do
+            if grep -q "✅ Successfully submitted validation bundle to RootLayer" "$LOG_DIR/validator-$i.log" 2>/dev/null; then
+                bundle_found=1
+                print_success "✅ Validator $i submitted ValidationBundle!"
+                grep "Successfully submitted validation bundle" "$LOG_DIR/validator-$i.log" | tail -1
+                break
+            fi
+        done
+
+        if [ $bundle_found -eq 0 ]; then
+            print_warning "No ValidationBundle submission found after extended wait"
+            print_info "Checking for finalization logs..."
+            grep -h "Finalized checkpoint\|finalizeCheckpoint" "$LOG_DIR"/validator-*.log | tail -10
+        fi
+
+        print_info "Services will stop now."
         cleanup
         exit 0
     fi

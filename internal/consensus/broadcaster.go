@@ -19,6 +19,8 @@ type Broadcaster interface {
 	SubscribeToSignatures(handler func(*pb.Signature)) error
 	SubscribeToFinalized(handler func(*pb.CheckpointHeader)) error // Subscribe to finalized checkpoints
 	SubscribeToExecutionReports(handler func(*pb.ExecutionReport)) error
+	SubscribeToReadiness(handler func(string)) error
+	BroadcastReadiness(validatorID string) error
 
 	// Lifecycle
 	Close() error

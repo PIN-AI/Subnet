@@ -19,3 +19,5 @@ cspell.json
 package-lock.json
 package.json
 e2e-test-logs/
+validation-consensus-test-logs/
+simple-consensus-logs/

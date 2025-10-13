@@ -7,10 +7,15 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go"
-	pb "subnet/proto/subnet"
 	"subnet/internal/logging"
 	"subnet/internal/messaging"
+	pb "subnet/proto/subnet"
 )
+
+type readinessMessage struct {
+	ValidatorID string `json:"validator_id"`
+	Timestamp   int64  `json:"timestamp"`
+}
 
 // NATSBroadcaster implements Broadcaster using NATS
 type NATSBroadcaster struct {
@@ -186,6 +191,67 @@ func (b *NATSBroadcaster) BroadcastExecutionReport(report *pb.ExecutionReport) e
 		"agent", report.AgentId,
 		"subject", subject)
 
+	return nil
+}
+
+// BroadcastReadiness broadcasts validator readiness for consensus start
+func (b *NATSBroadcaster) BroadcastReadiness(validatorID string) error {
+	b.mu.RLock()
+	if b.closed {
+		b.mu.RUnlock()
+		return fmt.Errorf("broadcaster is closed")
+	}
+	b.mu.RUnlock()
+
+	msg := readinessMessage{
+		ValidatorID: validatorID,
+		Timestamp:   time.Now().UnixNano(),
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal readiness: %w", err)
+	}
+
+	subject := fmt.Sprintf("subnet.%s.consensus.ready", b.subnetID)
+	if err := b.nc.Publish(subject, data); err != nil {
+		return fmt.Errorf("failed to publish readiness: %w", err)
+	}
+
+	if err := b.nc.Flush(); err != nil {
+		b.logger.Warn("Failed to flush after readiness broadcast", "error", err)
+	}
+
+	b.logger.Debug("Broadcasted consensus readiness",
+		"validator", validatorID,
+		"subject", subject)
+
+	return nil
+}
+
+// SubscribeToReadiness subscribes to consensus readiness announcements
+func (b *NATSBroadcaster) SubscribeToReadiness(handler func(string)) error {
+	subject := fmt.Sprintf("subnet.%s.consensus.ready", b.subnetID)
+
+	sub, err := b.nc.Subscribe(subject, func(msg *nats.Msg) {
+		var ready readinessMessage
+		if err := json.Unmarshal(msg.Data, &ready); err != nil {
+			b.logger.Error("Failed to unmarshal readiness", "error", err)
+			return
+		}
+
+		handler(ready.ValidatorID)
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to readiness: %w", err)
+	}
+
+	b.mu.Lock()
+	b.subscriptions["readiness"] = sub
+	b.mu.Unlock()
+
+	b.logger.Info("Subscribed to consensus readiness", "subject", subject)
 	return nil
 }
 
