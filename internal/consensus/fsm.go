@@ -52,35 +52,34 @@ func (f *FSM) Header() *types.CheckpointHeader {
 	return f.header
 }
 
-// StartProposal moves FSM to Proposed and sets deadlines.
+// StartProposal moves FSM to Collecting and sets deadlines.
 func (f *FSM) StartProposal(h *types.CheckpointHeader, now time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.state = StateProposed
+	f.state = StateCollecting // 直接进入 Collecting 状态
 	f.header = h
 	f.bitmap = nil
-	f.proposeDeadline = now.Add(f.proposeTO)
+	f.collectDeadline = now.Add(f.collectTO) // 使用 collect 超时
 	f.thresholdAt = time.Time{}
 	f.preFinalizedAt = time.Time{}
 }
 
-// OnSignature records a signature from signerIdx and updates state toward threshold.
+// OnSignature records a signature from signerIdx and updates state.
+// Returns (reached=true) when threshold is met and ready to finalize.
 func (f *FSM) OnSignature(signerIdx int, now time.Time) (reached bool, count int, required int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.state == StateIdle || f.header == nil {
 		return false, CountBits(f.bitmap), RequiredSigs(f.set)
 	}
-	// enter collecting on first signature
-	if f.state == StateProposed {
-		f.state = StateCollecting
-		f.collectDeadline = now.Add(f.collectTO)
-	}
+
+	// Record signature
 	f.bitmap = SetBit(f.bitmap, signerIdx)
 	count = CountBits(f.bitmap)
 	required = RequiredSigs(f.set)
-	if count >= required && f.state != StateThreshold {
-		f.state = StateThreshold
+
+	// Check if threshold reached (但不自动转状态,由外部调用 MoveToFinalized)
+	if count >= required {
 		f.thresholdAt = now
 		return true, count, required
 	}
@@ -92,45 +91,42 @@ func (f *FSM) Tick(now time.Time) (changed bool, newState State) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	switch f.state {
-	case StateProposed:
-		if now.After(f.proposeDeadline) {
-			// proposal expired
-			f.state = StateIdle
-			changed = true
-		}
 	case StateCollecting:
 		if now.After(f.collectDeadline) {
 			// collection window ended without threshold
 			f.state = StateIdle
 			changed = true
 		}
-	case StateThreshold:
-		// external controller moves to PreFinalized/Finalized (challenge window)
 	}
 	return changed, f.state
 }
 
-// MoveToPreFinalized transitions after threshold met. Controller should run challenge timer outside.
-func (f *FSM) MoveToPreFinalized() {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.state == StateThreshold {
-		f.state = StatePreFinalized
-		f.preFinalizedAt = time.Now()
-	}
-}
-
+// MoveToFinalized transitions from Collecting to Finalized (when threshold is reached).
 func (f *FSM) MoveToFinalized() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.state == StatePreFinalized {
+	if f.state == StateCollecting {
 		f.state = StateFinalized
+		f.preFinalizedAt = time.Now() // 记录 finalize 时间
 	}
 }
 
-// GetPreFinalizedAt returns the time when PreFinalized was entered.
-func (f *FSM) GetPreFinalizedAt() time.Time {
+// GetFinalizedAt returns the time when Finalized was entered.
+func (f *FSM) GetFinalizedAt() time.Time {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.preFinalizedAt
+}
+
+// Reset moves FSM back to Idle, clearing all state.
+func (f *FSM) Reset() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.state = StateIdle
+	f.header = nil
+	f.bitmap = nil
+	f.proposeDeadline = time.Time{}
+	f.collectDeadline = time.Time{}
+	f.thresholdAt = time.Time{}
+	f.preFinalizedAt = time.Time{}
 }

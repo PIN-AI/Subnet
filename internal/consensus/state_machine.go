@@ -79,29 +79,15 @@ func (sm *StateMachine) ProposeHeader(header *pb.CheckpointHeader) error {
 	sm.currentHeader = header
 	sm.signatures = make(map[string]*pb.Signature)
 	sm.signersBitmap = make([]byte, (len(sm.validatorSet.Validators)+7)/8)
-	sm.state = StateProposed
+	sm.state = StateCollecting // 直接进入 Collecting 状态
 	sm.startTime = time.Now()
 	// Use configured timeout or default
-	proposeTimeout := 10 * time.Second
+	collectTimeout := 15 * time.Second
 	if sm.timeoutConfig != nil {
-		proposeTimeout = sm.timeoutConfig.ProposeTimeout
+		collectTimeout = sm.timeoutConfig.CollectTimeout
 	}
-	sm.proposeDeadline = sm.startTime.Add(proposeTimeout)
+	sm.collectDeadline = sm.startTime.Add(collectTimeout)
 
-	return nil
-}
-
-// StartCollecting transitions to collecting signatures state
-func (sm *StateMachine) StartCollecting(collectTimeout time.Duration) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	if sm.state != StateProposed {
-		return fmt.Errorf("cannot start collecting in state %v", sm.state)
-	}
-
-	sm.state = StateCollecting
-	sm.collectDeadline = time.Now().Add(collectTimeout)
 	return nil
 }
 
@@ -110,19 +96,8 @@ func (sm *StateMachine) AddSignature(sig *pb.Signature) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	if sm.state != StateCollecting && sm.state != StateProposed {
+	if sm.state != StateCollecting {
 		return fmt.Errorf("cannot add signature in state %v", sm.state)
-	}
-
-	// Transition to collecting if needed
-	if sm.state == StateProposed {
-		sm.state = StateCollecting
-		// Use configured timeout or default
-		collectTimeout := 15 * time.Second
-		if sm.timeoutConfig != nil {
-			collectTimeout = sm.timeoutConfig.CollectTimeout
-		}
-		sm.collectDeadline = time.Now().Add(collectTimeout)
 	}
 
 	// Add signature using SignerId field
@@ -136,23 +111,9 @@ func (sm *StateMachine) AddSignature(sig *pb.Signature) error {
 		sm.signersBitmap[byteIdx] |= 1 << bitIdx
 	}
 
-	// Check if we reached threshold
-	signCount := len(sm.signatures)
-	required := sm.validatorSet.RequiredSignatures()
+	// Check if we reached threshold (不自动转状态,由外部检查并调用 Finalize)
 	thresholdMet := sm.checkThreshold()
-
-	// Log detailed threshold check info
-	if signCount >= required-1 {
-		// Log when we're close to or at threshold
-		signers := make([]string, 0, len(sm.signatures))
-		for signerID := range sm.signatures {
-			signers = append(signers, signerID)
-		}
-		// Note: We'll log this from the caller since we don't have logger here
-	}
-
 	if thresholdMet {
-		sm.state = StateThreshold
 		sm.thresholdTime = time.Now()
 	}
 
@@ -195,25 +156,12 @@ func (sm *StateMachine) GetSignersBitmap() []byte {
 	return bitmap
 }
 
-// MoveToPreFinalized transitions to pre-finalized state
-func (sm *StateMachine) MoveToPreFinalized() error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	if sm.state != StateThreshold {
-		return fmt.Errorf("cannot pre-finalize from state %v", sm.state)
-	}
-
-	sm.state = StatePreFinalized
-	return nil
-}
-
-// Finalize completes the consensus round
+// Finalize completes the consensus round (简化:从 Collecting 直接到 Finalized)
 func (sm *StateMachine) Finalize() error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	if sm.state != StatePreFinalized && sm.state != StateThreshold {
+	if sm.state != StateCollecting {
 		return fmt.Errorf("cannot finalize from state %v", sm.state)
 	}
 
@@ -242,14 +190,12 @@ func (sm *StateMachine) IsTimedOut(timeout time.Duration) bool {
 		return false
 	}
 
-	switch sm.state {
-	case StateProposed:
-		return time.Now().After(sm.proposeDeadline)
-	case StateCollecting:
+	// 简化: 只有 Collecting 状态会超时
+	if sm.state == StateCollecting {
 		return time.Now().After(sm.collectDeadline)
-	default:
-		return time.Since(sm.startTime) > timeout
 	}
+
+	return false
 }
 
 // GetProgress returns current consensus progress info

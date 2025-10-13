@@ -41,11 +41,13 @@ func (c *Chain) AddCheckpoint(header *pb.CheckpointHeader) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Validate continuity
+	// Validate continuity - allow non-consecutive epochs for on-demand checkpointing
 	if c.latest != nil {
-		if header.Epoch != c.latest.Epoch+1 {
-			return fmt.Errorf("invalid epoch: expected %d, got %d",
-				c.latest.Epoch+1, header.Epoch)
+		// Epochs must be monotonically increasing but don't need to be consecutive
+		// This allows empty epochs without execution activity to be skipped
+		if header.Epoch <= c.latest.Epoch {
+			return fmt.Errorf("invalid epoch: must be greater than %d, got %d",
+				c.latest.Epoch, header.Epoch)
 		}
 
 		// Verify parent checkpoint hash to ensure chain continuity

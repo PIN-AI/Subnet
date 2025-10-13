@@ -9,10 +9,11 @@ import (
 	"math"
 	"time"
 
-	pb "subnet/proto/subnet"
+	"google.golang.org/protobuf/proto"
 	"subnet/internal/consensus"
 	"subnet/internal/crypto"
 	"subnet/internal/types"
+	pb "subnet/proto/subnet"
 )
 
 // ProcessExecutionReport processes an execution report from an agent
@@ -47,12 +48,12 @@ func (n *Node) ProcessExecutionReport(report *pb.ExecutionReport) (*pb.Receipt, 
 		ScoreHint:   uint32(score),
 	}
 
-	n.logger.Info("Processed execution report",
-		"report_id", reportID,
-		"assignment", report.AssignmentId,
-		"intent_id", report.IntentId,
-		"score", score,
-		"pending_reports_count", len(n.pendingReports))
+	n.logger.Infof("Processed execution report report_id=%s assignment=%s intent_id=%s score=%d pending_reports=%d",
+		reportID,
+		report.AssignmentId,
+		report.IntentId,
+		score,
+		len(n.pendingReports))
 
 	// Broadcast the execution report to all validators (including leader)
 	// This ensures all nodes, especially the current leader, can include this report in the next checkpoint
@@ -94,18 +95,19 @@ func (n *Node) HandleProposal(header *pb.CheckpointHeader) error {
 	_, leader := n.leaderTracker.Leader(header.Epoch)
 	isLeader := leader != nil && leader.ID == n.id
 
-	n.logger.Info("HandleProposal called",
-		"epoch", header.Epoch,
-		"is_leader", isLeader,
-		"fsm_state", n.fsm.GetState())
+	n.logger.Infof("HandleProposal called epoch=%d is_leader=%t fsm_state=%s",
+		header.Epoch,
+		isLeader,
+		n.fsm.GetState())
 
 	// If we are the leader and the FSM is already in a non-idle state for this epoch,
 	// this is our own proposal coming back via NATS - skip it to avoid "cannot propose in state proposed" error
 	if isLeader {
 		fsmState := n.fsm.GetState()
 		if fsmState != consensus.StateIdle {
-			n.logger.Info("Leader skipping own proposal received via broadcast",
-				"epoch", header.Epoch, "fsm_state", fsmState)
+			n.logger.Infof("Leader skipping own proposal received via broadcast epoch=%d fsm_state=%s",
+				header.Epoch,
+				fsmState)
 			return nil
 		}
 	}
@@ -120,9 +122,9 @@ func (n *Node) HandleProposal(header *pb.CheckpointHeader) error {
 	// We need to reset our FSM to accept the new proposal
 	fsmState := n.fsm.GetState()
 	if !isLeader && fsmState != consensus.StateIdle {
-		n.logger.Info("Follower resetting state to accept leader's new proposal",
-			"epoch", header.Epoch,
-			"old_state", fsmState)
+		n.logger.Infof("Follower resetting state to accept leader's new proposal epoch=%d old_state=%s",
+			header.Epoch,
+			fsmState)
 		n.fsm.Reset()
 		n.signatures = make(map[string]*pb.Signature) // Clear old signatures
 	}
@@ -149,9 +151,9 @@ func (n *Node) HandleProposal(header *pb.CheckpointHeader) error {
 
 	n.currentCheckpoint = header
 
-	n.logger.Info("Follower signed checkpoint proposal, broadcasting signature",
-		"epoch", header.Epoch,
-		"validator", n.id)
+	n.logger.Infof("Follower signed checkpoint proposal, broadcasting signature epoch=%d validator=%s",
+		header.Epoch,
+		n.id)
 
 	// Broadcast signature
 	go n.broadcastSignature(sig)
@@ -164,9 +166,9 @@ func (n *Node) AddSignature(sig *pb.Signature) error {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	n.logger.Info("AddSignature called",
-		"signer", sig.SignerId,
-		"has_checkpoint", n.currentCheckpoint != nil)
+	n.logger.Infof("AddSignature called signer=%s has_checkpoint=%t",
+		sig.SignerId,
+		n.currentCheckpoint != nil)
 
 	// Verify signature corresponds to current checkpoint
 	if n.currentCheckpoint == nil {
@@ -214,25 +216,18 @@ func (n *Node) AddSignature(sig *pb.Signature) error {
 		signers = append(signers, signerID)
 	}
 
-	n.logger.Info("Added signature to checkpoint",
-		"signer", sig.SignerId,
-		"epoch", n.currentCheckpoint.Epoch,
-		"total_signatures", len(n.signatures),
-		"fsm_state", fsmState,
-		"fsm_sign_count", signCount,
-		"required", required,
-		"progress", progress,
-		"all_signers", signers)
+	n.logger.Infof("Added signature to checkpoint signer=%s epoch=%d total_signatures=%d fsm_state=%s sign_count=%d required=%d progress=%.2f all_signers=%v",
+		sig.SignerId,
+		n.currentCheckpoint.Epoch,
+		len(n.signatures),
+		fsmState,
+		signCount,
+		required,
+		progress,
+		signers)
 
-	// Check if we just reached threshold and trigger finalization immediately
-	// This prevents race condition where ticker might check old state before threshold is processed
-	if fsmState == consensus.StateThreshold {
-		n.logger.Info("Threshold reached via signature, triggering finalization",
-			"epoch", n.currentCheckpoint.Epoch,
-			"signatures", len(n.signatures))
-		// Trigger finalization in separate goroutine to avoid blocking signature processing
-		go n.finalizeCheckpoint()
-	}
+	// Simplified logic: FSM no longer has StateThreshold, consensusLoop triggers finalize after reaching threshold
+	// Just need to record signature addition success here
 
 	return nil
 }
@@ -266,13 +261,13 @@ func (n *Node) detectDoubleSign(validatorID string, epoch uint64, sig1, sig2 *pb
 	// Create detailed evidence data
 	evidenceDetail := struct {
 		ValidatorID     string `json:"validator_id"`
-		Epoch          uint64 `json:"epoch"`
+		Epoch           uint64 `json:"epoch"`
 		FirstSignature  []byte `json:"first_signature"`
 		SecondSignature []byte `json:"second_signature"`
 		DetectedAt      int64  `json:"detected_at"`
 	}{
 		ValidatorID:     validatorID,
-		Epoch:          epoch,
+		Epoch:           epoch,
 		FirstSignature:  sig1.Der,
 		SecondSignature: sig2.Der,
 		DetectedAt:      time.Now().Unix(),
@@ -284,8 +279,8 @@ func (n *Node) detectDoubleSign(validatorID string, epoch uint64, sig1, sig2 *pb
 	// Create proto evidence (will be used when reporting to RootLayer)
 	_ = &pb.DoubleSignEvidence{
 		ValidatorId: validatorID,
-		Epoch:      epoch,
-		Evidence:   evidenceData,
+		Epoch:       epoch,
+		Evidence:    evidenceData,
 	}
 
 	// Store evidence
@@ -305,9 +300,7 @@ func (n *Node) detectDoubleSign(validatorID string, epoch uint64, sig1, sig2 *pb
 	// Notify RootLayer if connected
 	if n.rootlayerClient != nil && n.rootlayerClient.IsConnected() {
 		// This would be sent to RootLayer for slashing
-		n.logger.Info("Reporting double sign to RootLayer",
-			"validator", validatorID,
-			"epoch", epoch)
+		n.logger.Infof("Reporting double sign to RootLayer validator=%s epoch=%d", validatorID, epoch)
 		// In production, we would call:
 		// n.rootlayerClient.ReportDoubleSign(evidence)
 	}
@@ -360,7 +353,7 @@ func (n *Node) GetValidationPolicy() *pb.ValidationPolicy {
 		return &pb.ValidationPolicy{
 			PolicyId: n.config.ValidationPolicy.PolicyID,
 			Version:  n.config.ValidationPolicy.Version,
-			Rules: &pb.ValidationPolicy_Rules{
+			Rules:    &pb.ValidationPolicy_Rules{
 				// Note: Proto definition for Rules may need adjustment
 				// These are placeholders based on typical validation rules
 			},
@@ -483,8 +476,12 @@ func (n *Node) validateProposal(header *pb.CheckpointHeader) error {
 		return fmt.Errorf("invalid epoch: %d < %d (already finalized)", header.Epoch, n.currentCheckpoint.Epoch)
 	}
 
-	// Accept proposals for current or future epochs
-	// The finalized broadcast mechanism will handle epoch synchronization
+	// Fix Problem 7: Reject proposals that are too far in the future
+	// Proposals should be for current epoch or at most 1 epoch ahead
+	if header.Epoch > n.currentEpoch+1 {
+		return fmt.Errorf("invalid epoch: %d > %d (too far in future, max allowed: %d)",
+			header.Epoch, n.currentEpoch, n.currentEpoch+1)
+	}
 
 	// TODO: Add more validation once proto fields are confirmed
 	return nil
@@ -544,15 +541,9 @@ func (n *Node) broadcastSignature(sig *pb.Signature) {
 func (n *Node) broadcastExecutionReport(report *pb.ExecutionReport) {
 	if n.broadcaster != nil {
 		if err := n.broadcaster.BroadcastExecutionReport(report); err != nil {
-			n.logger.Error("Failed to broadcast execution report",
-				"error", err,
-				"intent_id", report.IntentId,
-				"assignment_id", report.AssignmentId)
+			n.logger.Errorf("Failed to broadcast execution report intent_id=%s assignment_id=%s error=%v", report.IntentId, report.AssignmentId, err)
 		} else {
-			n.logger.Info("📡 Broadcasted execution report to all validators",
-				"intent_id", report.IntentId,
-				"assignment_id", report.AssignmentId,
-				"agent_id", report.AgentId)
+			n.logger.Infof("📡 Broadcasted execution report to all validators intent_id=%s assignment_id=%s agent_id=%s", report.IntentId, report.AssignmentId, report.AgentId)
 		}
 	} else {
 		n.logger.Warn("No broadcaster configured, skipping execution report broadcast")
@@ -562,13 +553,9 @@ func (n *Node) broadcastExecutionReport(report *pb.ExecutionReport) {
 func (n *Node) broadcastFinalized(header *pb.CheckpointHeader) {
 	if n.broadcaster != nil {
 		if err := n.broadcaster.BroadcastFinalized(header); err != nil {
-			n.logger.Error("Failed to broadcast finalized checkpoint",
-				"error", err,
-				"epoch", header.Epoch)
+			n.logger.Errorf("Failed to broadcast finalized checkpoint epoch=%d error=%v", header.Epoch, err)
 		} else {
-			n.logger.Info("🏁 Broadcasted finalized checkpoint",
-				"epoch", header.Epoch,
-				"signatures", header.Signatures.SignatureCount)
+			n.logger.Infof("🏁 Broadcasted finalized checkpoint epoch=%d signatures=%d", header.Epoch, header.Signatures.SignatureCount)
 		}
 	} else {
 		n.logger.Warn("No broadcaster configured, skipping finalized broadcast")
@@ -578,18 +565,17 @@ func (n *Node) broadcastFinalized(header *pb.CheckpointHeader) {
 // HandleFinalized handles a finalized checkpoint broadcast from another validator
 func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 	n.mu.Lock()
-	defer n.mu.Unlock()
 
-	n.logger.Info("🏁 Handling finalized checkpoint",
-		"received_epoch", header.Epoch,
-		"current_epoch", n.currentEpoch,
-		"current_state", n.fsm.GetState())
+	n.logger.Infof("🏁 Handling finalized checkpoint received_epoch=%d current_epoch=%d current_state=%s",
+		header.Epoch,
+		n.currentEpoch,
+		n.fsm.GetState())
 
 	// If we're behind, catch up
 	if header.Epoch > n.currentEpoch {
-		n.logger.Info("📈 Catching up to finalized epoch",
-			"from_epoch", n.currentEpoch,
-			"to_epoch", header.Epoch)
+		n.logger.Infof("📈 Catching up to finalized epoch from_epoch=%d to_epoch=%d",
+			n.currentEpoch,
+			header.Epoch)
 
 		// Store the finalized checkpoint
 		n.currentCheckpoint = header
@@ -599,6 +585,11 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 		n.fsm.Reset()
 		n.signatures = make(map[string]*pb.Signature)
 
+		// Fix: Clear pending reports when follower receives finalized checkpoint
+		// Prevents duplicate submission of old reports if this node later becomes leader
+		n.pendingReports = make(map[string]*pb.ExecutionReport)
+		n.reportScores = make(map[string]int32)
+
 		// Update leadership status for new epoch
 		_, leader := n.leaderTracker.Leader(n.currentEpoch)
 		wasLeader := n.isLeader
@@ -607,9 +598,9 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 		if wasLeader != n.isLeader {
 			n.lastCheckpointAt = time.Time{} // Reset timer
 			if n.isLeader {
-				n.logger.Info("Became leader after catch-up", "epoch", n.currentEpoch)
+				n.logger.Infof("Became leader after catch-up epoch=%d", n.currentEpoch)
 			} else {
-				n.logger.Info("Not leader after catch-up", "epoch", n.currentEpoch)
+				n.logger.Infof("Not leader after catch-up epoch=%d", n.currentEpoch)
 			}
 		}
 
@@ -623,28 +614,98 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 			n.logger.Error("Failed to save finalized checkpoint", "error", err)
 		}
 
-		n.logger.Info("✅ Successfully caught up to finalized checkpoint",
-			"new_epoch", n.currentEpoch,
-			"is_leader", n.isLeader)
+		n.logger.Infof("✅ Successfully caught up to finalized checkpoint new_epoch=%d is_leader=%t",
+			n.currentEpoch,
+			n.isLeader)
 	} else if header.Epoch == n.currentEpoch {
 		// We're at the same epoch but might have missed the finalization
+		// IMPORTANT: Only transition if we're NOT already idle
+		// If we're idle, we've already moved past this epoch
 		if n.fsm.GetState() != consensus.StateIdle {
-			n.logger.Info("📊 Updating to finalized state for current epoch",
-				"epoch", n.currentEpoch,
-				"prev_state", n.fsm.GetState())
+			n.logger.Infof("📊 Updating to finalized state for current epoch epoch=%d prev_state=%s", n.currentEpoch, n.fsm.GetState())
 
-			// Reset to idle and move to next epoch
+			// Store the finalized checkpoint
 			n.currentCheckpoint = header
+
+			// Store checkpoint in chain
+			if err := n.chain.AddCheckpoint(header); err != nil {
+				n.logger.Warn("Failed to store finalized checkpoint in chain", "error", err)
+			}
+
+			// Persist to storage
+			if err := n.saveCheckpoint(header); err != nil {
+				n.logger.Warn("Failed to save finalized checkpoint to storage", "error", err)
+			}
+
+			// CRITICAL FIX: Submit ValidationBundle to RootLayer if we are the leader
+			// This handles the case where leader receives finalized checkpoint via broadcast
+			// before its own finalizeCheckpoint() could be called
+			//
+			// IMPORTANT: Only submit if FSM is NOT in StateFinalized, which means we haven't
+			// yet called finalizeCheckpoint() locally. If StateFinalized, it means we already
+			// submitted via finalizeCheckpoint() and this is our own broadcast coming back.
+			_, leader := n.leaderTracker.Leader(header.Epoch)
+			isLeader := leader != nil && leader.ID == n.id
+			fsmState := n.fsm.GetState()
+
+			if isLeader && len(n.pendingReports) > 0 && fsmState != consensus.StateFinalized {
+				// Clone data before releasing lock
+				pendingReportsCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
+				for k, v := range n.pendingReports {
+					pendingReportsCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+				}
+				signaturesCopy := make(map[string]*pb.Signature, len(n.signatures))
+				for k, v := range n.signatures {
+					signaturesCopy[k] = proto.Clone(v).(*pb.Signature)
+				}
+				headerCopy := proto.Clone(header).(*pb.CheckpointHeader)
+
+				n.logger.Infof("Leader received finalized checkpoint via broadcast - will submit ValidationBundle epoch=%d pending_reports=%d fsm_state=%s", header.Epoch, len(pendingReportsCopy), fsmState)
+
+				// Release lock before submitting (to avoid blocking consensus)
+				n.mu.Unlock()
+
+				// Submit to RootLayer
+				n.submitToRootLayerWithData(headerCopy, pendingReportsCopy, signaturesCopy)
+
+				// Re-acquire lock for remaining operations
+				n.mu.Lock()
+			} else if isLeader && fsmState == consensus.StateFinalized {
+				n.logger.Debug("Leader skipping ValidationBundle submission - already submitted via finalizeCheckpoint()",
+					"epoch", header.Epoch,
+					"fsm_state", fsmState)
+			}
+
+			// Move to next epoch
 			n.currentEpoch++
 			n.fsm.Reset()
 			n.signatures = make(map[string]*pb.Signature)
 
+			// Fix: Clear pending reports when follower receives finalized checkpoint
+			// Prevents duplicate submission of old reports if this node later becomes leader
+			n.pendingReports = make(map[string]*pb.ExecutionReport)
+			n.reportScores = make(map[string]int32)
+
 			// Update leadership
-			_, leader := n.leaderTracker.Leader(n.currentEpoch)
-			n.isLeader = leader != nil && leader.ID == n.id
+			_, newLeader := n.leaderTracker.Leader(n.currentEpoch)
+			wasLeader := n.isLeader
+			n.isLeader = newLeader != nil && newLeader.ID == n.id
+
+			if wasLeader != n.isLeader {
+				n.lastCheckpointAt = time.Time{} // Reset timer if leadership changed
+			}
+
+			n.logger.Infof("✅ Advanced to next epoch after receiving finalized checkpoint new_epoch=%d is_leader=%t", n.currentEpoch, n.isLeader)
+		} else {
+			// Already idle, which means we've already processed finalization for this epoch
+			// This is likely a duplicate broadcast - just ignore it
+			n.logger.Debug("Ignoring duplicate finalized checkpoint broadcast",
+				"epoch", header.Epoch,
+				"current_state", n.fsm.GetState())
 		}
 	}
 	// If header.Epoch < n.currentEpoch, we're ahead, ignore
 
+	n.mu.Unlock()
 	return nil
 }

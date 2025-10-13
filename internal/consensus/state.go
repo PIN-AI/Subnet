@@ -4,25 +4,16 @@ type State int
 
 const (
 	StateIdle State = iota
-	StateProposed
-	StateCollecting
-	StateThreshold
-	StatePreFinalized
-	StateFinalized
+	StateCollecting // 合并了 Proposed 和 Collecting,收集签名中
+	StateFinalized  // 已完成(达到阈值后直接 finalize)
 )
 
 func (s State) String() string {
 	switch s {
 	case StateIdle:
 		return "idle"
-	case StateProposed:
-		return "proposed"
 	case StateCollecting:
 		return "collecting"
-	case StateThreshold:
-		return "threshold"
-	case StatePreFinalized:
-		return "pre_finalized"
 	case StateFinalized:
 		return "finalized"
 	default:
