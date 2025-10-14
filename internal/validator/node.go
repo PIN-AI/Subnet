@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1369,6 +1370,48 @@ func (n *Node) clearEpochData() {
 	n.signatures = make(map[string]*pb.Signature)
 }
 
+// groupReportsByIntent groups execution reports by (IntentID, AssignmentID, AgentID)
+// This allows building separate ValidationBundles for each Intent
+func (n *Node) groupReportsByIntent(reports map[string]*pb.ExecutionReport) map[string][]*pb.ExecutionReport {
+	grouped := make(map[string][]*pb.ExecutionReport)
+
+	for reportID, report := range reports {
+		// Create composite key from Intent+Assignment+Agent
+		key := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
+		grouped[key] = append(grouped[key], report)
+
+		n.logger.Debug("Grouping execution report",
+			"report_id", reportID,
+			"intent_id", report.IntentId,
+			"assignment_id", report.AssignmentId,
+			"agent_id", report.AgentId,
+			"group_key", key)
+	}
+
+	n.logger.Infof("Grouped execution reports into %d Intent groups", len(grouped))
+	return grouped
+}
+
+// clearReportsForIntent removes execution reports for a specific Intent group
+// Iterates through all pending reports and removes those matching the intentKey
+func (n *Node) clearReportsForIntent(intentKey string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	removed := 0
+	for reportID, report := range n.pendingReports {
+		// Check if this report belongs to the Intent group
+		key := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
+		if key == intentKey {
+			delete(n.pendingReports, reportID)
+			delete(n.reportScores, reportID)
+			removed++
+		}
+	}
+
+	n.logger.Infof("Cleared %d execution reports for Intent group %s", removed, intentKey)
+}
+
 // submitToRootLayer submits the finalized checkpoint to RootLayer
 // DEPRECATED: Use submitToRootLayerWithData instead to avoid race conditions
 func (n *Node) submitToRootLayer(header *pb.CheckpointHeader) {
@@ -1389,7 +1432,7 @@ func (n *Node) submitToRootLayer(header *pb.CheckpointHeader) {
 }
 
 // submitToRootLayerWithData submits the finalized checkpoint to RootLayer
-// This version takes pre-copied data to avoid race conditions with StateFinalized handler
+// FIXED: Now supports multiple Intents per checkpoint by grouping reports and submitting separate ValidationBundles
 func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingReports map[string]*pb.ExecutionReport, signatures map[string]*pb.Signature) {
 	n.logger.Infof("Attempting to submit checkpoint to RootLayer epoch=%d pending_reports=%d signatures=%d is_connected=%t", header.Epoch, len(pendingReports), len(signatures), n.rootlayerClient != nil && n.rootlayerClient.IsConnected())
 
@@ -1398,55 +1441,107 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 		return
 	}
 
-	// Build ValidationBundle from checkpoint with provided data
-	bundle := n.buildValidationBundleWithData(header, pendingReports, signatures)
-	if bundle == nil {
-		n.logger.Error("⚠️ Failed to build validation bundle - see detailed logs above",
-			"epoch", header.Epoch)
+	if len(pendingReports) == 0 {
+		n.logger.Info("No pending reports to submit, skipping ValidationBundle submission epoch=%d", header.Epoch)
 		return
 	}
 
-	// IMPORTANT: Wait for RootLayer state synchronization
-	// After Assignment is submitted to blockchain, RootLayer needs time to sync the Intent status
-	// Typical sync delay is 10-30 seconds
+	// STEP 1: Group reports by Intent (IntentID, AssignmentID, AgentID)
+	groupedReports := n.groupReportsByIntent(pendingReports)
+	n.logger.Infof("Grouped %d execution reports into %d Intent groups for epoch %d", len(pendingReports), len(groupedReports), header.Epoch)
+
+	// IMPORTANT: Wait for RootLayer state synchronization before submitting ValidationBundles
+	//
+	// RATIONALE:
+	// After an Assignment is submitted to the blockchain by the Matcher, the RootLayer's
+	// indexer needs time to sync the blockchain state and update the Intent's status
+	// (e.g., from "PENDING" to "ASSIGNED"). If we submit the ValidationBundle too early,
+	// the RootLayer will reject it with "Invalid intent status" because it hasn't seen
+	// the Assignment transaction yet.
+	//
+	// CURRENT IMPLEMENTATION:
+	// We use a conservative 15-second blocking sleep to ensure the RootLayer has enough
+	// time to process the Assignment transaction. This is a simple, reliable approach
+	// that works well in production with typical blockchain confirmation times.
+	//
+	// FUTURE OPTIMIZATION:
+	// This synchronous wait can be replaced with an event-driven mechanism:
+	// 1. Listen for Assignment confirmation events from blockchain
+	// 2. Poll RootLayer's /intent/{id} endpoint until status changes to "ASSIGNED"
+	// 3. Use exponential backoff retry instead of fixed delay
+	// 4. Implement callback-based async submission pipeline
+	//
+	// The current approach is acceptable because:
+	// - It's deterministic and easy to debug
+	// - 15s is reasonable for blockchain finality
+	// - The retry logic in submitSingleValidationBundle handles edge cases
+	// - This only blocks the leader validator, not the entire subnet
 	syncDelay := 15 * time.Second
-	n.logger.Infof("⏳ Waiting %v for RootLayer state synchronization before submitting ValidationBundle epoch=%d intent_id=%s",
-		syncDelay, header.Epoch, bundle.IntentId)
+	n.logger.Infof("⏳ Waiting %v for RootLayer state synchronization before submitting ValidationBundles epoch=%d (see node.go:1450 for rationale)",
+		syncDelay, header.Epoch)
 	time.Sleep(syncDelay)
 
-	// Submit to RootLayer with retry logic
-	maxRetries := 5  // Increased from 3 to 5 to give more time for RootLayer sync
+	// STEP 2: Submit ValidationBundle for each Intent group
+	successfulIntents := make([]string, 0, len(groupedReports))
+	failedIntents := make([]string, 0)
+
+	for intentKey, reports := range groupedReports {
+		n.logger.Infof("Processing Intent group %s with %d reports epoch=%d", intentKey, len(reports), header.Epoch)
+
+		// Build ValidationBundle for this Intent
+		bundle := n.buildValidationBundleForIntent(header, reports, signatures)
+		if bundle == nil {
+			n.logger.Errorf("⚠️ Failed to build ValidationBundle for Intent group %s epoch=%d", intentKey, header.Epoch)
+			failedIntents = append(failedIntents, intentKey)
+			continue
+		}
+
+		// Submit this Intent's ValidationBundle with retry logic
+		if n.submitSingleValidationBundle(header, bundle, intentKey) {
+			successfulIntents = append(successfulIntents, intentKey)
+		} else {
+			failedIntents = append(failedIntents, intentKey)
+		}
+	}
+
+	// STEP 3: Clear only successfully submitted Intent reports
+	for _, intentKey := range successfulIntents {
+		n.clearReportsForIntent(intentKey)
+	}
+
+	n.logger.Infof("ValidationBundle submission complete epoch=%d total_intents=%d successful=%d failed=%d",
+		header.Epoch, len(groupedReports), len(successfulIntents), len(failedIntents))
+
+	if len(failedIntents) > 0 {
+		n.logger.Warnf("Some Intents failed ValidationBundle submission and will be retried in next checkpoint epoch=%d failed_intents=%v",
+			header.Epoch, failedIntents)
+	}
+}
+
+// submitSingleValidationBundle submits a single ValidationBundle to RootLayer with retry logic
+// Returns true if submission succeeded, false otherwise
+func (n *Node) submitSingleValidationBundle(header *pb.CheckpointHeader, bundle *rootpb.ValidationBundle, intentKey string) bool {
+	maxRetries := 5
 	retryDelay := 10 * time.Second
 
 	var lastErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 
-		n.logger.Infof("Submitting ValidationBundle to RootLayer epoch=%d intent_id=%s attempt=%d/%d",
-			header.Epoch, bundle.IntentId, attempt, maxRetries)
+		n.logger.Infof("Submitting ValidationBundle to RootLayer epoch=%d intent_id=%s intent_key=%s attempt=%d/%d",
+			header.Epoch, bundle.IntentId, intentKey, attempt, maxRetries)
 
 		err := n.rootlayerClient.SubmitValidationBundle(ctx, bundle)
 		cancel()
 
 		if err == nil {
 			// Success!
-			n.logger.Infof("✅ Successfully submitted validation bundle to RootLayer epoch=%d intent_id=%s signatures=%d attempt=%d",
-				header.Epoch, bundle.IntentId, len(signatures), attempt)
-
-			// Clear pending reports after successful submission
-			n.mu.Lock()
-			reportsCount := len(n.pendingReports)
-			n.pendingReports = make(map[string]*pb.ExecutionReport)
-			n.reportScores = make(map[string]int32)
-			n.mu.Unlock()
-
-			n.logger.Infof("🧹 Cleared execution reports after successful ValidationBundle submission epoch=%d cleared_reports=%d",
-				header.Epoch, reportsCount)
-			return
+			n.logger.Infof("✅ Successfully submitted ValidationBundle to RootLayer epoch=%d intent_id=%s intent_key=%s attempt=%d",
+				header.Epoch, bundle.IntentId, intentKey, attempt)
+			return true
 		}
 
-		// Check if error is about RootLayer sync issues (Intent status or Assignment not found)
-		// These are retryable errors caused by RootLayer state synchronization delays
+		// Check if error is retryable
 		isRetryable := strings.Contains(err.Error(), "Invalid intent status") ||
 			strings.Contains(err.Error(), "intent status") ||
 			strings.Contains(err.Error(), "assignment not found")
@@ -1464,58 +1559,39 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 			}
 		} else {
 			// Other error - don't retry
-			n.logger.Errorf("Failed to submit validation bundle to RootLayer (non-retryable error) error=%v epoch=%d intent_id=%s attempt=%d",
+			n.logger.Errorf("Failed to submit ValidationBundle to RootLayer (non-retryable error) error=%v epoch=%d intent_id=%s attempt=%d",
 				err, header.Epoch, bundle.IntentId, attempt)
-			return
+			return false
 		}
 	}
 
 	// All retries exhausted
-	n.logger.Errorf("Failed to submit validation bundle to RootLayer after all retries error=%v epoch=%d intent_id=%s max_retries=%d",
+	n.logger.Errorf("Failed to submit ValidationBundle to RootLayer after all retries error=%v epoch=%d intent_id=%s max_retries=%d",
 		lastErr, header.Epoch, bundle.IntentId, maxRetries)
+	return false
 }
 
-// buildValidationBundle creates a ValidationBundle from the checkpoint
-// DEPRECATED: Use buildValidationBundleWithData to avoid race conditions
-func (n *Node) buildValidationBundle(header *pb.CheckpointHeader) *rootpb.ValidationBundle {
-	n.mu.RLock()
-	defer n.mu.RUnlock()
-	return n.buildValidationBundleWithData(header, n.pendingReports, n.signatures)
-}
-
-// buildValidationBundleWithData creates a ValidationBundle from the checkpoint with provided data
-// This version takes pre-copied data to avoid race conditions
-func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendingReports map[string]*pb.ExecutionReport, signatures map[string]*pb.Signature) *rootpb.ValidationBundle {
-	n.logger.Infof("Building ValidationBundle epoch=%d pending_reports=%d signatures=%d", header.Epoch, len(pendingReports), len(signatures))
-
-	// If there are no pending reports, this is an empty consensus checkpoint - skip it
-	if len(pendingReports) == 0 {
-		n.logger.Warnf("⚠️ ValidationBundle construction skipped: no pending execution reports epoch=%d", header.Epoch)
+// buildValidationBundleForIntent creates a ValidationBundle for a single Intent group
+// This version accepts an array of ExecutionReports for one Intent, not a map of all reports
+func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, reports []*pb.ExecutionReport, signatures map[string]*pb.Signature) *rootpb.ValidationBundle {
+	if len(reports) == 0 {
+		n.logger.Warn("Cannot build ValidationBundle: no reports provided")
 		return nil
 	}
 
-	// Extract IntentID and AgentID from first execution report
-	// Note: In current design, each checkpoint contains reports for a single intent
-	var intentID, assignmentID, agentID string
-	for reportID, report := range pendingReports {
-		intentID = report.IntentId
-		assignmentID = report.AssignmentId
-		agentID = report.AgentId
-		n.logger.Debug("Extracting metadata from execution report",
-			"report_id", reportID,
-			"intent_id", intentID,
-			"assignment_id", assignmentID,
-			"agent_id", agentID)
-		break // Use first report's metadata
-	}
+	// Extract metadata from first report (all reports in this group have same IntentID/AssignmentID/AgentID)
+	firstReport := reports[0]
+	intentID := firstReport.IntentId
+	assignmentID := firstReport.AssignmentId
+	agentID := firstReport.AgentId
 
-	// Validate that we have real intent data
-	if intentID == "" {
-		n.logger.Error("⚠️ ValidationBundle construction failed: missing IntentID",
-			"epoch", header.Epoch,
-			"pending_reports_count", len(pendingReports),
-			"reason", "intent_id_empty",
-			"action", "Check execution report structure and ensure IntentId field is populated")
+	n.logger.Infof("Building ValidationBundle for Intent group intent_id=%s assignment_id=%s agent_id=%s reports_count=%d epoch=%d",
+		intentID, assignmentID, agentID, len(reports), header.Epoch)
+
+	// Validate metadata
+	if intentID == "" || assignmentID == "" || agentID == "" {
+		n.logger.Errorf("⚠️ ValidationBundle construction failed: missing metadata intent_id=%s assignment_id=%s agent_id=%s",
+			intentID, assignmentID, agentID)
 		return nil
 	}
 
@@ -1524,13 +1600,12 @@ func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendin
 
 	if n.sdkClient != nil {
 		// Prepare data for SDK ValidationBundle signing
-		// Parse IDs from hex strings to proper types
 		intentIDHash := common.HexToHash(intentID)
 		assignmentIDHash := common.HexToHash(assignmentID)
 		subnetIDHash := common.HexToHash(n.config.SubnetID)
 		agentAddr := common.HexToAddress(agentID)
 
-		// Calculate result hash from checkpoint header (success case: non-zero hash)
+		// Calculate result hash from checkpoint header
 		resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
 
 		// Get execution reports root as proof hash
@@ -1567,15 +1642,11 @@ func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendin
 			if err != nil {
 				n.logger.Errorf("Failed to sign ValidationBundle digest: %v", err)
 			} else {
-				// Get validator address from SDK
 				validatorAddr := n.sdkClient.Signer.Address()
-
-				// Create ValidationSignature with proper EIP-191 signature
 				validationSigs = append(validationSigs, &rootpb.ValidationSignature{
 					Validator: validatorAddr.Hex(),
-					Signature: signature, // 65-byte EIP-191 signature
+					Signature: signature,
 				})
-
 				n.logger.Infof("✅ Generated EIP-191 ValidationBundle signature validator=%s signature_len=%d",
 					validatorAddr.Hex(), len(signature))
 			}
@@ -1591,10 +1662,7 @@ func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendin
 		}
 	}
 
-	n.logger.Debug("Prepared ValidationSignatures",
-		"validation_sigs_count", len(validationSigs))
-
-	// Calculate result hash for ValidationBundle (for non-SDK path and bundle construction)
+	// Calculate result hash for ValidationBundle
 	resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
 
 	// Get execution reports root as proof hash
@@ -1604,34 +1672,79 @@ func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendin
 	}
 
 	// Format RootHash with proper handling for epoch 0 (genesis)
+	// Use hex.EncodeToString to safely convert []byte to hex string
 	var rootHashStr string
 	if len(header.ParentCpHash) == 0 {
-		// Epoch 0 has no parent - use zero hash (32 bytes of zeros)
+		// Epoch 0 has no parent - use zero hash
 		rootHashStr = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	} else {
-		rootHashStr = fmt.Sprintf("0x%x", header.ParentCpHash)
+		// Safely encode bytes to hex string
+		rootHashStr = "0x" + hex.EncodeToString(header.ParentCpHash)
 	}
 
 	bundle := &rootpb.ValidationBundle{
 		SubnetId:     n.config.SubnetID,
-		IntentId:     intentID,     // Use real IntentID from execution report
-		AssignmentId: assignmentID, // Use real AssignmentID from execution report
-		AgentId:      agentID,      // Use real AgentID from execution report
+		IntentId:     intentID,
+		AssignmentId: assignmentID,
+		AgentId:      agentID,
 		RootHeight:   header.Epoch,
-		RootHash:     rootHashStr,  // Use formatted root hash with special handling for epoch 0
+		RootHash:     rootHashStr,
 		ExecutedAt:   header.Timestamp,
 		ResultHash:   resultHash[:],
 		ProofHash:    proofHash,
 		Signatures:   validationSigs,
 		SignerBitmap: header.Signatures.SignersBitmap,
 		TotalWeight:  header.Signatures.TotalWeight,
-		AggregatorId: n.id, // Current validator as aggregator
+		AggregatorId: n.id,
 		CompletedAt:  time.Now().Unix(),
 	}
 
-	n.logger.Infof("✅ ValidationBundle constructed successfully epoch=%d subnet_id=%s intent_id=%s assignment_id=%s agent_id=%s root_height=%d signatures=%d total_weight=%d aggregator_id=%s", header.Epoch, bundle.SubnetId, bundle.IntentId, bundle.AssignmentId, bundle.AgentId, bundle.RootHeight, len(bundle.Signatures), bundle.TotalWeight, bundle.AggregatorId)
+	n.logger.Infof("✅ ValidationBundle constructed for Intent group intent_id=%s assignment_id=%s agent_id=%s epoch=%d signatures=%d",
+		bundle.IntentId, bundle.AssignmentId, bundle.AgentId, header.Epoch, len(bundle.Signatures))
 
 	return bundle
+}
+
+// buildValidationBundle creates a ValidationBundle from the checkpoint
+// DEPRECATED: Use buildValidationBundleForIntent for multi-intent support
+// WARNING: This function has the old single-intent bug and should NOT be used in production
+func (n *Node) buildValidationBundle(header *pb.CheckpointHeader) *rootpb.ValidationBundle {
+	n.logger.Warn("DEPRECATED: buildValidationBundle called - this function has the single-intent bug! Use submitToRootLayerWithData instead")
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.buildValidationBundleWithData(header, n.pendingReports, n.signatures)
+}
+
+// buildValidationBundleWithData creates a ValidationBundle from the checkpoint with provided data
+// DEPRECATED: Use buildValidationBundleForIntent + submitToRootLayerWithData for proper multi-intent support
+// This function now internally calls the new grouping logic to avoid the single-intent bug
+// Returns the FIRST Intent's ValidationBundle for backward compatibility (warns if multiple Intents exist)
+func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendingReports map[string]*pb.ExecutionReport, signatures map[string]*pb.Signature) *rootpb.ValidationBundle {
+	n.logger.Warnf("⚠️ DEPRECATED: buildValidationBundleWithData called - use submitToRootLayerWithData for multi-intent support epoch=%d", header.Epoch)
+
+	// If there are no pending reports, this is an empty consensus checkpoint - skip it
+	if len(pendingReports) == 0 {
+		n.logger.Warnf("⚠️ ValidationBundle construction skipped: no pending execution reports epoch=%d", header.Epoch)
+		return nil
+	}
+
+	// Use the new grouping logic to properly handle multiple Intents
+	groupedReports := n.groupReportsByIntent(pendingReports)
+
+	// Warn if multiple Intent groups exist (backward compatibility issue)
+	if len(groupedReports) > 1 {
+		n.logger.Errorf("⚠️ CRITICAL: Multiple Intent groups detected (%d) but buildValidationBundleWithData can only return ONE! Other Intents will be LOST! Use submitToRootLayerWithData instead! epoch=%d",
+			len(groupedReports), header.Epoch)
+	}
+
+	// For backward compatibility, return the first Intent's bundle
+	for intentKey, reports := range groupedReports {
+		n.logger.Infof("Building ValidationBundle for first Intent group (backward compat): %s epoch=%d", intentKey, header.Epoch)
+		return n.buildValidationBundleForIntent(header, reports, signatures)
+	}
+
+	// No reports found - should not reach here due to check at beginning
+	return nil
 }
 
 // Validate validates the configuration

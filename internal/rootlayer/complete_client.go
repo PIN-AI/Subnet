@@ -128,8 +128,9 @@ func (c *CompleteClient) Close() error {
 
 // ===== Core Validation Methods =====
 
-// SubmitValidationBundle submits a validation bundle from validators
-func (c *CompleteClient) SubmitValidationBundle(ctx context.Context, reports []*pb.ExecutionReport, checkpoint *types.CheckpointHeader) error {
+// SubmitValidationBundle submits a single validation bundle to RootLayer
+// This maintains interface compatibility with rootlayer.Client
+func (c *CompleteClient) SubmitValidationBundle(ctx context.Context, bundle *rootpb.ValidationBundle) error {
 	c.mu.RLock()
 	client := c.intentPoolClient
 	c.mu.RUnlock()
@@ -138,10 +139,11 @@ func (c *CompleteClient) SubmitValidationBundle(ctx context.Context, reports []*
 		return fmt.Errorf("not connected to RootLayer")
 	}
 
-	// Build validation bundle from execution reports
-	bundle := c.buildValidationBundle(reports, checkpoint)
+	if bundle == nil {
+		return fmt.Errorf("validation bundle is nil")
+	}
 
-	// Submit via SubmitValidationBundle
+	// Submit the single validation bundle
 	resp, err := client.SubmitValidationBundle(ctx, bundle)
 	if err != nil {
 		return fmt.Errorf("failed to submit validation: %w", err)
@@ -200,6 +202,89 @@ func (c *CompleteClient) buildValidationBundle(reports []*pb.ExecutionReport, ch
 		AggregatorId: c.cfg.MatcherID,
 		CompletedAt:  time.Now().Unix(),
 	}
+
+	return bundle
+}
+
+// groupReportsByIntent groups execution reports by (IntentID, AssignmentID, AgentID)
+func (c *CompleteClient) groupReportsByIntent(reports []*pb.ExecutionReport) map[string][]*pb.ExecutionReport {
+	grouped := make(map[string][]*pb.ExecutionReport)
+
+	for _, report := range reports {
+		// Create composite key from Intent+Assignment+Agent
+		key := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
+		grouped[key] = append(grouped[key], report)
+
+		c.logger.Debugf("Grouping execution report: intent_id=%s assignment_id=%s agent_id=%s group_key=%s",
+			report.IntentId, report.AssignmentId, report.AgentId, key)
+	}
+
+	c.logger.Infof("Grouped execution reports into %d Intent groups", len(grouped))
+	return grouped
+}
+
+// buildValidationBundleForIntent creates a validation bundle for a specific Intent's reports
+func (c *CompleteClient) buildValidationBundleForIntent(reports []*pb.ExecutionReport, checkpoint *types.CheckpointHeader) *rootpb.ValidationBundle {
+	if len(reports) == 0 {
+		c.logger.Warn("Cannot build ValidationBundle: no reports provided")
+		return nil
+	}
+
+	// Extract metadata from first report (all reports in this group have same IntentID/AssignmentID/AgentID)
+	primaryReport := reports[0]
+	intentID := primaryReport.IntentId
+	assignmentID := primaryReport.AssignmentId
+	agentID := primaryReport.AgentId
+
+	c.logger.Infof("Building ValidationBundle for Intent: intent_id=%s assignment_id=%s agent_id=%s reports_count=%d epoch=%d",
+		intentID, assignmentID, agentID, len(reports), checkpoint.Epoch)
+
+	// Validate metadata
+	if intentID == "" || assignmentID == "" || agentID == "" {
+		c.logger.Errorf("⚠️ ValidationBundle construction failed: missing metadata intent_id=%s assignment_id=%s agent_id=%s",
+			intentID, assignmentID, agentID)
+		return nil
+	}
+
+	// Collect signatures from all validators who validated this report
+	var signatures []*rootpb.ValidationSignature
+	signerBitmap := make([]byte, 32) // Assuming max 256 validators
+	totalWeight := uint64(0)
+
+	// In production, this would collect actual validator signatures
+	// For now, create a dummy signature from our node
+	if c.signer != nil {
+		sig := &rootpb.ValidationSignature{
+			Validator: c.cfg.MatcherID,
+			Signature: []byte{},
+		}
+		signatures = append(signatures, sig)
+		totalWeight += 1
+	}
+
+	// Compute result hash from report data
+	resultHash := crypto.HashMessage(primaryReport.ResultData)
+
+	// Build the bundle with this Intent's metadata
+	bundle := &rootpb.ValidationBundle{
+		SubnetId:     c.cfg.SubnetID,
+		IntentId:     intentID,
+		AssignmentId: assignmentID,
+		AgentId:      agentID,
+		RootHeight:   checkpoint.Epoch,
+		RootHash:     "0x" + checkpoint.CanonicalHashHex(),
+		ExecutedAt:   primaryReport.Timestamp,
+		ResultHash:   resultHash[:],
+		ProofHash:    nil,
+		Signatures:   signatures,
+		SignerBitmap: signerBitmap,
+		TotalWeight:  totalWeight,
+		AggregatorId: c.cfg.MatcherID,
+		CompletedAt:  time.Now().Unix(),
+	}
+
+	c.logger.Infof("✅ ValidationBundle constructed for Intent: intent_id=%s assignment_id=%s agent_id=%s signatures=%d",
+		intentID, assignmentID, agentID, len(signatures))
 
 	return bundle
 }
