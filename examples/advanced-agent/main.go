@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	agentsdk "subnet/sdk/go"
+	agentsdk "github.com/PIN-AI/subnet-sdk/go"
 )
 
 // AdvancedAgent demonstrates all SDK features

@@ -5,7 +5,8 @@ go 1.24.0
 toolchain go1.24.7
 
 require (
-	github.com/PIN-AI/intent-protocol-contract-sdk v0.0.0-00010101000000-000000000000
+	github.com/PIN-AI/intent-protocol-contract-sdk v0.0.0-20251010094614-8603557e2545
+	github.com/PIN-AI/subnet-sdk/go v0.0.0-20251014134723-b4d4e4bc1282
 	github.com/ethereum/go-ethereum v1.16.4
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/nats-io/nats.go v1.45.0
@@ -16,7 +17,6 @@ require (
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 	google.golang.org/grpc v1.75.0
 	google.golang.org/protobuf v1.36.10
-	subnet/sdk/go v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -43,7 +43,6 @@ require (
 )
 
 require (
-	common/proto v0.0.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.0.1 // indirect
@@ -73,14 +72,10 @@ require (
 	golang.org/x/sys v0.36.0 // indirect
 	golang.org/x/text v0.26.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251002232023-7c0ddcbb5797 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gopkg.in/yaml.v3 v3.0.1
 	rootlayer/proto v0.0.0
 )
 
 replace common/proto => ./proto/common
 
 replace rootlayer/proto => ./proto/rootlayer
-
-replace subnet/sdk/go => ../subnet-sdk/go
-
-replace github.com/PIN-AI/intent-protocol-contract-sdk => ../intent-protocol-contract-sdk
