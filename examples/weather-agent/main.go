@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	agentsdk "subnet/sdk/go"
+	agentsdk "github.com/PIN-AI/subnet-sdk/go"
 )
 
 // WeatherRequest represents a weather query request

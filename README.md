@@ -2,7 +2,21 @@
 
 Go implementation of a PinAI Subnet that coordinates matcher, validator, and registry services. The matcher distributes intents pulled from the RootLayer, agents execute work using the published SDKs, and validators verify execution reports before assembling threshold validation bundles.
 
-See `docs/ARCHITECTURE_OVERVIEW.md` for a full component walkthrough.
+## 📚 Documentation
+
+- **[Subnet Deployment Guide](docs/SUBNET_DEPLOYMENT_GUIDE.md)** - Complete deployment and customization tutorial
+  - Quick deployment with default configuration
+  - Custom matcher strategy development
+  - Custom validator verification logic
+  - Custom agent executor development
+  - Production deployment guide
+
+- **[Custom Validation Guide](docs/CUSTOM_VALIDATION_GUIDE.md)** - Detailed guide for implementing custom validation logic
+  - Result validation (business logic)
+  - Evidence verification (TEE, ZK proofs, etc.)
+  - Integration examples
+
+- **[Architecture Overview](docs/ARCHITECTURE_OVERVIEW.md)** - Full component walkthrough
 
 ## Layout
 

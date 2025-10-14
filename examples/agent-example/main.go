@@ -9,7 +9,7 @@ import (
 	"strings"
 	"syscall"
 
-	agentsdk "subnet/sdk/go"
+	agentsdk "github.com/PIN-AI/subnet-sdk/go"
 )
 
 func main() {
