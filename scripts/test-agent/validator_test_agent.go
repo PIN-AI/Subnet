@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -16,9 +18,12 @@ func main() {
 	matcherAddr := flag.String("matcher", "localhost:8090", "Matcher gRPC address")
 	validatorAddr := flag.String("validator", "localhost:9090", "Validator gRPC address")
 	agentID := flag.String("agent-id", "test-agent-validator", "Agent ID")
+	agentChainAddress := flag.String("chain-address", "0xfc5A111b714547fc2D1D796EAAbb68264ed4A132", "Agent blockchain address")
+	subnetID := flag.String("subnet-id", "0x1111111111111111111111111111111111111111111111111111111111111111", "Subnet ID to subscribe to")
 	flag.Parse()
 
 	log.Printf("Starting validator test agent: %s", *agentID)
+	log.Printf("Chain address: %s", *agentChainAddress)
 	log.Printf("Connecting to matcher at: %s", *matcherAddr)
 	log.Printf("Connecting to validator at: %s", *validatorAddr)
 
@@ -84,11 +89,12 @@ func main() {
 				task.TaskId, time.Now().Unix())
 
 			// Submit ExecutionReport to Validator
+			// IMPORTANT: AgentId must be Ethereum address format for RootLayer validation
 			report := &pb.ExecutionReport{
 				ReportId:     fmt.Sprintf("report-%s-%d", *agentID, time.Now().Unix()),
 				AssignmentId: task.TaskId,
 				IntentId:     task.IntentId,
-				AgentId:      *agentID,
+				AgentId:      *agentChainAddress,  // Use chain address for RootLayer compatibility
 				Status:       pb.ExecutionReport_SUCCESS,
 				ResultData:   []byte(resultData),
 				Timestamp:    time.Now().Unix(),
@@ -119,7 +125,7 @@ func main() {
 
 	// Subscribe to intents
 	intentStream, err := matcherClient.StreamIntents(ctx, &pb.StreamIntentsRequest{
-		SubnetId: "0x1111111111111111111111111111111111111111111111111111111111111111",
+		SubnetId: *subnetID,
 	})
 	if err != nil {
 		log.Fatalf("Failed to stream intents: %v", err)
@@ -150,14 +156,24 @@ func main() {
 		log.Printf("📥 Received intent update: %s", intentID)
 		log.Printf("   Update type: %s", intentUpdate.UpdateType)
 
+		// Generate bid ID as 32-byte hex (hash of intent + agent + timestamp)
+		bidData := fmt.Sprintf("%s:%s:%d", intentID, *agentID, time.Now().UnixNano())
+		bidHash := sha256.Sum256([]byte(bidData))
+		bidID := "0x" + hex.EncodeToString(bidHash[:])
+
 		// Submit a bid
+		// IMPORTANT: For blockchain compatibility, agents must provide their Ethereum address
+		// in the "chain_address" metadata field for EIP-191 signature generation
 		bid := &pb.Bid{
-			BidId:       fmt.Sprintf("bid-%s-%d", *agentID, time.Now().Unix()),
+			BidId:       bidID,
 			IntentId:    intentID,
 			AgentId:     *agentID,
 			Price:       100,  // uint64
 			Token:       "PIN",
 			SubmittedAt: time.Now().Unix(),
+			Metadata: map[string]string{
+				"chain_address": *agentChainAddress,  // Agent's blockchain address
+			},
 		}
 
 		log.Printf("💰 Submitting bid: %s (price: %d %s)", bid.BidId, bid.Price, bid.Token)

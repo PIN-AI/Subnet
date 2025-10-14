@@ -69,6 +69,26 @@ func main() {
 			if viper.IsSet("agent.matcher.signer.private_key") {
 				cfg.PrivateKey = viper.GetString("agent.matcher.signer.private_key")
 			}
+
+			// Load top-level private_key (for SDK and chain operations)
+			if viper.IsSet("private_key") {
+				cfg.PrivateKey = viper.GetString("private_key")
+			}
+
+			// Load on-chain configuration
+			if viper.IsSet("enable_chain_submit") {
+				cfg.EnableChainSubmit = viper.GetBool("enable_chain_submit")
+			}
+			if viper.IsSet("chain_rpc_url") {
+				cfg.ChainRPCURL = viper.GetString("chain_rpc_url")
+			}
+			if viper.IsSet("chain_network") {
+				cfg.ChainNetwork = viper.GetString("chain_network")
+			}
+			if viper.IsSet("intent_manager_addr") {
+				cfg.IntentManagerAddr = viper.GetString("intent_manager_addr")
+			}
+
 			var rootlayerEndpoint string
 			if viper.IsSet("rootlayer.grpc_endpoint") {
 				rootlayerEndpoint = viper.GetString("rootlayer.grpc_endpoint")

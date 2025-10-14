@@ -1,0 +1,47 @@
+# Matcher Configuration with On-Chain Assignment Submission
+# This configuration enables the matcher to submit assignments both to RootLayer and blockchain
+
+# Identity configuration
+identity:
+  matcher_id: "matcher-prod-001"
+  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
+
+# Matcher private key for signing (REQUIRED)
+# This key will be used to sign both RootLayer submissions and on-chain transactions
+private_key: "your-matcher-private-key-here"  # Replace with actual key
+
+# Bidding window configuration
+bidding_window_sec: 10
+max_bids_per_intent: 100
+
+# Matching strategy
+matching_strategy: "lowest_price"
+
+# RootLayer configuration
+rootlayer_endpoint: "3.17.208.238:9001"  # RootLayer gRPC endpoint
+intent_pull_interval: 5s
+
+# On-Chain Configuration (NEW)
+# Enable this to submit assignments to blockchain
+enable_chain_submit: true
+chain_rpc_url: "https://sepolia.base.org"  # Base Sepolia RPC
+chain_network: "base_sepolia"
+intent_manager_addr: "0xD04d23775D3B8e028e6104E31eb0F6c07206EB46"  # IntentManager contract address
+
+# Timeouts
+timeouts:
+  task_send_timeout: 5s
+  task_response_timeout: 30s
+  rootlayer_submit_timeout: 10s
+
+# Network configuration
+network:
+  grpc_port: ":8090"
+  http_port: ":8091"
+
+# Limits
+limits:
+  max_concurrent_tasks: 1000
+  max_intent_history: 10000
+  bidding_window_sec: 10
+  max_bids_per_intent: 100

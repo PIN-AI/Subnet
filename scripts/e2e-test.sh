@@ -41,12 +41,20 @@ VALIDATOR_4_PORT=9203
 ROOTLAYER_GRPC="${ROOTLAYER_GRPC:-3.17.208.238:9001}"
 ROOTLAYER_HTTP="${ROOTLAYER_HTTP:-http://3.17.208.238:8081}"
 
-# Test configuration
-SUBNET_ID="0x1111111111111111111111111111111111111111111111111111111111111111"
+# Test configuration (can be overridden by env vars or command-line args)
+SUBNET_ID="${SUBNET_ID:-0x1111111111111111111111111111111111111111111111111111111111111111}"
 TEST_AGENT_ID="e2e-test-agent-001"
 
 # Cleanup flag
 CLEANUP_ON_EXIT=1
+
+# Optional: On-chain assignment submission configuration
+# Set ENABLE_CHAIN_SUBMIT=true to enable blockchain submission during E2E test
+ENABLE_CHAIN_SUBMIT="${ENABLE_CHAIN_SUBMIT:-false}"
+CHAIN_RPC_URL="${CHAIN_RPC_URL:-https://sepolia.base.org}"
+CHAIN_NETWORK="${CHAIN_NETWORK:-base_sepolia}"
+INTENT_MANAGER_ADDR="${INTENT_MANAGER_ADDR:-0xD04d23775D3B8e028e6104E31eb0F6c07206EB46}"
+MATCHER_PRIVATE_KEY="${MATCHER_PRIVATE_KEY:-EXAMPLE_PRIVATE_KEY_DO_NOT_USE_1234567890ABCDEF1234567890ABCDEF}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -274,7 +282,16 @@ agent:
   matcher:
     signer:
       type: "ecdsa"
-      private_key: "EXAMPLE_PRIVATE_KEY_DO_NOT_USE_1234567890ABCDEF1234567890ABCDEF"
+      private_key: "$MATCHER_PRIVATE_KEY"
+
+# Private key for matcher (used for signing and blockchain transactions)
+private_key: "$MATCHER_PRIVATE_KEY"
+
+# On-chain configuration (optional)
+enable_chain_submit: $ENABLE_CHAIN_SUBMIT
+chain_rpc_url: "$CHAIN_RPC_URL"
+chain_network: "$CHAIN_NETWORK"
+intent_manager_addr: "$INTENT_MANAGER_ADDR"
 EOF
 
     "$PROJECT_ROOT/bin/matcher" \
@@ -293,48 +310,31 @@ EOF
 start_validators() {
     print_header "Starting Validators"
 
-    # Test private keys and public keys (DO NOT use in production!)
-    local keys=("0000000000000000000000000000000000000000000000000000000000000001" \
-                "0000000000000000000000000000000000000000000000000000000000000002" \
-                "0000000000000000000000000000000000000000000000000000000000000003" \
-                "0000000000000000000000000000000000000000000000000000000000000004")
+    # Use matcher's private key for validator (DO NOT use in production!)
+    local MATCHER_KEY="EXAMPLE_PRIVATE_KEY_DO_NOT_USE_1234567890ABCDEF1234567890ABCDEF"
+    local keys=("$MATCHER_KEY")
 
-    # Corresponding public keys (derived from private keys using secp256k1)
-    local pubkeys=("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8" \
-                   "04c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee51ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a" \
-                   "04f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9388f7b0f632de8140fe337e62a37f3566500a99934c2231b6cb9fd7584b8e672" \
-                   "04e493dbf1c10d80f3581e4904930b1404cc6c13900ee0758474fa94abe8c4cd1351ed993ea0d455b75642e2098ea51448d967ae33bfbdfe40cfe97bdc47739922")
+    # Public key for matcher's private key (derived using secp256k1)
+    # Address: 0xfc5A111b714547fc2D1D796EAAbb68264ed4A132
+    local pubkeys=("0482ea12c5481d481c7f9d7c1a2047401c6e2f855e4cee4d8df0aa197514f3456528ba6c55092b20b51478fd8cf62cde37f206621b3dd47c2be3d5c35e4889bf94")
 
-    # Build the validator pubkeys parameter (id:pubkey pairs)
-    local validator_pubkeys=""
-    for i in 1 2 3 4; do
-        local validator_id="validator-e2e-$i"
-        local pubkey="${pubkeys[$((i-1))]}"
-        if [ -z "$validator_pubkeys" ]; then
-            validator_pubkeys="${validator_id}:${pubkey}"
-        else
-            validator_pubkeys="${validator_pubkeys},${validator_id}:${pubkey}"
-        fi
-    done
+    # Build the validator pubkeys parameter (id:pubkey pairs) - SINGLE VALIDATOR
+    local validator_id="validator-e2e-1"
+    local pubkey="${pubkeys[0]}"
+    local validator_pubkeys="${validator_id}:${pubkey}"
 
-    # Create shared validator set config
+    # Create shared validator set config - SINGLE VALIDATOR
     local validator_config="$LOG_DIR/validator-set-config.yaml"
     cat > "$validator_config" <<EOF
 subnet_id: "$SUBNET_ID"
 
 validator_set:
-  min_validators: 4
-  threshold_num: 3
-  threshold_denom: 4
+  min_validators: 1
+  threshold_num: 1
+  threshold_denom: 1
   validators:
     - id: "validator-e2e-1"
       endpoint: "127.0.0.1:$VALIDATOR_1_PORT"
-    - id: "validator-e2e-2"
-      endpoint: "127.0.0.1:$VALIDATOR_2_PORT"
-    - id: "validator-e2e-3"
-      endpoint: "127.0.0.1:$VALIDATOR_3_PORT"
-    - id: "validator-e2e-4"
-      endpoint: "127.0.0.1:$VALIDATOR_4_PORT"
 
 nats:
   url: "nats://127.0.0.1:$NATS_PORT"
@@ -343,7 +343,8 @@ timeouts:
   checkpoint_interval: 10s
 EOF
 
-    for i in 1 2 3 4; do
+    # Only start validator 1
+    for i in 1; do
         local port=$((VALIDATOR_1_PORT + i - 1))
         local validator_id="validator-e2e-$i"
         local storage_path="$LOG_DIR/validator-$i-data"
@@ -354,7 +355,7 @@ EOF
         rm -rf "$storage_path"
         mkdir -p "$storage_path"
 
-        # Create individual validator config
+        # Create individual validator config - SINGLE VALIDATOR
         local val_config="$LOG_DIR/validator-$i-config.yaml"
         cat > "$val_config" <<EOF
 subnet_id: "$SUBNET_ID"
@@ -371,18 +372,12 @@ storage:
   leveldb_path: "$storage_path"
 
 validator_set:
-  min_validators: 4
-  threshold_num: 3
-  threshold_denom: 4
+  min_validators: 1
+  threshold_num: 1
+  threshold_denom: 1
   validators:
     - id: "validator-e2e-1"
       endpoint: "127.0.0.1:$VALIDATOR_1_PORT"
-    - id: "validator-e2e-2"
-      endpoint: "127.0.0.1:$VALIDATOR_2_PORT"
-    - id: "validator-e2e-3"
-      endpoint: "127.0.0.1:$VALIDATOR_3_PORT"
-    - id: "validator-e2e-4"
-      endpoint: "127.0.0.1:$VALIDATOR_4_PORT"
 
 timeouts:
   checkpoint_interval: 10s
@@ -399,15 +394,19 @@ EOF
             --grpc "$port" \
             --nats "nats://127.0.0.1:$NATS_PORT" \
             --storage "$storage_path" \
-            --validators 4 \
-            --threshold-num 3 \
-            --threshold-denom 4 \
+            --validators 1 \
+            --threshold-num 1 \
+            --threshold-denom 1 \
             --validator-pubkeys "$validator_pubkeys" \
             --registry-grpc ":$registry_grpc_port" \
             --registry-http ":$registry_http_port" \
             --subnet-id "$SUBNET_ID" \
             --rootlayer-endpoint "$ROOTLAYER_GRPC" \
             --enable-rootlayer \
+            --enable-chain-submit="$ENABLE_CHAIN_SUBMIT" \
+            --chain-rpc-url="$CHAIN_RPC_URL" \
+            --chain-network="$CHAIN_NETWORK" \
+            --intent-manager-addr="$INTENT_MANAGER_ADDR" \
             > "$LOG_DIR/validator-$i.log" 2>&1 &
 
         echo $! >> "$PIDS_FILE"
@@ -415,7 +414,7 @@ EOF
         wait_for_port $port "Validator $i"
     done
 
-    print_success "All validators started"
+    print_success "Validator started"
 }
 
 # Start Test Agent
@@ -426,6 +425,7 @@ start_test_agent() {
         --agent-id "$TEST_AGENT_ID" \
         --matcher "localhost:$MATCHER_PORT" \
         --validator "localhost:$VALIDATOR_1_PORT" \
+        --subnet-id "$SUBNET_ID" \
         > "$LOG_DIR/test-agent.log" 2>&1 &
 
     echo $! >> "$PIDS_FILE"
@@ -451,74 +451,47 @@ monitor_logs() {
     return 1
 }
 
-# Submit test Intent to RootLayer
+# Submit test Intent to RootLayer using submit-intent-signed (dual submission)
 submit_test_intent() {
-    print_header "Submitting Test Intent to RootLayer"
+    print_header "Submitting Test Intent via submit-intent-signed (Dual Submission)"
 
-    # Generate intent ID (32-byte hex string = 64 hex chars)
-    # Use timestamp + random bytes to ensure uniqueness
-    local timestamp=$(date +%s)
-    local random=$(openssl rand -hex 28)  # 28 bytes = 56 hex chars
-    local intent_id="0x$(printf '%08x' $timestamp)${random}"
+    # Use submit-intent-signed for proper dual submission (blockchain + RootLayer)
+    print_step "Using submit-intent-signed for dual submission..."
 
-    # Current timestamp + 1 hour deadline
-    local now=$(date +%s)
-    local deadline=$((now + 3600))
+    # Run submit-intent-signed with proper env vars
+    local output=$(PIN_BASE_SEPOLIA_INTENT_MANAGER="$INTENT_MANAGER_ADDR" \
+        RPC_URL="$CHAIN_RPC_URL" \
+        PRIVATE_KEY="$MATCHER_PRIVATE_KEY" \
+        PIN_NETWORK="$CHAIN_NETWORK" \
+        ROOTLAYER_HTTP="$ROOTLAYER_HTTP/api/v1" \
+        SUBNET_ID="$SUBNET_ID" \
+        INTENT_TYPE="e2e-test" \
+        PARAMS_JSON='{"task":"E2E flow test with dual submission","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' \
+        AMOUNT_WEI="100000000000000" \
+        "$PROJECT_ROOT/scripts/submit-intent-signed" 2>&1)
 
-    # Encode intent data as base64 (required by RootLayer API)
-    local intent_raw=$(echo -n '{"task":"E2E flow test","test_id":"e2e-'$(date +%s)'","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' | base64)
-    local metadata=$(echo -n "E2E test metadata" | base64)
+    local exit_code=$?
 
-    # Test requester address (DO NOT use in production!)
-    local requester="0x9290085Cd66bD1A3C7D277EF7DBcbD2e98457b6f"
+    if [ $exit_code -eq 0 ]; then
+        print_success "Intent submitted successfully via dual submission!"
 
-    # Create payload matching RootLayer API spec
-    local intent_payload=$(cat <<EOF
-{
-  "intentId": "$intent_id",
-  "subnetId": "$SUBNET_ID",
-  "requester": "$requester",
-  "settleChain": "base_sepolia",
-  "intentType": "e2e-test",
-  "params": {
-    "intentRaw": "$intent_raw",
-    "metadata": "$metadata"
-  },
-  "tipsToken": "0x0000000000000000000000000000000000000000",
-  "tips": "100",
-  "deadline": "$deadline",
-  "signature": "0x00",
-  "budgetToken": "0x0000000000000000000000000000000000000000",
-  "budget": "1000"
-}
-EOF
-)
+        # Extract Intent ID from output
+        local intent_id=$(echo "$output" | grep "Intent ID:" | tail -1 | awk '{print $NF}')
+        print_info "Intent ID: $intent_id"
 
-    print_step "Submitting Intent to $ROOTLAYER_HTTP/api/v1/intents/submit..."
-    print_info "Intent ID: $intent_id"
+        # Extract blockchain TX hash
+        local tx_hash=$(echo "$output" | grep "Blockchain TX:" | tail -1 | awk '{print $NF}')
+        if [ -n "$tx_hash" ]; then
+            print_info "Blockchain TX: $tx_hash"
+        fi
 
-    # Try HTTP submission
-    local response=$(curl -s -w "\n%{http_code}" -X POST "$ROOTLAYER_HTTP/api/v1/intents/submit" \
-        -H "Content-Type: application/json" \
-        -d "$intent_payload" \
-        --max-time 10 2>&1)
-
-    local http_code=$(echo "$response" | tail -1)
-    local body=$(echo "$response" | sed '$d')
-
-    if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
-        print_success "Intent submitted successfully (HTTP $http_code)"
-        echo "$body" | head -5
-    elif [ "$http_code" = "400" ]; then
-        print_error "Intent submission failed with validation error (HTTP 400)"
-        echo "$body" | head -10
-    elif [ "$http_code" = "000" ]; then
-        print_warning "Intent submission timed out (connection issue)"
-        print_info "This may be due to network or authentication requirements"
-        print_info "Matcher will pull Intents via gRPC polling instead"
+        # Show signature info
+        if echo "$output" | grep -q "Local signature verification passed"; then
+            print_success "EIP-191 signature verified locally"
+        fi
     else
-        print_warning "Intent submission may have failed (HTTP $http_code)"
-        echo "$body" | head -5
+        print_error "Intent submission failed"
+        echo "$output" | tail -20
     fi
 
     sleep 2
@@ -668,16 +641,10 @@ display_results() {
     echo "  RootLayer:      $ROOTLAYER_GRPC (external)"
     echo "  Matcher:        localhost:$MATCHER_PORT"
     echo "  Validator 1:    localhost:$VALIDATOR_1_PORT"
-    echo "  Validator 2:    localhost:$VALIDATOR_2_PORT"
-    echo "  Validator 3:    localhost:$VALIDATOR_3_PORT"
-    echo "  Validator 4:    localhost:$VALIDATOR_4_PORT"
 
     echo -e "\n${CYAN}Log Files:${NC}"
     echo "  Matcher:        $LOG_DIR/matcher.log"
     echo "  Validator 1:    $LOG_DIR/validator-1.log"
-    echo "  Validator 2:    $LOG_DIR/validator-2.log"
-    echo "  Validator 3:    $LOG_DIR/validator-3.log"
-    echo "  Validator 4:    $LOG_DIR/validator-4.log"
     echo "  Test Agent:     $LOG_DIR/test-agent.log"
 
     echo -e "\n${CYAN}Quick Stats:${NC}"

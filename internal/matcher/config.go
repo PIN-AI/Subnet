@@ -33,6 +33,12 @@ type Config struct {
 	// RootLayer configuration
 	RootLayerEndpoint string `mapstructure:"rootlayer_endpoint"`
 	IntentPullInterval time.Duration `mapstructure:"intent_pull_interval"`
+
+	// On-chain configuration for assignment submission
+	ChainRPCURL       string `mapstructure:"chain_rpc_url"`        // RPC URL for blockchain
+	ChainNetwork      string `mapstructure:"chain_network"`        // Network name (e.g., "base_sepolia")
+	IntentManagerAddr string `mapstructure:"intent_manager_addr"`  // IntentManager contract address
+	EnableChainSubmit bool   `mapstructure:"enable_chain_submit"`  // Enable on-chain assignment submission
 }
 
 // DefaultConfig returns default matcher configuration
