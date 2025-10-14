@@ -54,6 +54,12 @@ func main() {
 
 		// Subnet configuration
 		subnetID = flag.String("subnet-id", "0x1111111111111111111111111111111111111111111111111111111111111111", "Subnet ID (32-byte hex string)")
+
+		// Blockchain configuration for ValidationBundle signing
+		enableChainSubmit  = flag.Bool("enable-chain-submit", false, "Enable on-chain ValidationBundle submission")
+		valChainRPCURL     = flag.String("chain-rpc-url", "", "Blockchain RPC URL for ValidationBundle signing")
+		valChainNetwork    = flag.String("chain-network", "", "Network name (e.g., base_sepolia)")
+		intentManagerAddr  = flag.String("intent-manager-addr", "", "IntentManager contract address")
 	)
 	flag.Parse()
 
@@ -113,6 +119,12 @@ func main() {
 		// RootLayer configuration
 		RootLayerEndpoint:     *rootlayerEndpoint,
 		EnableRootLayerSubmit: *enableRootlayer,
+
+		// Blockchain configuration
+		EnableChainSubmit:  *enableChainSubmit,
+		ChainRPCURL:        *valChainRPCURL,
+		ChainNetwork:       *valChainNetwork,
+		IntentManagerAddr:  *intentManagerAddr,
 	}
 
 	var chainVerifier *blockchain.ParticipantVerifier
@@ -271,7 +283,7 @@ func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey
 
 	return &types.ValidatorSet{
 		Validators:     validators,
-		MinValidators:  4,
+		MinValidators:  count,
 		ThresholdNum:   thresholdNum,
 		ThresholdDenom: thresholdDenom,
 	}

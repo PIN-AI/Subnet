@@ -12,8 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
+	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
+	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
 	rootpb "rootlayer/proto"
 	"subnet/internal/config"
 	"subnet/internal/consensus"
@@ -52,6 +55,9 @@ type Node struct {
 
 	// RootLayer client
 	rootlayerClient rootlayer.Client
+
+	// SDK client for blockchain operations
+	sdkClient *sdk.Client
 
 	// Agent registry
 	agentRegistry *registry.Registry
@@ -113,6 +119,12 @@ type Config struct {
 	RootLayerEndpoint     string
 	EnableRootLayerSubmit bool
 
+	// Blockchain config for ValidationBundle signing
+	EnableChainSubmit  bool   // Enable on-chain ValidationBundle submission
+	ChainRPCURL        string // Blockchain RPC URL
+	ChainNetwork       string // Network name (e.g., "base_sepolia")
+	IntentManagerAddr  string // IntentManager contract address
+
 	// Validation policy
 	ValidationPolicy *ValidationPolicyConfig
 }
@@ -162,6 +174,44 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 		rootClient = rootlayer.NewGRPCClient(rootConfig, logger)
 	}
 
+	// Initialize SDK client if on-chain submission is enabled
+	var sdkClient *sdk.Client
+	if config.EnableChainSubmit {
+		if config.ChainRPCURL == "" {
+			return nil, fmt.Errorf("chain_rpc_url is required when enable_chain_submit is true")
+		}
+		if config.ChainNetwork == "" {
+			return nil, fmt.Errorf("chain_network is required when enable_chain_submit is true")
+		}
+		if config.IntentManagerAddr == "" {
+			return nil, fmt.Errorf("intent_manager_addr is required when enable_chain_submit is true")
+		}
+
+		// Create SDK config
+		sdkConfig := sdk.Config{
+			RPCURL:        config.ChainRPCURL,
+			PrivateKeyHex: config.PrivateKey,
+			Network:       config.ChainNetwork,
+			Addresses: &addressbook.Addresses{
+				IntentManager: common.HexToAddress(config.IntentManagerAddr),
+			},
+		}
+
+		// Initialize SDK client
+		var err error
+		sdkClient, err = sdk.NewClient(context.Background(), sdkConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize SDK client: %w", err)
+		}
+
+		logger.Info("SDK client initialized for ValidationBundle signing",
+			"rpc_url", config.ChainRPCURL,
+			"network", config.ChainNetwork,
+			"intent_manager", config.IntentManagerAddr)
+	} else {
+		logger.Info("ValidationBundle blockchain signing disabled")
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	node := &Node{
@@ -174,6 +224,7 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 		chain:           chain,
 		store:           store,
 		rootlayerClient: rootClient,
+		sdkClient:       sdkClient,
 		agentRegistry:   agentReg,
 		metrics:         metrics.Noop{},
 		pendingReports:  make(map[string]*pb.ExecutionReport),
@@ -267,6 +318,11 @@ func (n *Node) Stop() error {
 		if err := n.rootlayerClient.Close(); err != nil {
 			n.logger.Errorf("Failed to close RootLayer connection error=%v", err)
 		}
+	}
+
+	// Close SDK client
+	if n.sdkClient != nil {
+		n.sdkClient.Close()
 	}
 
 	if n.agentRegistry != nil {
@@ -1350,30 +1406,73 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 		return
 	}
 
-	// Submit to RootLayer
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
+	// IMPORTANT: Wait for RootLayer state synchronization
+	// After Assignment is submitted to blockchain, RootLayer needs time to sync the Intent status
+	// Typical sync delay is 10-30 seconds
+	syncDelay := 15 * time.Second
+	n.logger.Infof("⏳ Waiting %v for RootLayer state synchronization before submitting ValidationBundle epoch=%d intent_id=%s",
+		syncDelay, header.Epoch, bundle.IntentId)
+	time.Sleep(syncDelay)
 
-	n.logger.Infof("Submitting ValidationBundle to RootLayer epoch=%d intent_id=%s", header.Epoch, bundle.IntentId)
+	// Submit to RootLayer with retry logic
+	maxRetries := 5  // Increased from 3 to 5 to give more time for RootLayer sync
+	retryDelay := 10 * time.Second
 
-	if err := n.rootlayerClient.SubmitValidationBundle(ctx, bundle); err != nil {
-		n.logger.Error("Failed to submit validation bundle to RootLayer",
-			"error", err,
-			"epoch", header.Epoch,
-			"intent_id", bundle.IntentId)
-		return
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+		n.logger.Infof("Submitting ValidationBundle to RootLayer epoch=%d intent_id=%s attempt=%d/%d",
+			header.Epoch, bundle.IntentId, attempt, maxRetries)
+
+		err := n.rootlayerClient.SubmitValidationBundle(ctx, bundle)
+		cancel()
+
+		if err == nil {
+			// Success!
+			n.logger.Infof("✅ Successfully submitted validation bundle to RootLayer epoch=%d intent_id=%s signatures=%d attempt=%d",
+				header.Epoch, bundle.IntentId, len(signatures), attempt)
+
+			// Clear pending reports after successful submission
+			n.mu.Lock()
+			reportsCount := len(n.pendingReports)
+			n.pendingReports = make(map[string]*pb.ExecutionReport)
+			n.reportScores = make(map[string]int32)
+			n.mu.Unlock()
+
+			n.logger.Infof("🧹 Cleared execution reports after successful ValidationBundle submission epoch=%d cleared_reports=%d",
+				header.Epoch, reportsCount)
+			return
+		}
+
+		// Check if error is about RootLayer sync issues (Intent status or Assignment not found)
+		// These are retryable errors caused by RootLayer state synchronization delays
+		isRetryable := strings.Contains(err.Error(), "Invalid intent status") ||
+			strings.Contains(err.Error(), "intent status") ||
+			strings.Contains(err.Error(), "assignment not found")
+
+		if isRetryable {
+			lastErr = err
+			if attempt < maxRetries {
+				n.logger.Warnf("⚠️ ValidationBundle submission failed due to RootLayer sync delay, will retry in %v attempt=%d/%d error=%v",
+					retryDelay, attempt, maxRetries, err)
+				time.Sleep(retryDelay)
+				continue
+			} else {
+				n.logger.Errorf("❌ ValidationBundle submission failed after %d attempts due to RootLayer sync issue error=%v epoch=%d intent_id=%s",
+					maxRetries, err, header.Epoch, bundle.IntentId)
+			}
+		} else {
+			// Other error - don't retry
+			n.logger.Errorf("Failed to submit validation bundle to RootLayer (non-retryable error) error=%v epoch=%d intent_id=%s attempt=%d",
+				err, header.Epoch, bundle.IntentId, attempt)
+			return
+		}
 	}
 
-	n.logger.Infof("✅ Successfully submitted validation bundle to RootLayer epoch=%d intent_id=%s signatures=%d", header.Epoch, bundle.IntentId, len(signatures))
-
-	// SOLUTION B: Clear pending reports ONLY after successful submission
-	n.mu.Lock()
-	reportsCount := len(n.pendingReports)
-	n.pendingReports = make(map[string]*pb.ExecutionReport)
-	n.reportScores = make(map[string]int32)
-	n.mu.Unlock()
-
-	n.logger.Infof("🧹 Cleared execution reports after successful ValidationBundle submission epoch=%d cleared_reports=%d", header.Epoch, reportsCount)
+	// All retries exhausted
+	n.logger.Errorf("Failed to submit validation bundle to RootLayer after all retries error=%v epoch=%d intent_id=%s max_retries=%d",
+		lastErr, header.Epoch, bundle.IntentId, maxRetries)
 }
 
 // buildValidationBundle creates a ValidationBundle from the checkpoint
@@ -1420,29 +1519,97 @@ func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendin
 		return nil
 	}
 
-	// Convert checkpoint signatures to ValidationSignatures
+	// Generate ValidationBundle signature using SDK (EIP-191 standard)
 	var validationSigs []*rootpb.ValidationSignature
-	for validatorID, sig := range signatures {
-		validationSigs = append(validationSigs, &rootpb.ValidationSignature{
-			Validator: validatorID,
-			Signature: sig.Der,
-		})
+
+	if n.sdkClient != nil {
+		// Prepare data for SDK ValidationBundle signing
+		// Parse IDs from hex strings to proper types
+		intentIDHash := common.HexToHash(intentID)
+		assignmentIDHash := common.HexToHash(assignmentID)
+		subnetIDHash := common.HexToHash(n.config.SubnetID)
+		agentAddr := common.HexToAddress(agentID)
+
+		// Calculate result hash from checkpoint header (success case: non-zero hash)
+		resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
+
+		// Get execution reports root as proof hash
+		var proofHash [32]byte
+		if header.Roots != nil && len(header.Roots.EventRoot) > 0 {
+			copy(proofHash[:], header.Roots.EventRoot)
+		}
+
+		// Parse root hash from parent checkpoint hash
+		var rootHash [32]byte
+		if len(header.ParentCpHash) > 0 {
+			copy(rootHash[:], header.ParentCpHash)
+		}
+
+		// Create SDK ValidationBundle structure for signing
+		bundle := sdk.ValidationBundle{
+			IntentID:     intentIDHash,
+			AssignmentID: assignmentIDHash,
+			SubnetID:     subnetIDHash,
+			Agent:        agentAddr,
+			ResultHash:   resultHash,
+			ProofHash:    proofHash,
+			RootHeight:   header.Epoch,
+			RootHash:     rootHash,
+		}
+
+		// Compute digest using SDK
+		digest, err := n.sdkClient.Validation.ComputeDigest(bundle)
+		if err != nil {
+			n.logger.Errorf("Failed to compute ValidationBundle digest: %v", err)
+		} else {
+			// Sign digest using SDK (EIP-191 standard)
+			signature, err := n.sdkClient.Validation.SignDigest(digest)
+			if err != nil {
+				n.logger.Errorf("Failed to sign ValidationBundle digest: %v", err)
+			} else {
+				// Get validator address from SDK
+				validatorAddr := n.sdkClient.Signer.Address()
+
+				// Create ValidationSignature with proper EIP-191 signature
+				validationSigs = append(validationSigs, &rootpb.ValidationSignature{
+					Validator: validatorAddr.Hex(),
+					Signature: signature, // 65-byte EIP-191 signature
+				})
+
+				n.logger.Infof("✅ Generated EIP-191 ValidationBundle signature validator=%s signature_len=%d",
+					validatorAddr.Hex(), len(signature))
+			}
+		}
+	} else {
+		// Fallback: Use checkpoint signatures if SDK not available
+		n.logger.Warn("SDK client not available, using checkpoint signatures as fallback (NOT EIP-191 compliant)")
+		for validatorID, sig := range signatures {
+			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
+				Validator: validatorID,
+				Signature: sig.Der,
+			})
+		}
 	}
 
-	n.logger.Debug("Converted checkpoint signatures to ValidationSignatures",
+	n.logger.Debug("Prepared ValidationSignatures",
 		"validation_sigs_count", len(validationSigs))
 
-	// Calculate result hash from checkpoint header
+	// Calculate result hash for ValidationBundle (for non-SDK path and bundle construction)
 	resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
 
 	// Get execution reports root as proof hash
 	var proofHash []byte
 	if header.Roots != nil && len(header.Roots.EventRoot) > 0 {
 		proofHash = header.Roots.EventRoot
-		n.logger.Debug("Using EventRoot as proof hash",
-			"proof_hash_len", len(proofHash))
+	}
+
+	// Format RootHash with proper handling for epoch 0 (genesis)
+	var rootHashStr string
+	if len(header.ParentCpHash) == 0 {
+		// Epoch 0 has no parent - use zero hash (32 bytes of zeros)
+		rootHashStr = "0x0000000000000000000000000000000000000000000000000000000000000000"
 	} else {
-		n.logger.Warn("EventRoot is empty or nil, proof hash will be empty")
+		rootHashStr = fmt.Sprintf("0x%x", header.ParentCpHash)
 	}
 
 	bundle := &rootpb.ValidationBundle{
@@ -1451,7 +1618,7 @@ func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendin
 		AssignmentId: assignmentID, // Use real AssignmentID from execution report
 		AgentId:      agentID,      // Use real AgentID from execution report
 		RootHeight:   header.Epoch,
-		RootHash:     fmt.Sprintf("%x", header.ParentCpHash),
+		RootHash:     rootHashStr,  // Use formatted root hash with special handling for epoch 0
 		ExecutedAt:   header.Timestamp,
 		ResultHash:   resultHash[:],
 		ProofHash:    proofHash,

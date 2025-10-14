@@ -190,7 +190,7 @@ func (c *CompleteClient) buildValidationBundle(reports []*pb.ExecutionReport, ch
 		AssignmentId: primaryReport.AssignmentId,
 		AgentId:      primaryReport.AgentId,
 		RootHeight:   checkpoint.Epoch,
-		RootHash:     checkpoint.CanonicalHashHex(),
+		RootHash:     "0x" + checkpoint.CanonicalHashHex(), // Add 0x prefix for RootLayer compatibility
 		ExecutedAt:   primaryReport.Timestamp,
 		ResultHash:   resultHash[:],
 		ProofHash:    nil, // Would include proof if available

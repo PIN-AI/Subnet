@@ -3,6 +3,7 @@ package matcher
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -10,7 +11,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"github.com/ethereum/go-ethereum/common"
 
+	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
+	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
 	rootpb "rootlayer/proto"
 	"subnet/internal/blockchain"
 	"subnet/internal/crypto"
@@ -30,6 +34,7 @@ type Server struct {
 	rootlayerClient rootlayer.Client
 	verifier        *blockchain.ParticipantVerifier
 	allowUnverified bool
+	sdkClient       *sdk.Client // SDK client for on-chain operations
 
 	// Intent and bid management
 	mu              sync.RWMutex
@@ -134,11 +139,50 @@ func NewServer(cfg *Config, logger logging.Logger) (*Server, error) {
 		logger.Warn("No RootLayer endpoint configured, using mock client")
 	}
 
+	// Initialize SDK client if on-chain submission is enabled
+	var sdkClient *sdk.Client
+	if cfg.EnableChainSubmit {
+		if cfg.ChainRPCURL == "" {
+			return nil, fmt.Errorf("chain_rpc_url is required when enable_chain_submit is true")
+		}
+		if cfg.ChainNetwork == "" {
+			return nil, fmt.Errorf("chain_network is required when enable_chain_submit is true")
+		}
+		if cfg.IntentManagerAddr == "" {
+			return nil, fmt.Errorf("intent_manager_addr is required when enable_chain_submit is true")
+		}
+
+		// Create SDK config
+		sdkConfig := sdk.Config{
+			RPCURL:        cfg.ChainRPCURL,
+			PrivateKeyHex: cfg.PrivateKey,
+			Network:       cfg.ChainNetwork,
+			Addresses: &addressbook.Addresses{
+				IntentManager: common.HexToAddress(cfg.IntentManagerAddr),
+			},
+		}
+
+		// Initialize SDK client
+		var err error
+		sdkClient, err = sdk.NewClient(context.Background(), sdkConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize SDK client: %w", err)
+		}
+
+		logger.Info("SDK client initialized for on-chain assignment submission",
+			"rpc_url", cfg.ChainRPCURL,
+			"network", cfg.ChainNetwork,
+			"intent_manager", cfg.IntentManagerAddr)
+	} else {
+		logger.Info("On-chain assignment submission disabled")
+	}
+
 	s := &Server{
 		cfg:                cfg,
 		logger:             logger,
 		signer:             signer,
 		rootlayerClient:    rootlayerClient,
+		sdkClient:          sdkClient,
 		intents:            make(map[string]*IntentWithWindow),
 		bidsByIntent:       make(map[string][]*pb.Bid),
 		matchingResults:    make(map[string]*pb.MatchingResult),
@@ -358,7 +402,10 @@ func (s *Server) performMatching(intentID string) {
 
 // createAssignment creates an assignment from the winning bid
 func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
-	assignmentID := fmt.Sprintf("assign-%s-%d", intentID, time.Now().UnixNano())
+	// Generate assignment ID as 32-byte hex (hash of intent + timestamp + bid)
+	assignmentData := fmt.Sprintf("%s:%s:%d", intentID, winningBid.BidId, time.Now().UnixNano())
+	assignmentHash := sha256.Sum256([]byte(assignmentData))
+	assignmentID := "0x" + hex.EncodeToString(assignmentHash[:])
 
 	// Get the intent for task data
 	intentWindow := s.intents[intentID]
@@ -367,8 +414,16 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 		return
 	}
 
-	// Sign the assignment
-	assignmentSignature, err := s.signAssignment(assignmentID, intentID, winningBid.AgentId)
+	// CRITICAL: Extract blockchain address from bid metadata
+	// The agent field in Assignment must be an Ethereum address, not an arbitrary string
+	agentChainAddress := extractChainAddressFromBid(winningBid)
+	if agentChainAddress == "" || !strings.HasPrefix(agentChainAddress, "0x") {
+		s.logger.Errorf("CRITICAL: Invalid chain address for agent %s: %s", winningBid.AgentId, agentChainAddress)
+		return
+	}
+
+	// Sign the assignment (uses blockchain address for EIP-191 signature)
+	assignmentSignature, err := s.signAssignment(assignmentID, intentID, winningBid.BidId, agentChainAddress)
 	if err != nil {
 		s.logger.Errorf("Failed to sign assignment: %v", err)
 		// Continue without signature for now, but log critical error
@@ -376,13 +431,14 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 	}
 
 	// Create RootLayer assignment (lightweight, for record-keeping)
+	// IMPORTANT: RootLayer requires AgentId and MatcherId to be in Ethereum address format
 	rootAssignment := &rootpb.Assignment{
 		AssignmentId: assignmentID,
 		IntentId:     intentID,
-		AgentId:      winningBid.AgentId,
+		AgentId:      agentChainAddress, // Use Ethereum address format (required by RootLayer)
 		BidId:        winningBid.BidId,
 		Status:       rootpb.AssignmentStatus_ASSIGNMENT_ACTIVE,
-		MatcherId:    s.cfg.MatcherID,
+		MatcherId:    s.signer.GetAddress(), // Use matcher's blockchain address (required by RootLayer)
 		Signature:    assignmentSignature,
 	}
 
@@ -414,10 +470,30 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 
 	s.logger.Infof("Created task %s for agent %s", assignmentID, winningBid.AgentId)
 
-	// Submit assignment to RootLayer immediately after matching
+	// IMPORTANT: Assignment submission strategy for atomicity
+	// Priority: Blockchain > RootLayer > Agent Notification
+	// Reason: Blockchain is the source of truth (immutable, prevents fraud)
+
+	// Step 1: Submit to blockchain FIRST (synchronous) if enabled
+	// This is the most critical step - if it fails, we abort the entire assignment
+	if s.cfg.EnableChainSubmit && s.sdkClient != nil {
+		chainTxHash, err := s.submitAssignmentToChainSync(assignmentID, intentID, winningBid.BidId, agentChainAddress, assignmentSignature)
+		if err != nil {
+			s.logger.Errorf("CRITICAL: Failed to submit assignment to blockchain, aborting assignment: %v", err)
+			// Mark intent as failed or retry matching
+			window := s.intents[intentID]
+			if window != nil {
+				window.Matched = false // Allow re-matching
+			}
+			return
+		}
+		s.logger.Infof("✅ Assignment %s submitted to blockchain, tx: %s", assignmentID, chainTxHash)
+	}
+
+	// Step 2: Submit to RootLayer (async) - can be retried or synced from chain later
 	go s.submitAssignmentToRootLayer(rootAssignment)
 
-	// Send task to agent for execution
+	// Step 3: Send task to agent (sync) - agent can also poll for tasks
 	s.sendTaskToAgent(winningBid.AgentId, executionTask)
 }
 
@@ -926,6 +1002,77 @@ func (s *Server) submitAssignmentToRootLayer(assignment *rootpb.Assignment) {
 	}
 }
 
+// submitAssignmentToChainSync submits assignment to blockchain synchronously (waits for tx)
+// Returns transaction hash on success, error on failure
+func (s *Server) submitAssignmentToChainSync(assignmentID, intentID, bidID, agentID string, signature []byte) (string, error) {
+	// Check if on-chain submission is enabled
+	if s.sdkClient == nil {
+		return "", fmt.Errorf("SDK client not initialized")
+	}
+
+	// Parse IDs to [32]byte format
+	assignmentIDBytes, err := hexStringTo32Bytes(assignmentID)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse assignment ID: %w", err)
+	}
+
+	intentIDBytes, err := hexStringTo32Bytes(intentID)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse intent ID: %w", err)
+	}
+
+	bidIDBytes, err := hexStringTo32Bytes(bidID)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse bid ID: %w", err)
+	}
+
+	// Create assignment data
+	assignmentData := sdk.AssignmentData{
+		AssignmentID: assignmentIDBytes,
+		IntentID:     intentIDBytes,
+		BidID:        bidIDBytes,
+		Agent:        common.HexToAddress(agentID),
+		Status:       sdk.AssignmentStatusActive,
+		Matcher:      common.HexToAddress(s.signer.GetAddress()),
+	}
+
+	// Create signed assignment
+	signedAssignment := sdk.SignedAssignment{
+		Data:      assignmentData,
+		Signature: signature,
+	}
+
+	// Submit to blockchain with extended timeout (blockchain operations take time)
+	timeout := 30 * time.Second // Longer timeout for blockchain confirmation
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	s.logger.Infof("⏳ Submitting assignment %s to blockchain...", assignmentID)
+	tx, err := s.sdkClient.Assignment.AssignIntentsBySignatures(ctx, []sdk.SignedAssignment{signedAssignment})
+	if err != nil {
+		return "", fmt.Errorf("blockchain submission failed: %w", err)
+	}
+
+	txHash := tx.Hash().Hex()
+	s.logger.Infof("📝 Assignment transaction sent, hash: %s (waiting for confirmation...)", txHash)
+
+	// Note: We don't wait for mining confirmation here to avoid blocking too long
+	// The transaction is in the mempool, which is sufficient for our purposes
+	// If you need to wait for confirmation, add: bind.WaitMined(ctx, s.sdkClient.Backend, tx)
+
+	return txHash, nil
+}
+
+// submitAssignmentToChain submits assignment to blockchain asynchronously (legacy, for background retry)
+func (s *Server) submitAssignmentToChain(assignmentID, intentID, bidID, agentID string, signature []byte) {
+	txHash, err := s.submitAssignmentToChainSync(assignmentID, intentID, bidID, agentID, signature)
+	if err != nil {
+		s.logger.Errorf("Failed to submit assignment to blockchain: %v", err)
+		return
+	}
+	s.logger.Infof("Successfully submitted assignment %s to blockchain, tx: %s", assignmentID, txHash)
+}
+
 // tryAssignToRunnerUp attempts to assign the intent to the next best agent
 func (s *Server) tryAssignToRunnerUp(intent *rootpb.Intent, excludeAgentID string, reason string) {
 	s.mu.RLock()
@@ -1011,17 +1158,57 @@ func (s *Server) signMatchingResult(intentID, bidID, agentID string) ([]byte, er
 	return signature, nil
 }
 
-// signAssignment creates a signature for assignment
-func (s *Server) signAssignment(assignmentID, intentID, agentID string) ([]byte, error) {
+// signAssignment creates an EIP-191 signature for assignment using SDK
+func (s *Server) signAssignment(assignmentID, intentID, bidID, agentID string) ([]byte, error) {
+	// If SDK client is available, use EIP-191 standard signature
+	if s.sdkClient != nil {
+		// Parse assignment ID (assuming hex format like "assign-0x...")
+		// Extract the hex part and convert to [32]byte
+		assignmentIDBytes, err := hexStringTo32Bytes(assignmentID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse assignment ID: %w", err)
+		}
+
+		intentIDBytes, err := hexStringTo32Bytes(intentID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse intent ID: %w", err)
+		}
+
+		bidIDBytes, err := hexStringTo32Bytes(bidID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse bid ID: %w", err)
+		}
+
+		// Create assignment data
+		assignmentData := sdk.AssignmentData{
+			AssignmentID: assignmentIDBytes,
+			IntentID:     intentIDBytes,
+			BidID:        bidIDBytes,
+			Agent:        common.HexToAddress(agentID),
+			Status:       sdk.AssignmentStatusActive,
+			Matcher:      common.HexToAddress(s.signer.GetAddress()),
+		}
+
+		// Use SDK to sign assignment (EIP-191 standard)
+		signature, err := s.sdkClient.Assignment.SignAssignment(assignmentData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to sign assignment with SDK: %w", err)
+		}
+
+		return signature, nil
+	}
+
+	// Fallback to simple signature if SDK not available
 	if s.signer == nil {
 		return nil, fmt.Errorf("CRITICAL: No signer configured for assignment - signatures required for security")
 	}
 
-	// Create message to sign
-	message := fmt.Sprintf("%s:%s:%s:%s:%d",
+	// Create message to sign (legacy method)
+	message := fmt.Sprintf("%s:%s:%s:%s:%s:%d",
 		s.cfg.MatcherID,
 		assignmentID,
 		intentID,
+		bidID,
 		agentID,
 		time.Now().Unix())
 	msgHash := crypto.HashMessage([]byte(message))
@@ -1033,6 +1220,35 @@ func (s *Server) signAssignment(assignmentID, intentID, agentID string) ([]byte,
 	}
 
 	return signature, nil
+}
+
+// hexStringTo32Bytes converts a hex string (with or without 0x prefix) to [32]byte
+func hexStringTo32Bytes(s string) ([32]byte, error) {
+	var result [32]byte
+
+	// Remove 0x prefix if present
+	if len(s) >= 2 && s[:2] == "0x" {
+		s = s[2:]
+	}
+
+	// If string is shorter than 64 chars, pad with zeros on the left
+	if len(s) < 64 {
+		s = strings.Repeat("0", 64-len(s)) + s
+	}
+
+	// Decode hex
+	bytes, err := hex.DecodeString(s)
+	if err != nil {
+		return result, fmt.Errorf("invalid hex string: %w", err)
+	}
+
+	// Take last 32 bytes if longer
+	if len(bytes) > 32 {
+		bytes = bytes[len(bytes)-32:]
+	}
+
+	copy(result[:], bytes)
+	return result, nil
 }
 
 // RegisterGRPC registers the service with a gRPC server
