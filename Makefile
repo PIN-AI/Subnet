@@ -4,7 +4,7 @@ SHELL := /bin/bash
 
 all: build
 
-build: build-matcher build-simple-agent build-mock-rootlayer build-registry build-validator
+build: build-matcher build-simple-agent build-mock-rootlayer build-registry build-validator build-test-agent build-scripts
 
 build-all:
 	@echo "Building all Go packages..."
@@ -29,6 +29,29 @@ build-validator:
 build-registry:
 	@echo "Building Registry Service..."
 	@go build -o bin/registry cmd/registry/main.go
+
+build-test-agent:
+	@echo "Building Test Agent..."
+	@go build -o bin/test-agent scripts/test-agent/validator_test_agent.go
+
+# Build utility scripts
+build-scripts: build-register-participants build-submit-intent-signed build-derive-pubkey build-create-subnet
+
+build-register-participants:
+	@echo "Building Register Participants..."
+	@go build -o bin/register-participants scripts/register-participants.go
+
+build-submit-intent-signed:
+	@echo "Building Submit Intent Signed..."
+	@go build -o bin/submit-intent-signed scripts/submit-intent-signed.go
+
+build-derive-pubkey:
+	@echo "Building Derive Pubkey..."
+	@go build -o bin/derive-pubkey scripts/derive-pubkey.go
+
+build-create-subnet:
+	@echo "Building Create Subnet..."
+	@go build -o bin/create-subnet scripts/create-subnet.go
 
 test:
 	@echo "Running tests..."
