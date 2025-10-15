@@ -104,7 +104,7 @@ export ENABLE_CHAIN_SUBMIT=true
 export CHAIN_RPC_URL="https://sepolia.base.org"
 export CHAIN_NETWORK="base_sepolia"
 export INTENT_MANAGER_ADDR="0xD04d23775D3B8e028e6104E31eb0F6c07206EB46"
-export MATCHER_PRIVATE_KEY="eef960cc05e034727123db159f1e54f0733b2f51d4a239978771aff320be5b9a"
+export MATCHER_PRIVATE_KEY="xxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
 
 ---
