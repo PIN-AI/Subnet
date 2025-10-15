@@ -132,7 +132,7 @@ agent:
       type: "ecdsa"  # Use real ECDSA signer
       # NOTE: In production, use secure key management (HSM, KMS, etc.)
       # This is an example key - DO NOT USE IN PRODUCTION
-      private_key: "0x0000000000000000000000000000000000000000000000000000000000000000"
+      private_key: "eef960cc05e034727123db159f1e54f0733b2f51d4a239978771aff320be5b9a"
 
 # Validator configuration
 validator:
@@ -190,9 +190,9 @@ rootlayer:
   retry_delay: 1s
 
 blockchain:
-  enabled: false
+  enabled: true
   rpc_url: "https://sepolia.base.org"
-  subnet_contract: "${SUBNET_CONTRACT_ADDRESS}"
+  subnet_contract: "0x6538D64e4eeE64641f6c66aB2c7703edfC3e2aB6"  # TY Test Subnet
   cache_ttl: 5m
   cache_size: 1024
   enable_fallback: true

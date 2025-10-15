@@ -54,7 +54,11 @@ ENABLE_CHAIN_SUBMIT="${ENABLE_CHAIN_SUBMIT:-false}"
 CHAIN_RPC_URL="${CHAIN_RPC_URL:-https://sepolia.base.org}"
 CHAIN_NETWORK="${CHAIN_NETWORK:-base_sepolia}"
 INTENT_MANAGER_ADDR="${INTENT_MANAGER_ADDR:-0xD04d23775D3B8e028e6104E31eb0F6c07206EB46}"
-MATCHER_PRIVATE_KEY="${MATCHER_PRIVATE_KEY:-EXAMPLE_PRIVATE_KEY_DO_NOT_USE_1234567890ABCDEF1234567890ABCDEF}"
+
+# Private key for testing (MUST be set via environment variable)
+# WARNING: Never use this key in production! This is a test-only key with no real funds.
+# For E2E tests, set: export TEST_PRIVATE_KEY="your_test_key_here"
+MATCHER_PRIVATE_KEY="${TEST_PRIVATE_KEY:-}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -221,13 +225,16 @@ check_prerequisites() {
     fi
 }
 
-# Build test agent
-build_test_agent() {
-    print_header "Building Test Agent"
-    cd "$PROJECT_ROOT/scripts/test-agent"
-    go build -o test-agent validator_test_agent.go
-    print_success "Test agent built successfully"
-    cd "$PROJECT_ROOT"
+# Check test agent binary
+check_test_agent() {
+    print_header "Checking Test Agent"
+
+    if [ ! -f "$PROJECT_ROOT/bin/test-agent" ]; then
+        print_error "test-agent binary not found. Run 'make build-test-agent' first."
+        exit 1
+    fi
+
+    print_success "Test agent binary found"
 }
 
 # Check RootLayer connectivity
@@ -310,9 +317,14 @@ EOF
 start_validators() {
     print_header "Starting Validators"
 
-    # Use matcher's private key for validator (DO NOT use in production!)
-    local MATCHER_KEY="EXAMPLE_PRIVATE_KEY_DO_NOT_USE_1234567890ABCDEF1234567890ABCDEF"
-    local keys=("$MATCHER_KEY")
+    # Use private key from environment (DO NOT use in production!)
+    if [ -z "$MATCHER_PRIVATE_KEY" ]; then
+        print_error "TEST_PRIVATE_KEY environment variable not set"
+        print_info "Set it with: export TEST_PRIVATE_KEY=\"your_test_key\""
+        exit 1
+    fi
+
+    local keys=("$MATCHER_PRIVATE_KEY")
 
     # Public key for matcher's private key (derived using secp256k1)
     # Address: 0xfc5A111b714547fc2D1D796EAAbb68264ed4A132
@@ -421,7 +433,7 @@ EOF
 start_test_agent() {
     print_header "Starting Test Agent"
 
-    "$PROJECT_ROOT/scripts/test-agent/test-agent" \
+    "$PROJECT_ROOT/bin/test-agent" \
         --agent-id "$TEST_AGENT_ID" \
         --matcher "localhost:$MATCHER_PORT" \
         --validator "localhost:$VALIDATOR_1_PORT" \
@@ -468,7 +480,7 @@ submit_test_intent() {
         INTENT_TYPE="e2e-test" \
         PARAMS_JSON='{"task":"E2E flow test with dual submission","timestamp":"'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"}' \
         AMOUNT_WEI="100000000000000" \
-        "$PROJECT_ROOT/scripts/submit-intent-signed" 2>&1)
+        "$PROJECT_ROOT/bin/submit-intent-signed" 2>&1)
 
     local exit_code=$?
 
@@ -728,8 +740,8 @@ main() {
     # Check prerequisites
     check_prerequisites
 
-    # Build test agent
-    build_test_agent
+    # Check test agent binary
+    check_test_agent
 
     # Check RootLayer connectivity
     check_rootlayer
