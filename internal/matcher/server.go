@@ -605,6 +605,129 @@ func (s *Server) SubmitBid(ctx context.Context, req *pb.SubmitBidRequest) (*pb.S
 	}, nil
 }
 
+// SubmitBidBatch implements MatcherServiceServer for batch bid submission
+func (s *Server) SubmitBidBatch(ctx context.Context, req *pb.SubmitBidBatchRequest) (*pb.SubmitBidBatchResponse, error) {
+	if req == nil || len(req.Bids) == 0 {
+		return nil, fmt.Errorf("invalid request: bids are required")
+	}
+
+	s.logger.Infof("Received batch bid submission: batch_id=%s count=%d", req.BatchId, len(req.Bids))
+
+	partialOk := req.PartialOk != nil && *req.PartialOk
+	acks := make([]*pb.BidSubmissionAck, 0, len(req.Bids))
+	successCount := int32(0)
+	failedCount := int32(0)
+
+	for _, bid := range req.Bids {
+		// Process each bid individually
+		ack := s.processSingleBid(ctx, bid)
+		acks = append(acks, ack)
+
+		if ack.Accepted {
+			successCount++
+		} else {
+			failedCount++
+			// If partial success not allowed, stop on first failure
+			if !partialOk {
+				// Fill remaining with rejection
+				for i := len(acks); i < len(req.Bids); i++ {
+					acks = append(acks, &pb.BidSubmissionAck{
+						BidId:    req.Bids[i].BidId,
+						Accepted: false,
+						Reason:   "Batch processing stopped due to previous failure",
+						Status:   pb.BidStatus_BID_STATUS_REJECTED,
+					})
+					failedCount++
+				}
+				break
+			}
+		}
+	}
+
+	msg := fmt.Sprintf("Processed %d bids: %d succeeded, %d failed", len(req.Bids), successCount, failedCount)
+	s.logger.Infof("Batch bid processing complete: %s", msg)
+
+	return &pb.SubmitBidBatchResponse{
+		Acks:    acks,
+		Success: successCount,
+		Failed:  failedCount,
+		Msg:     msg,
+	}, nil
+}
+
+// processSingleBid processes a single bid and returns acknowledgment
+func (s *Server) processSingleBid(ctx context.Context, bid *pb.Bid) *pb.BidSubmissionAck {
+	if bid == nil {
+		return &pb.BidSubmissionAck{
+			BidId:    "",
+			Accepted: false,
+			Reason:   "Bid is nil",
+			Status:   pb.BidStatus_BID_STATUS_REJECTED,
+		}
+	}
+
+	// Verify agent if verifier is configured
+	if s.verifier != nil {
+		chainAddr := extractChainAddressFromBid(bid)
+		verified, err := s.verifier.VerifyAgent(ctx, chainAddr)
+		if err != nil {
+			s.logger.Warnf("On-chain agent verification failed for %s: %v", bid.AgentId, err)
+			if !s.allowUnverified {
+				return &pb.BidSubmissionAck{
+					BidId:    bid.BidId,
+					Accepted: false,
+					Reason:   "agent verification failed",
+					Status:   pb.BidStatus_BID_STATUS_REJECTED,
+				}
+			}
+		} else if !verified {
+			s.logger.Warnf("Agent %s not active on-chain (addr=%s)", bid.AgentId, chainAddr)
+			if !s.allowUnverified {
+				return &pb.BidSubmissionAck{
+					BidId:    bid.BidId,
+					Accepted: false,
+					Reason:   "agent not registered on-chain",
+					Status:   pb.BidStatus_BID_STATUS_REJECTED,
+				}
+			}
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check if intent exists
+	window, exists := s.intents[bid.IntentId]
+	if !exists {
+		return &pb.BidSubmissionAck{
+			BidId:    bid.BidId,
+			Accepted: false,
+			Reason:   "Intent not found",
+			Status:   pb.BidStatus_BID_STATUS_REJECTED,
+		}
+	}
+
+	// Check if window is still open
+	if window.WindowClosed {
+		return &pb.BidSubmissionAck{
+			BidId:    bid.BidId,
+			Accepted: false,
+			Reason:   "Bidding window closed",
+			Status:   pb.BidStatus_BID_STATUS_REJECTED,
+		}
+	}
+
+	// Add bid
+	s.bidsByIntent[bid.IntentId] = append(s.bidsByIntent[bid.IntentId], bid)
+
+	return &pb.BidSubmissionAck{
+		BidId:      bid.BidId,
+		Accepted:   true,
+		Status:     pb.BidStatus_BID_STATUS_ACCEPTED,
+		RecordedAt: time.Now().Unix(),
+	}
+}
+
 // GetIntentSnapshot implements MatcherServiceServer
 func (s *Server) GetIntentSnapshot(ctx context.Context, req *pb.GetIntentSnapshotRequest) (*pb.GetIntentSnapshotResponse, error) {
 	if req == nil || req.IntentId == "" {

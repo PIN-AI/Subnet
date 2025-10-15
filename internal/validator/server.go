@@ -149,6 +149,114 @@ func (s *Server) SubmitExecutionReport(ctx context.Context, report *pb.Execution
 	return receipt, nil
 }
 
+// SubmitExecutionReportBatch handles batch execution report submission from agents
+func (s *Server) SubmitExecutionReportBatch(ctx context.Context, req *pb.ExecutionReportBatchRequest) (*pb.ExecutionReportBatchResponse, error) {
+	if req == nil || len(req.Reports) == 0 {
+		return nil, status.Error(codes.InvalidArgument, "reports are required")
+	}
+
+	s.logger.Infof("Received batch execution report submission: batch_id=%s count=%d", req.BatchId, len(req.Reports))
+
+	partialOk := req.PartialOk != nil && *req.PartialOk
+	receipts := make([]*pb.Receipt, 0, len(req.Reports))
+	successCount := int32(0)
+	failedCount := int32(0)
+
+	for _, report := range req.Reports {
+		// Process each report individually
+		receipt, err := s.processSingleReport(ctx, report)
+		if err != nil {
+			// Create error receipt
+			receipt = &pb.Receipt{
+				IntentId:    report.IntentId,
+				ValidatorId: s.node.GetID(),
+				ReceivedTs:  time.Now().Unix(),
+				Status:      "rejected",
+				ReportId:    report.ReportId,
+				Phase:       "REJECTED",
+			}
+			failedCount++
+
+			// If partial success not allowed, stop on first failure
+			if !partialOk {
+				receipts = append(receipts, receipt)
+				// Fill remaining with error receipts
+				for i := len(receipts); i < len(req.Reports); i++ {
+					receipts = append(receipts, &pb.Receipt{
+						IntentId:    req.Reports[i].IntentId,
+						ValidatorId: s.node.GetID(),
+						ReceivedTs:  time.Now().Unix(),
+						Status:      "rejected",
+						ReportId:    req.Reports[i].ReportId,
+						Phase:       "REJECTED",
+					})
+					failedCount++
+				}
+				break
+			}
+		} else {
+			successCount++
+		}
+		receipts = append(receipts, receipt)
+	}
+
+	msg := fmt.Sprintf("Processed %d reports: %d succeeded, %d failed", len(req.Reports), successCount, failedCount)
+	s.logger.Infof("Batch report processing complete: %s", msg)
+
+	return &pb.ExecutionReportBatchResponse{
+		Receipts: receipts,
+		Success:  successCount,
+		Failed:   failedCount,
+		Msg:      msg,
+	}, nil
+}
+
+// processSingleReport processes a single execution report and returns receipt
+func (s *Server) processSingleReport(ctx context.Context, report *pb.ExecutionReport) (*pb.Receipt, error) {
+	if report == nil {
+		return nil, fmt.Errorf("execution report is required")
+	}
+
+	// Validate report
+	if err := s.validateExecutionReport(report); err != nil {
+		return nil, fmt.Errorf("invalid report: %v", err)
+	}
+
+	// Verify agent if verifier is configured
+	if s.verifier != nil {
+		addr := extractChainAddressFromReport(report)
+		verified, err := s.verifier.VerifyAgent(ctx, addr)
+		if err != nil {
+			s.logger.Warnf("On-chain agent verification failed for %s: %v", report.AgentId, err)
+			if !s.allowUnverified {
+				return nil, fmt.Errorf("agent verification failed")
+			}
+		} else if !verified {
+			s.logger.Warnf("Agent %s not active on-chain (addr=%s)", report.AgentId, addr)
+			if !s.allowUnverified {
+				return nil, fmt.Errorf("agent not registered on-chain")
+			}
+		}
+	}
+
+	// Check rate limiting
+	if !s.checkRateLimit(report.AgentId) {
+		return nil, fmt.Errorf("rate limit exceeded")
+	}
+
+	// Process report
+	receipt, err := s.node.ProcessExecutionReport(report)
+	if err != nil {
+		s.logger.Error("Failed to process execution report",
+			"agent", report.AgentId,
+			"assignment", report.AssignmentId,
+			"error", err)
+		return nil, fmt.Errorf("failed to process report: %v", err)
+	}
+
+	return receipt, nil
+}
+
 // GetCheckpoint retrieves checkpoint by epoch
 func (s *Server) GetCheckpoint(ctx context.Context, req *pb.GetCheckpointRequest) (*pb.CheckpointHeader, error) {
 	epoch := req.GetEpoch()
