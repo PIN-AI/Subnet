@@ -244,6 +244,13 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 	return node, nil
 }
 
+// GetID returns the validator node's ID
+func (n *Node) GetID() string {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	return n.id
+}
+
 // Start starts the validator node
 func (n *Node) Start(ctx context.Context) error {
 	n.logger.Infof("Starting validator node id=%s", n.id)

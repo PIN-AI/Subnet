@@ -844,6 +844,136 @@ func (x *RespondToTaskResponse) GetMessage() string {
 	return ""
 }
 
+// Batch bid submission request
+type SubmitBidBatchRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Bids          []*Bid                 `protobuf:"bytes,1,rep,name=bids,proto3" json:"bids,omitempty"`
+	BatchId       string                 `protobuf:"bytes,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`              // Optional batch identifier for idempotency
+	PartialOk     *bool                  `protobuf:"varint,3,opt,name=partial_ok,json=partialOk,proto3,oneof" json:"partial_ok,omitempty"` // Allow partial success (default: false)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitBidBatchRequest) Reset() {
+	*x = SubmitBidBatchRequest{}
+	mi := &file_proto_subnet_matcher_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitBidBatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitBidBatchRequest) ProtoMessage() {}
+
+func (x *SubmitBidBatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_subnet_matcher_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitBidBatchRequest.ProtoReflect.Descriptor instead.
+func (*SubmitBidBatchRequest) Descriptor() ([]byte, []int) {
+	return file_proto_subnet_matcher_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SubmitBidBatchRequest) GetBids() []*Bid {
+	if x != nil {
+		return x.Bids
+	}
+	return nil
+}
+
+func (x *SubmitBidBatchRequest) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+func (x *SubmitBidBatchRequest) GetPartialOk() bool {
+	if x != nil && x.PartialOk != nil {
+		return *x.PartialOk
+	}
+	return false
+}
+
+// Batch bid submission response
+type SubmitBidBatchResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Acks          []*BidSubmissionAck    `protobuf:"bytes,1,rep,name=acks,proto3" json:"acks,omitempty"`        // Per-bid responses aligned with request order
+	Success       int32                  `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"` // Number of successful submissions
+	Failed        int32                  `protobuf:"varint,3,opt,name=failed,proto3" json:"failed,omitempty"`   // Number of failed submissions
+	Msg           string                 `protobuf:"bytes,4,opt,name=msg,proto3" json:"msg,omitempty"`          // Optional summary message
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitBidBatchResponse) Reset() {
+	*x = SubmitBidBatchResponse{}
+	mi := &file_proto_subnet_matcher_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitBidBatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitBidBatchResponse) ProtoMessage() {}
+
+func (x *SubmitBidBatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_subnet_matcher_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitBidBatchResponse.ProtoReflect.Descriptor instead.
+func (*SubmitBidBatchResponse) Descriptor() ([]byte, []int) {
+	return file_proto_subnet_matcher_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SubmitBidBatchResponse) GetAcks() []*BidSubmissionAck {
+	if x != nil {
+		return x.Acks
+	}
+	return nil
+}
+
+func (x *SubmitBidBatchResponse) GetSuccess() int32 {
+	if x != nil {
+		return x.Success
+	}
+	return 0
+}
+
+func (x *SubmitBidBatchResponse) GetFailed() int32 {
+	if x != nil {
+		return x.Failed
+	}
+	return 0
+}
+
+func (x *SubmitBidBatchResponse) GetMsg() string {
+	if x != nil {
+		return x.Msg
+	}
+	return ""
+}
+
 var File_proto_subnet_matcher_proto protoreflect.FileDescriptor
 
 const file_proto_subnet_matcher_proto_rawDesc = "" +
@@ -908,7 +1038,18 @@ const file_proto_subnet_matcher_proto_rawDesc = "" +
 	"\bresponse\x18\x01 \x01(\v2\x17.subnet.v1.TaskResponseR\bresponse\"K\n" +
 	"\x15RespondToTaskResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessageB\x18Z\x16subnet/proto/subnet;pbb\x06proto3"
+	"\amessage\x18\x02 \x01(\tR\amessage\"\x89\x01\n" +
+	"\x15SubmitBidBatchRequest\x12\"\n" +
+	"\x04bids\x18\x01 \x03(\v2\x0e.subnet.v1.BidR\x04bids\x12\x19\n" +
+	"\bbatch_id\x18\x02 \x01(\tR\abatchId\x12\"\n" +
+	"\n" +
+	"partial_ok\x18\x03 \x01(\bH\x00R\tpartialOk\x88\x01\x01B\r\n" +
+	"\v_partial_ok\"\x8d\x01\n" +
+	"\x16SubmitBidBatchResponse\x12/\n" +
+	"\x04acks\x18\x01 \x03(\v2\x1b.subnet.v1.BidSubmissionAckR\x04acks\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\x05R\asuccess\x12\x16\n" +
+	"\x06failed\x18\x03 \x01(\x05R\x06failed\x12\x10\n" +
+	"\x03msg\x18\x04 \x01(\tR\x03msgB\x18Z\x16subnet/proto/subnet;pbb\x06proto3"
 
 var (
 	file_proto_subnet_matcher_proto_rawDescOnce sync.Once
@@ -923,7 +1064,7 @@ func file_proto_subnet_matcher_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_subnet_matcher_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_subnet_matcher_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_proto_subnet_matcher_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_proto_subnet_matcher_proto_goTypes = []any{
 	(BidEvent_EventType)(0),           // 0: subnet.v1.BidEvent.EventType
 	(*IntentBidSnapshot)(nil),         // 1: subnet.v1.IntentBidSnapshot
@@ -939,22 +1080,26 @@ var file_proto_subnet_matcher_proto_goTypes = []any{
 	(*TaskResponse)(nil),              // 11: subnet.v1.TaskResponse
 	(*RespondToTaskRequest)(nil),      // 12: subnet.v1.RespondToTaskRequest
 	(*RespondToTaskResponse)(nil),     // 13: subnet.v1.RespondToTaskResponse
-	(*Bid)(nil),                       // 14: subnet.v1.Bid
-	(*BidSubmissionAck)(nil),          // 15: subnet.v1.BidSubmissionAck
+	(*SubmitBidBatchRequest)(nil),     // 14: subnet.v1.SubmitBidBatchRequest
+	(*SubmitBidBatchResponse)(nil),    // 15: subnet.v1.SubmitBidBatchResponse
+	(*Bid)(nil),                       // 16: subnet.v1.Bid
+	(*BidSubmissionAck)(nil),          // 17: subnet.v1.BidSubmissionAck
 }
 var file_proto_subnet_matcher_proto_depIdxs = []int32{
-	14, // 0: subnet.v1.IntentBidSnapshot.bids:type_name -> subnet.v1.Bid
-	14, // 1: subnet.v1.SubmitBidRequest.bid:type_name -> subnet.v1.Bid
-	15, // 2: subnet.v1.SubmitBidResponse.ack:type_name -> subnet.v1.BidSubmissionAck
+	16, // 0: subnet.v1.IntentBidSnapshot.bids:type_name -> subnet.v1.Bid
+	16, // 1: subnet.v1.SubmitBidRequest.bid:type_name -> subnet.v1.Bid
+	17, // 2: subnet.v1.SubmitBidResponse.ack:type_name -> subnet.v1.BidSubmissionAck
 	1,  // 3: subnet.v1.GetIntentSnapshotResponse.snapshot:type_name -> subnet.v1.IntentBidSnapshot
 	0,  // 4: subnet.v1.BidEvent.type:type_name -> subnet.v1.BidEvent.EventType
-	14, // 5: subnet.v1.BidEvent.bid:type_name -> subnet.v1.Bid
+	16, // 5: subnet.v1.BidEvent.bid:type_name -> subnet.v1.Bid
 	11, // 6: subnet.v1.RespondToTaskRequest.response:type_name -> subnet.v1.TaskResponse
-	7,  // [7:7] is the sub-list for method output_type
-	7,  // [7:7] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	16, // 7: subnet.v1.SubmitBidBatchRequest.bids:type_name -> subnet.v1.Bid
+	17, // 8: subnet.v1.SubmitBidBatchResponse.acks:type_name -> subnet.v1.BidSubmissionAck
+	9,  // [9:9] is the sub-list for method output_type
+	9,  // [9:9] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_proto_subnet_matcher_proto_init() }
@@ -963,13 +1108,14 @@ func file_proto_subnet_matcher_proto_init() {
 		return
 	}
 	file_proto_subnet_bid_proto_init()
+	file_proto_subnet_matcher_proto_msgTypes[13].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_subnet_matcher_proto_rawDesc), len(file_proto_subnet_matcher_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

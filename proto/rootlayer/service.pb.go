@@ -4,7 +4,7 @@
 // 	protoc        v4.25.3
 // source: rootlayer/service.proto
 
-package rootpb
+package rootlayerv1
 
 import (
 	_ "google.golang.org/genproto/googleapis/api/annotations"
@@ -492,6 +492,289 @@ func (x *SubmitIntentResponse) GetIntentExpiration() int64 {
 	return 0
 }
 
+// Batch intent submission request.
+type SubmitIntentBatchRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Intents to submit.
+	Items []*SubmitIntentRequest `protobuf:"bytes,1,rep,name=items,proto3" json:"items,omitempty"`
+	// Optional client-provided batch identifier for idempotency.
+	BatchId string `protobuf:"bytes,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	// Allow partial success. If false, stop processing at first failure.
+	PartialOk *bool `protobuf:"varint,3,opt,name=partial_ok,json=partialOk,proto3,oneof" json:"partial_ok,omitempty"`
+	// If true, treat already existing intents as successful submissions.
+	TreatExistsAsOk *bool `protobuf:"varint,4,opt,name=treat_exists_as_ok,json=treatExistsAsOk,proto3,oneof" json:"treat_exists_as_ok,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *SubmitIntentBatchRequest) Reset() {
+	*x = SubmitIntentBatchRequest{}
+	mi := &file_rootlayer_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitIntentBatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitIntentBatchRequest) ProtoMessage() {}
+
+func (x *SubmitIntentBatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rootlayer_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitIntentBatchRequest.ProtoReflect.Descriptor instead.
+func (*SubmitIntentBatchRequest) Descriptor() ([]byte, []int) {
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SubmitIntentBatchRequest) GetItems() []*SubmitIntentRequest {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *SubmitIntentBatchRequest) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+func (x *SubmitIntentBatchRequest) GetPartialOk() bool {
+	if x != nil && x.PartialOk != nil {
+		return *x.PartialOk
+	}
+	return false
+}
+
+func (x *SubmitIntentBatchRequest) GetTreatExistsAsOk() bool {
+	if x != nil && x.TreatExistsAsOk != nil {
+		return *x.TreatExistsAsOk
+	}
+	return false
+}
+
+// Batch intent submission response.
+type SubmitIntentBatchResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Per-intent responses aligned with request order.
+	Results []*SubmitIntentResponse `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	// Number of successful submissions.
+	Success int32 `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
+	// Number of failed submissions.
+	Failed int32 `protobuf:"varint,3,opt,name=failed,proto3" json:"failed,omitempty"`
+	// Optional summary message.
+	Msg           string `protobuf:"bytes,4,opt,name=msg,proto3" json:"msg,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitIntentBatchResponse) Reset() {
+	*x = SubmitIntentBatchResponse{}
+	mi := &file_rootlayer_service_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitIntentBatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitIntentBatchResponse) ProtoMessage() {}
+
+func (x *SubmitIntentBatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_rootlayer_service_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitIntentBatchResponse.ProtoReflect.Descriptor instead.
+func (*SubmitIntentBatchResponse) Descriptor() ([]byte, []int) {
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SubmitIntentBatchResponse) GetResults() []*SubmitIntentResponse {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+func (x *SubmitIntentBatchResponse) GetSuccess() int32 {
+	if x != nil {
+		return x.Success
+	}
+	return 0
+}
+
+func (x *SubmitIntentBatchResponse) GetFailed() int32 {
+	if x != nil {
+		return x.Failed
+	}
+	return 0
+}
+
+func (x *SubmitIntentBatchResponse) GetMsg() string {
+	if x != nil {
+		return x.Msg
+	}
+	return ""
+}
+
+// Batch validation bundle request.
+type ValidationBundleBatchRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Validation bundles to submit.
+	Bundles []*ValidationBundle `protobuf:"bytes,1,rep,name=bundles,proto3" json:"bundles,omitempty"`
+	// Optional client-provided batch identifier for idempotency.
+	BatchId string `protobuf:"bytes,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
+	// Allow partial success.
+	PartialOk     *bool `protobuf:"varint,3,opt,name=partial_ok,json=partialOk,proto3,oneof" json:"partial_ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ValidationBundleBatchRequest) Reset() {
+	*x = ValidationBundleBatchRequest{}
+	mi := &file_rootlayer_service_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValidationBundleBatchRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValidationBundleBatchRequest) ProtoMessage() {}
+
+func (x *ValidationBundleBatchRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rootlayer_service_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValidationBundleBatchRequest.ProtoReflect.Descriptor instead.
+func (*ValidationBundleBatchRequest) Descriptor() ([]byte, []int) {
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ValidationBundleBatchRequest) GetBundles() []*ValidationBundle {
+	if x != nil {
+		return x.Bundles
+	}
+	return nil
+}
+
+func (x *ValidationBundleBatchRequest) GetBatchId() string {
+	if x != nil {
+		return x.BatchId
+	}
+	return ""
+}
+
+func (x *ValidationBundleBatchRequest) GetPartialOk() bool {
+	if x != nil && x.PartialOk != nil {
+		return *x.PartialOk
+	}
+	return false
+}
+
+// Batch validation bundle response.
+type ValidationBundleBatchResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Per-bundle responses aligned with request order.
+	Results []*ValidationAck `protobuf:"bytes,1,rep,name=results,proto3" json:"results,omitempty"`
+	// Number of successful submissions.
+	Success int32 `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"`
+	// Number of failed submissions.
+	Failed int32 `protobuf:"varint,3,opt,name=failed,proto3" json:"failed,omitempty"`
+	// Optional summary message.
+	Msg           string `protobuf:"bytes,4,opt,name=msg,proto3" json:"msg,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ValidationBundleBatchResponse) Reset() {
+	*x = ValidationBundleBatchResponse{}
+	mi := &file_rootlayer_service_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValidationBundleBatchResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValidationBundleBatchResponse) ProtoMessage() {}
+
+func (x *ValidationBundleBatchResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_rootlayer_service_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValidationBundleBatchResponse.ProtoReflect.Descriptor instead.
+func (*ValidationBundleBatchResponse) Descriptor() ([]byte, []int) {
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ValidationBundleBatchResponse) GetResults() []*ValidationAck {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+func (x *ValidationBundleBatchResponse) GetSuccess() int32 {
+	if x != nil {
+		return x.Success
+	}
+	return 0
+}
+
+func (x *ValidationBundleBatchResponse) GetFailed() int32 {
+	if x != nil {
+		return x.Failed
+	}
+	return 0
+}
+
+func (x *ValidationBundleBatchResponse) GetMsg() string {
+	if x != nil {
+		return x.Msg
+	}
+	return ""
+}
+
 type GetIntentsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Filter by exact intent ID.
@@ -520,7 +803,7 @@ type GetIntentsRequest struct {
 
 func (x *GetIntentsRequest) Reset() {
 	*x = GetIntentsRequest{}
-	mi := &file_rootlayer_service_proto_msgTypes[6]
+	mi := &file_rootlayer_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -532,7 +815,7 @@ func (x *GetIntentsRequest) String() string {
 func (*GetIntentsRequest) ProtoMessage() {}
 
 func (x *GetIntentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rootlayer_service_proto_msgTypes[6]
+	mi := &file_rootlayer_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -545,7 +828,7 @@ func (x *GetIntentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetIntentsRequest.ProtoReflect.Descriptor instead.
 func (*GetIntentsRequest) Descriptor() ([]byte, []int) {
-	return file_rootlayer_service_proto_rawDescGZIP(), []int{6}
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetIntentsRequest) GetIntentId() string {
@@ -636,7 +919,7 @@ type GetIntentsResponse struct {
 
 func (x *GetIntentsResponse) Reset() {
 	*x = GetIntentsResponse{}
-	mi := &file_rootlayer_service_proto_msgTypes[7]
+	mi := &file_rootlayer_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -648,7 +931,7 @@ func (x *GetIntentsResponse) String() string {
 func (*GetIntentsResponse) ProtoMessage() {}
 
 func (x *GetIntentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rootlayer_service_proto_msgTypes[7]
+	mi := &file_rootlayer_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -661,7 +944,7 @@ func (x *GetIntentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetIntentsResponse.ProtoReflect.Descriptor instead.
 func (*GetIntentsResponse) Descriptor() ([]byte, []int) {
-	return file_rootlayer_service_proto_rawDescGZIP(), []int{7}
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetIntentsResponse) GetIntents() []*Intent {
@@ -709,7 +992,7 @@ type GetIntentRequest struct {
 
 func (x *GetIntentRequest) Reset() {
 	*x = GetIntentRequest{}
-	mi := &file_rootlayer_service_proto_msgTypes[8]
+	mi := &file_rootlayer_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -721,7 +1004,7 @@ func (x *GetIntentRequest) String() string {
 func (*GetIntentRequest) ProtoMessage() {}
 
 func (x *GetIntentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rootlayer_service_proto_msgTypes[8]
+	mi := &file_rootlayer_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -734,7 +1017,7 @@ func (x *GetIntentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetIntentRequest.ProtoReflect.Descriptor instead.
 func (*GetIntentRequest) Descriptor() ([]byte, []int) {
-	return file_rootlayer_service_proto_rawDescGZIP(), []int{8}
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *GetIntentRequest) GetIntentId() string {
@@ -776,7 +1059,7 @@ type SubmitIntentRequest struct {
 
 func (x *SubmitIntentRequest) Reset() {
 	*x = SubmitIntentRequest{}
-	mi := &file_rootlayer_service_proto_msgTypes[9]
+	mi := &file_rootlayer_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -788,7 +1071,7 @@ func (x *SubmitIntentRequest) String() string {
 func (*SubmitIntentRequest) ProtoMessage() {}
 
 func (x *SubmitIntentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rootlayer_service_proto_msgTypes[9]
+	mi := &file_rootlayer_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -801,7 +1084,7 @@ func (x *SubmitIntentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitIntentRequest.ProtoReflect.Descriptor instead.
 func (*SubmitIntentRequest) Descriptor() ([]byte, []int) {
-	return file_rootlayer_service_proto_rawDescGZIP(), []int{9}
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SubmitIntentRequest) GetIntentId() string {
@@ -907,7 +1190,7 @@ type HealthCheckResponse struct {
 
 func (x *HealthCheckResponse) Reset() {
 	*x = HealthCheckResponse{}
-	mi := &file_rootlayer_service_proto_msgTypes[10]
+	mi := &file_rootlayer_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -919,7 +1202,7 @@ func (x *HealthCheckResponse) String() string {
 func (*HealthCheckResponse) ProtoMessage() {}
 
 func (x *HealthCheckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rootlayer_service_proto_msgTypes[10]
+	mi := &file_rootlayer_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -932,7 +1215,7 @@ func (x *HealthCheckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthCheckResponse.ProtoReflect.Descriptor instead.
 func (*HealthCheckResponse) Descriptor() ([]byte, []int) {
-	return file_rootlayer_service_proto_rawDescGZIP(), []int{10}
+	return file_rootlayer_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *HealthCheckResponse) GetStatus() string {
@@ -1019,7 +1302,31 @@ const file_rootlayer_service_proto_rawDesc = "" +
 	"\tintent_id\x18\x03 \x01(\tR\bintentId\x12\x1f\n" +
 	"\vparams_hash\x18\x04 \x01(\fR\n" +
 	"paramsHash\x12+\n" +
-	"\x11intent_expiration\x18\x05 \x01(\x03R\x10intentExpiration\"\xaa\x02\n" +
+	"\x11intent_expiration\x18\x05 \x01(\x03R\x10intentExpiration\"\xea\x01\n" +
+	"\x18SubmitIntentBatchRequest\x127\n" +
+	"\x05items\x18\x01 \x03(\v2!.rootlayer.v1.SubmitIntentRequestR\x05items\x12\x19\n" +
+	"\bbatch_id\x18\x02 \x01(\tR\abatchId\x12\"\n" +
+	"\n" +
+	"partial_ok\x18\x03 \x01(\bH\x00R\tpartialOk\x88\x01\x01\x120\n" +
+	"\x12treat_exists_as_ok\x18\x04 \x01(\bH\x01R\x0ftreatExistsAsOk\x88\x01\x01B\r\n" +
+	"\v_partial_okB\x15\n" +
+	"\x13_treat_exists_as_ok\"\x9d\x01\n" +
+	"\x19SubmitIntentBatchResponse\x12<\n" +
+	"\aresults\x18\x01 \x03(\v2\".rootlayer.v1.SubmitIntentResponseR\aresults\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\x05R\asuccess\x12\x16\n" +
+	"\x06failed\x18\x03 \x01(\x05R\x06failed\x12\x10\n" +
+	"\x03msg\x18\x04 \x01(\tR\x03msg\"\xa6\x01\n" +
+	"\x1cValidationBundleBatchRequest\x128\n" +
+	"\abundles\x18\x01 \x03(\v2\x1e.rootlayer.v1.ValidationBundleR\abundles\x12\x19\n" +
+	"\bbatch_id\x18\x02 \x01(\tR\abatchId\x12\"\n" +
+	"\n" +
+	"partial_ok\x18\x03 \x01(\bH\x00R\tpartialOk\x88\x01\x01B\r\n" +
+	"\v_partial_ok\"\x9a\x01\n" +
+	"\x1dValidationBundleBatchResponse\x125\n" +
+	"\aresults\x18\x01 \x03(\v2\x1b.rootlayer.v1.ValidationAckR\aresults\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\x05R\asuccess\x12\x16\n" +
+	"\x06failed\x18\x03 \x01(\x05R\x06failed\x12\x10\n" +
+	"\x03msg\x18\x04 \x01(\tR\x03msg\"\xaa\x02\n" +
 	"\x11GetIntentsRequest\x12\x1b\n" +
 	"\tintent_id\x18\x01 \x01(\tR\bintentId\x12\x1b\n" +
 	"\tsubnet_id\x18\x02 \x01(\tR\bsubnetId\x12\x16\n" +
@@ -1065,15 +1372,18 @@ const file_rootlayer_service_proto_rawDesc = "" +
 	"\adetails\x18\x05 \x03(\v2..rootlayer.v1.HealthCheckResponse.DetailsEntryR\adetails\x1a:\n" +
 	"\fDetailsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\xd8\x05\n" +
-	"\x11IntentPoolService\x12x\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x012\x91\t\n" +
+	"\x11IntentPoolService\x12\x8d\x01\n" +
+	"\x11SubmitIntentBatch\x12&.rootlayer.v1.SubmitIntentBatchRequest\x1a'.rootlayer.v1.SubmitIntentBatchResponse\"'\x82\xd3\xe4\x93\x02!:\x01*\"\x1c/api/v1/intents/submit/batch\x12x\n" +
 	"\fSubmitIntent\x12!.rootlayer.v1.SubmitIntentRequest\x1a\".rootlayer.v1.SubmitIntentResponse\"!\x82\xd3\xe4\x93\x02\x1b:\x01*\"\x16/api/v1/intents/submit\x12n\n" +
 	"\n" +
 	"GetIntents\x12\x1f.rootlayer.v1.GetIntentsRequest\x1a .rootlayer.v1.GetIntentsResponse\"\x1d\x82\xd3\xe4\x93\x02\x17\x12\x15/api/v1/intents/query\x12l\n" +
 	"\tGetIntent\x12\x1e.rootlayer.v1.GetIntentRequest\x1a\x14.rootlayer.v1.Intent\")\x82\xd3\xe4\x93\x02#\x12!/api/v1/intents/query/{intent_id}\x12m\n" +
-	"\x0ePostAssignment\x12\x18.rootlayer.v1.Assignment\x1a\x11.rootlayer.v1.Ack\".\x82\xd3\xe4\x93\x02(:\x01*\"#/api/v1/callbacks/assignment/submit\x12t\n" +
+	"\x0ePostAssignment\x12\x18.rootlayer.v1.Assignment\x1a\x11.rootlayer.v1.Ack\".\x82\xd3\xe4\x93\x02(:\x01*\"#/api/v1/callbacks/assignment/submit\x12x\n" +
+	"\x13PostAssignmentBatch\x12\x1d.rootlayer.v1.AssignmentBatch\x1a\x11.rootlayer.v1.Ack\"/\x82\xd3\xe4\x93\x02):\x01*\"$/api/v1/callbacks/assignments/submit\x12t\n" +
 	"\x0fPostAssignments\x12\x1d.rootlayer.v1.AssignmentBatch\x1a\x11.rootlayer.v1.Ack\"/\x82\xd3\xe4\x93\x02):\x01*\"$/api/v1/callbacks/assignments/submit\x12\x85\x01\n" +
-	"\x16SubmitValidationBundle\x12\x1e.rootlayer.v1.ValidationBundle\x1a\x1b.rootlayer.v1.ValidationAck\".\x82\xd3\xe4\x93\x02(:\x01*\"#/api/v1/callbacks/validation/submit2\xd6\x01\n" +
+	"\x16SubmitValidationBundle\x12\x1e.rootlayer.v1.ValidationBundle\x1a\x1b.rootlayer.v1.ValidationAck\".\x82\xd3\xe4\x93\x02(:\x01*\"#/api/v1/callbacks/validation/submit\x12\xac\x01\n" +
+	"\x1bSubmitValidationBundleBatch\x12*.rootlayer.v1.ValidationBundleBatchRequest\x1a+.rootlayer.v1.ValidationBundleBatchResponse\"4\x82\xd3\xe4\x93\x02.:\x01*\")/api/v1/callbacks/validation/submit/batch2\xd6\x01\n" +
 	"\x13SubscriptionService\x12\\\n" +
 	"\x10SubscribeIntents\x12%.rootlayer.v1.SubscribeIntentsRequest\x1a\x1f.rootlayer.v1.IntentStreamEvent0\x01\x12a\n" +
 	"\x16SubscribeStatusUpdates\x12$.rootlayer.v1.SubscribeStatusRequest\x1a\x1f.rootlayer.v1.StatusUpdateEvent0\x012d\n" +
@@ -1092,65 +1402,79 @@ func file_rootlayer_service_proto_rawDescGZIP() []byte {
 	return file_rootlayer_service_proto_rawDescData
 }
 
-var file_rootlayer_service_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_rootlayer_service_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_rootlayer_service_proto_goTypes = []any{
-	(*Ack)(nil),                     // 0: rootlayer.v1.Ack
-	(*SubscribeIntentsRequest)(nil), // 1: rootlayer.v1.SubscribeIntentsRequest
-	(*IntentStreamEvent)(nil),       // 2: rootlayer.v1.IntentStreamEvent
-	(*SubscribeStatusRequest)(nil),  // 3: rootlayer.v1.SubscribeStatusRequest
-	(*StatusUpdateEvent)(nil),       // 4: rootlayer.v1.StatusUpdateEvent
-	(*SubmitIntentResponse)(nil),    // 5: rootlayer.v1.SubmitIntentResponse
-	(*GetIntentsRequest)(nil),       // 6: rootlayer.v1.GetIntentsRequest
-	(*GetIntentsResponse)(nil),      // 7: rootlayer.v1.GetIntentsResponse
-	(*GetIntentRequest)(nil),        // 8: rootlayer.v1.GetIntentRequest
-	(*SubmitIntentRequest)(nil),     // 9: rootlayer.v1.SubmitIntentRequest
-	(*HealthCheckResponse)(nil),     // 10: rootlayer.v1.HealthCheckResponse
-	nil,                             // 11: rootlayer.v1.IntentStreamEvent.MetadataEntry
-	nil,                             // 12: rootlayer.v1.StatusUpdateEvent.MetadataEntry
-	nil,                             // 13: rootlayer.v1.HealthCheckResponse.DetailsEntry
-	(IntentStatus)(0),               // 14: rootlayer.v1.IntentStatus
-	(*Intent)(nil),                  // 15: rootlayer.v1.Intent
-	(*IntentParams)(nil),            // 16: rootlayer.v1.IntentParams
-	(*Assignment)(nil),              // 17: rootlayer.v1.Assignment
-	(*AssignmentBatch)(nil),         // 18: rootlayer.v1.AssignmentBatch
-	(*ValidationBundle)(nil),        // 19: rootlayer.v1.ValidationBundle
-	(*emptypb.Empty)(nil),           // 20: google.protobuf.Empty
-	(*ValidationAck)(nil),           // 21: rootlayer.v1.ValidationAck
+	(*Ack)(nil),                           // 0: rootlayer.v1.Ack
+	(*SubscribeIntentsRequest)(nil),       // 1: rootlayer.v1.SubscribeIntentsRequest
+	(*IntentStreamEvent)(nil),             // 2: rootlayer.v1.IntentStreamEvent
+	(*SubscribeStatusRequest)(nil),        // 3: rootlayer.v1.SubscribeStatusRequest
+	(*StatusUpdateEvent)(nil),             // 4: rootlayer.v1.StatusUpdateEvent
+	(*SubmitIntentResponse)(nil),          // 5: rootlayer.v1.SubmitIntentResponse
+	(*SubmitIntentBatchRequest)(nil),      // 6: rootlayer.v1.SubmitIntentBatchRequest
+	(*SubmitIntentBatchResponse)(nil),     // 7: rootlayer.v1.SubmitIntentBatchResponse
+	(*ValidationBundleBatchRequest)(nil),  // 8: rootlayer.v1.ValidationBundleBatchRequest
+	(*ValidationBundleBatchResponse)(nil), // 9: rootlayer.v1.ValidationBundleBatchResponse
+	(*GetIntentsRequest)(nil),             // 10: rootlayer.v1.GetIntentsRequest
+	(*GetIntentsResponse)(nil),            // 11: rootlayer.v1.GetIntentsResponse
+	(*GetIntentRequest)(nil),              // 12: rootlayer.v1.GetIntentRequest
+	(*SubmitIntentRequest)(nil),           // 13: rootlayer.v1.SubmitIntentRequest
+	(*HealthCheckResponse)(nil),           // 14: rootlayer.v1.HealthCheckResponse
+	nil,                                   // 15: rootlayer.v1.IntentStreamEvent.MetadataEntry
+	nil,                                   // 16: rootlayer.v1.StatusUpdateEvent.MetadataEntry
+	nil,                                   // 17: rootlayer.v1.HealthCheckResponse.DetailsEntry
+	(IntentStatus)(0),                     // 18: rootlayer.v1.IntentStatus
+	(*Intent)(nil),                        // 19: rootlayer.v1.Intent
+	(*ValidationBundle)(nil),              // 20: rootlayer.v1.ValidationBundle
+	(*ValidationAck)(nil),                 // 21: rootlayer.v1.ValidationAck
+	(*IntentParams)(nil),                  // 22: rootlayer.v1.IntentParams
+	(*Assignment)(nil),                    // 23: rootlayer.v1.Assignment
+	(*AssignmentBatch)(nil),               // 24: rootlayer.v1.AssignmentBatch
+	(*emptypb.Empty)(nil),                 // 25: google.protobuf.Empty
 }
 var file_rootlayer_service_proto_depIdxs = []int32{
-	14, // 0: rootlayer.v1.SubscribeIntentsRequest.status_filter:type_name -> rootlayer.v1.IntentStatus
-	15, // 1: rootlayer.v1.IntentStreamEvent.intent:type_name -> rootlayer.v1.Intent
-	11, // 2: rootlayer.v1.IntentStreamEvent.metadata:type_name -> rootlayer.v1.IntentStreamEvent.MetadataEntry
-	14, // 3: rootlayer.v1.SubscribeStatusRequest.statuses:type_name -> rootlayer.v1.IntentStatus
-	14, // 4: rootlayer.v1.StatusUpdateEvent.old_status:type_name -> rootlayer.v1.IntentStatus
-	14, // 5: rootlayer.v1.StatusUpdateEvent.new_status:type_name -> rootlayer.v1.IntentStatus
-	12, // 6: rootlayer.v1.StatusUpdateEvent.metadata:type_name -> rootlayer.v1.StatusUpdateEvent.MetadataEntry
-	15, // 7: rootlayer.v1.GetIntentsResponse.intents:type_name -> rootlayer.v1.Intent
-	16, // 8: rootlayer.v1.SubmitIntentRequest.params:type_name -> rootlayer.v1.IntentParams
-	13, // 9: rootlayer.v1.HealthCheckResponse.details:type_name -> rootlayer.v1.HealthCheckResponse.DetailsEntry
-	9,  // 10: rootlayer.v1.IntentPoolService.SubmitIntent:input_type -> rootlayer.v1.SubmitIntentRequest
-	6,  // 11: rootlayer.v1.IntentPoolService.GetIntents:input_type -> rootlayer.v1.GetIntentsRequest
-	8,  // 12: rootlayer.v1.IntentPoolService.GetIntent:input_type -> rootlayer.v1.GetIntentRequest
-	17, // 13: rootlayer.v1.IntentPoolService.PostAssignment:input_type -> rootlayer.v1.Assignment
-	18, // 14: rootlayer.v1.IntentPoolService.PostAssignments:input_type -> rootlayer.v1.AssignmentBatch
-	19, // 15: rootlayer.v1.IntentPoolService.SubmitValidationBundle:input_type -> rootlayer.v1.ValidationBundle
-	1,  // 16: rootlayer.v1.SubscriptionService.SubscribeIntents:input_type -> rootlayer.v1.SubscribeIntentsRequest
-	3,  // 17: rootlayer.v1.SubscriptionService.SubscribeStatusUpdates:input_type -> rootlayer.v1.SubscribeStatusRequest
-	20, // 18: rootlayer.v1.HealthService.Check:input_type -> google.protobuf.Empty
-	5,  // 19: rootlayer.v1.IntentPoolService.SubmitIntent:output_type -> rootlayer.v1.SubmitIntentResponse
-	7,  // 20: rootlayer.v1.IntentPoolService.GetIntents:output_type -> rootlayer.v1.GetIntentsResponse
-	15, // 21: rootlayer.v1.IntentPoolService.GetIntent:output_type -> rootlayer.v1.Intent
-	0,  // 22: rootlayer.v1.IntentPoolService.PostAssignment:output_type -> rootlayer.v1.Ack
-	0,  // 23: rootlayer.v1.IntentPoolService.PostAssignments:output_type -> rootlayer.v1.Ack
-	21, // 24: rootlayer.v1.IntentPoolService.SubmitValidationBundle:output_type -> rootlayer.v1.ValidationAck
-	2,  // 25: rootlayer.v1.SubscriptionService.SubscribeIntents:output_type -> rootlayer.v1.IntentStreamEvent
-	4,  // 26: rootlayer.v1.SubscriptionService.SubscribeStatusUpdates:output_type -> rootlayer.v1.StatusUpdateEvent
-	10, // 27: rootlayer.v1.HealthService.Check:output_type -> rootlayer.v1.HealthCheckResponse
-	19, // [19:28] is the sub-list for method output_type
-	10, // [10:19] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	18, // 0: rootlayer.v1.SubscribeIntentsRequest.status_filter:type_name -> rootlayer.v1.IntentStatus
+	19, // 1: rootlayer.v1.IntentStreamEvent.intent:type_name -> rootlayer.v1.Intent
+	15, // 2: rootlayer.v1.IntentStreamEvent.metadata:type_name -> rootlayer.v1.IntentStreamEvent.MetadataEntry
+	18, // 3: rootlayer.v1.SubscribeStatusRequest.statuses:type_name -> rootlayer.v1.IntentStatus
+	18, // 4: rootlayer.v1.StatusUpdateEvent.old_status:type_name -> rootlayer.v1.IntentStatus
+	18, // 5: rootlayer.v1.StatusUpdateEvent.new_status:type_name -> rootlayer.v1.IntentStatus
+	16, // 6: rootlayer.v1.StatusUpdateEvent.metadata:type_name -> rootlayer.v1.StatusUpdateEvent.MetadataEntry
+	13, // 7: rootlayer.v1.SubmitIntentBatchRequest.items:type_name -> rootlayer.v1.SubmitIntentRequest
+	5,  // 8: rootlayer.v1.SubmitIntentBatchResponse.results:type_name -> rootlayer.v1.SubmitIntentResponse
+	20, // 9: rootlayer.v1.ValidationBundleBatchRequest.bundles:type_name -> rootlayer.v1.ValidationBundle
+	21, // 10: rootlayer.v1.ValidationBundleBatchResponse.results:type_name -> rootlayer.v1.ValidationAck
+	19, // 11: rootlayer.v1.GetIntentsResponse.intents:type_name -> rootlayer.v1.Intent
+	22, // 12: rootlayer.v1.SubmitIntentRequest.params:type_name -> rootlayer.v1.IntentParams
+	17, // 13: rootlayer.v1.HealthCheckResponse.details:type_name -> rootlayer.v1.HealthCheckResponse.DetailsEntry
+	6,  // 14: rootlayer.v1.IntentPoolService.SubmitIntentBatch:input_type -> rootlayer.v1.SubmitIntentBatchRequest
+	13, // 15: rootlayer.v1.IntentPoolService.SubmitIntent:input_type -> rootlayer.v1.SubmitIntentRequest
+	10, // 16: rootlayer.v1.IntentPoolService.GetIntents:input_type -> rootlayer.v1.GetIntentsRequest
+	12, // 17: rootlayer.v1.IntentPoolService.GetIntent:input_type -> rootlayer.v1.GetIntentRequest
+	23, // 18: rootlayer.v1.IntentPoolService.PostAssignment:input_type -> rootlayer.v1.Assignment
+	24, // 19: rootlayer.v1.IntentPoolService.PostAssignmentBatch:input_type -> rootlayer.v1.AssignmentBatch
+	24, // 20: rootlayer.v1.IntentPoolService.PostAssignments:input_type -> rootlayer.v1.AssignmentBatch
+	20, // 21: rootlayer.v1.IntentPoolService.SubmitValidationBundle:input_type -> rootlayer.v1.ValidationBundle
+	8,  // 22: rootlayer.v1.IntentPoolService.SubmitValidationBundleBatch:input_type -> rootlayer.v1.ValidationBundleBatchRequest
+	1,  // 23: rootlayer.v1.SubscriptionService.SubscribeIntents:input_type -> rootlayer.v1.SubscribeIntentsRequest
+	3,  // 24: rootlayer.v1.SubscriptionService.SubscribeStatusUpdates:input_type -> rootlayer.v1.SubscribeStatusRequest
+	25, // 25: rootlayer.v1.HealthService.Check:input_type -> google.protobuf.Empty
+	7,  // 26: rootlayer.v1.IntentPoolService.SubmitIntentBatch:output_type -> rootlayer.v1.SubmitIntentBatchResponse
+	5,  // 27: rootlayer.v1.IntentPoolService.SubmitIntent:output_type -> rootlayer.v1.SubmitIntentResponse
+	11, // 28: rootlayer.v1.IntentPoolService.GetIntents:output_type -> rootlayer.v1.GetIntentsResponse
+	19, // 29: rootlayer.v1.IntentPoolService.GetIntent:output_type -> rootlayer.v1.Intent
+	0,  // 30: rootlayer.v1.IntentPoolService.PostAssignment:output_type -> rootlayer.v1.Ack
+	0,  // 31: rootlayer.v1.IntentPoolService.PostAssignmentBatch:output_type -> rootlayer.v1.Ack
+	0,  // 32: rootlayer.v1.IntentPoolService.PostAssignments:output_type -> rootlayer.v1.Ack
+	21, // 33: rootlayer.v1.IntentPoolService.SubmitValidationBundle:output_type -> rootlayer.v1.ValidationAck
+	9,  // 34: rootlayer.v1.IntentPoolService.SubmitValidationBundleBatch:output_type -> rootlayer.v1.ValidationBundleBatchResponse
+	2,  // 35: rootlayer.v1.SubscriptionService.SubscribeIntents:output_type -> rootlayer.v1.IntentStreamEvent
+	4,  // 36: rootlayer.v1.SubscriptionService.SubscribeStatusUpdates:output_type -> rootlayer.v1.StatusUpdateEvent
+	14, // 37: rootlayer.v1.HealthService.Check:output_type -> rootlayer.v1.HealthCheckResponse
+	26, // [26:38] is the sub-list for method output_type
+	14, // [14:26] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_rootlayer_service_proto_init() }
@@ -1161,13 +1485,15 @@ func file_rootlayer_service_proto_init() {
 	file_rootlayer_intent_proto_init()
 	file_rootlayer_assignment_proto_init()
 	file_rootlayer_validation_proto_init()
+	file_rootlayer_service_proto_msgTypes[6].OneofWrappers = []any{}
+	file_rootlayer_service_proto_msgTypes[8].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rootlayer_service_proto_rawDesc), len(file_rootlayer_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

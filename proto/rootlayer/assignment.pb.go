@@ -4,7 +4,7 @@
 // 	protoc        v4.25.3
 // source: rootlayer/assignment.proto
 
-package rootpb
+package rootlayerv1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
