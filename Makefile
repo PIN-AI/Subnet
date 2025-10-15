@@ -86,11 +86,24 @@ proto-rootlayer:
 	@find ./proto/rootlayer -type f -name '*.pb.go' -delete
 	@find ./proto/rootlayer -type f -name 'compat.go' -delete
 	@find ./proto/rootlayer -type f -name 'service_types.go' -delete
+	@rm -rf ./rootlayer
 	@protoc -I ../pin_protocol/proto \
 		-I $(GOOGLEAPIS) \
-		--go_out=paths=source_relative:. \
-		--go-grpc_out=paths=source_relative:. \
+		--go_out=. \
+		--go-grpc_out=. \
+		--go_opt=Mrootlayer/intent.proto=rootlayer/proto \
+		--go_opt=Mrootlayer/assignment.proto=rootlayer/proto \
+		--go_opt=Mrootlayer/validation.proto=rootlayer/proto \
+		--go_opt=Mrootlayer/service.proto=rootlayer/proto \
+		--go_opt=Mrootlayer/error_reason.proto=rootlayer/proto \
+		--go-grpc_opt=Mrootlayer/intent.proto=rootlayer/proto \
+		--go-grpc_opt=Mrootlayer/assignment.proto=rootlayer/proto \
+		--go-grpc_opt=Mrootlayer/validation.proto=rootlayer/proto \
+		--go-grpc_opt=Mrootlayer/service.proto=rootlayer/proto \
+		--go-grpc_opt=Mrootlayer/error_reason.proto=rootlayer/proto \
 		../pin_protocol/proto/rootlayer/*.proto
+	@mv ./rootlayer/proto/*.pb.go ./proto/rootlayer/
+	@rm -rf ./rootlayer
 	@echo "[INFO] Protobuf code generation from pin_protocol (rootlayer) complete"
 
 proto-common:

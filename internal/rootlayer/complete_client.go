@@ -157,6 +157,47 @@ func (c *CompleteClient) SubmitValidationBundle(ctx context.Context, bundle *roo
 	return nil
 }
 
+// SubmitValidationBundleBatch submits multiple validation bundles to RootLayer in a single call
+func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, bundles []*rootpb.ValidationBundle, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error) {
+	c.mu.RLock()
+	client := c.intentPoolClient
+	c.mu.RUnlock()
+
+	if client == nil {
+		return nil, fmt.Errorf("not connected to RootLayer")
+	}
+
+	if len(bundles) == 0 {
+		return nil, fmt.Errorf("no validation bundles provided for batch submission")
+	}
+
+	req := &rootpb.ValidationBundleBatchRequest{
+		Bundles:   bundles,
+		BatchId:   batchID,
+		PartialOk: &partialOk,
+	}
+
+	resp, err := client.SubmitValidationBundleBatch(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to submit validation bundle batch: %w", err)
+	}
+
+	c.logger.Infof("Validation bundle batch submitted: batch_id=%s total=%d success=%d failed=%d",
+		batchID, len(bundles), resp.Success, resp.Failed)
+
+	// Log individual failures if any
+	if resp.Failed > 0 {
+		for i, result := range resp.Results {
+			if !result.Ok {
+				c.logger.Warnf("Validation bundle %d failed: %s (intent_id=%s)",
+					i, result.Msg, bundles[i].IntentId)
+			}
+		}
+	}
+
+	return resp, nil
+}
+
 // buildValidationBundle creates a validation bundle from execution reports
 func (c *CompleteClient) buildValidationBundle(reports []*pb.ExecutionReport, checkpoint *types.CheckpointHeader) *rootpb.ValidationBundle {
 	if len(reports) == 0 {
@@ -291,6 +332,38 @@ func (c *CompleteClient) buildValidationBundleForIntent(reports []*pb.ExecutionR
 
 // ===== Intent Management Methods =====
 
+// SubmitIntentBatch submits multiple intents to RootLayer in a single call
+func (c *CompleteClient) SubmitIntentBatch(ctx context.Context, intents []*rootpb.SubmitIntentRequest, batchID string, partialOk, treatExistsAsOk bool) (*rootpb.SubmitIntentBatchResponse, error) {
+	c.mu.RLock()
+	client := c.intentPoolClient
+	c.mu.RUnlock()
+
+	if client == nil {
+		return nil, fmt.Errorf("not connected to RootLayer")
+	}
+
+	if len(intents) == 0 {
+		return nil, fmt.Errorf("no intents provided for batch submission")
+	}
+
+	req := &rootpb.SubmitIntentBatchRequest{
+		Items:           intents,
+		BatchId:         batchID,
+		PartialOk:       &partialOk,
+		TreatExistsAsOk: &treatExistsAsOk,
+	}
+
+	resp, err := client.SubmitIntentBatch(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to submit intent batch: %w", err)
+	}
+
+	c.logger.Infof("Intent batch submitted: batch_id=%s total=%d success=%d failed=%d",
+		batchID, len(intents), resp.Success, resp.Failed)
+
+	return resp, nil
+}
+
 // GetPendingIntents retrieves pending intents
 func (c *CompleteClient) GetPendingIntents(ctx context.Context) ([]*rootpb.Intent, error) {
 	c.mu.RLock()
@@ -346,6 +419,46 @@ func (c *CompleteClient) SubmitAssignment(ctx context.Context, assignment *rootp
 	}
 
 	c.logger.Infof("Assignment submitted: %s", assignment.AssignmentId)
+	return nil
+}
+
+// PostAssignmentBatch submits multiple assignments to RootLayer in a single call
+func (c *CompleteClient) PostAssignmentBatch(ctx context.Context, assignments []*rootpb.Assignment) error {
+	c.mu.RLock()
+	client := c.intentPoolClient
+	c.mu.RUnlock()
+
+	if client == nil {
+		return fmt.Errorf("not connected to RootLayer")
+	}
+
+	if len(assignments) == 0 {
+		return fmt.Errorf("no assignments provided for batch submission")
+	}
+
+	// Ensure all assignments have valid status
+	for _, assignment := range assignments {
+		if assignment.Status == rootpb.AssignmentStatus_ASSIGNMENT_STATUS_UNSPECIFIED {
+			assignment.Status = rootpb.AssignmentStatus_ASSIGNMENT_ACTIVE
+		} else if assignment.Status != rootpb.AssignmentStatus_ASSIGNMENT_FAILED {
+			assignment.Status = rootpb.AssignmentStatus_ASSIGNMENT_ACTIVE
+		}
+	}
+
+	batch := &rootpb.AssignmentBatch{
+		Assignments: assignments,
+	}
+
+	resp, err := client.PostAssignmentBatch(ctx, batch)
+	if err != nil {
+		return fmt.Errorf("failed to submit assignment batch: %w", err)
+	}
+
+	if !resp.Ok {
+		return fmt.Errorf("assignment batch rejected: %s", resp.Msg)
+	}
+
+	c.logger.Infof("Assignment batch submitted: count=%d", len(assignments))
 	return nil
 }
 
