@@ -167,12 +167,19 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 	// Create RootLayer client if enabled
 	var rootClient rootlayer.Client
 	if config.EnableRootLayerSubmit && config.RootLayerEndpoint != "" {
-		rootConfig := &rootlayer.Config{
-			Endpoint:  config.RootLayerEndpoint,
-			SubnetID:  config.SubnetID,
-			MatcherID: config.ValidatorID, // Use validator ID as aggregator ID
+		// Use CompleteClient for full batch submission support
+		completeConfig := &rootlayer.CompleteClientConfig{
+			Endpoint:   config.RootLayerEndpoint,
+			SubnetID:   config.SubnetID,
+			NodeID:     config.ValidatorID,
+			NodeType:   "validator",
+			PrivateKey: config.PrivateKey,
 		}
-		rootClient = rootlayer.NewGRPCClient(rootConfig, logger)
+		var err error
+		rootClient, err = rootlayer.NewCompleteClient(completeConfig, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create RootLayer client: %w", err)
+		}
 	}
 
 	// Initialize SDK client if on-chain submission is enabled
@@ -1488,9 +1495,9 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 		syncDelay, header.Epoch)
 	time.Sleep(syncDelay)
 
-	// STEP 2: Submit ValidationBundle for each Intent group
-	successfulIntents := make([]string, 0, len(groupedReports))
-	failedIntents := make([]string, 0)
+	// STEP 2: Build ValidationBundles for all Intent groups
+	bundles := make([]*rootpb.ValidationBundle, 0, len(groupedReports))
+	intentKeys := make([]string, 0, len(groupedReports))
 
 	for intentKey, reports := range groupedReports {
 		n.logger.Infof("Processing Intent group %s with %d reports epoch=%d", intentKey, len(reports), header.Epoch)
@@ -1499,19 +1506,17 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 		bundle := n.buildValidationBundleForIntent(header, reports, signatures)
 		if bundle == nil {
 			n.logger.Errorf("⚠️ Failed to build ValidationBundle for Intent group %s epoch=%d", intentKey, header.Epoch)
-			failedIntents = append(failedIntents, intentKey)
 			continue
 		}
 
-		// Submit this Intent's ValidationBundle with retry logic
-		if n.submitSingleValidationBundle(header, bundle, intentKey) {
-			successfulIntents = append(successfulIntents, intentKey)
-		} else {
-			failedIntents = append(failedIntents, intentKey)
-		}
+		bundles = append(bundles, bundle)
+		intentKeys = append(intentKeys, intentKey)
 	}
 
-	// STEP 3: Clear only successfully submitted Intent reports
+	// STEP 3: Submit all ValidationBundles in a single batch call
+	successfulIntents, failedIntents := n.submitValidationBundleBatch(header, bundles, intentKeys)
+
+	// STEP 4: Clear only successfully submitted Intent reports
 	for _, intentKey := range successfulIntents {
 		n.clearReportsForIntent(intentKey)
 	}
@@ -1523,6 +1528,85 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 		n.logger.Warnf("Some Intents failed ValidationBundle submission and will be retried in next checkpoint epoch=%d failed_intents=%v",
 			header.Epoch, failedIntents)
 	}
+}
+
+// submitValidationBundleBatch submits multiple ValidationBundles to RootLayer in a single batch call
+// Returns lists of successful and failed intent keys
+func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles []*rootpb.ValidationBundle, intentKeys []string) (successfulIntents []string, failedIntents []string) {
+	if len(bundles) == 0 {
+		n.logger.Info("No ValidationBundles to submit epoch=%d", header.Epoch)
+		return []string{}, []string{}
+	}
+
+	// Check if RootLayer client supports batch submission
+	type batchSubmitter interface {
+		SubmitValidationBundleBatch(ctx context.Context, bundles []*rootpb.ValidationBundle, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error)
+	}
+
+	batchClient, supportsBatch := n.rootlayerClient.(batchSubmitter)
+
+	if supportsBatch {
+		// Use batch submission API
+		batchID := fmt.Sprintf("epoch-%d-%d", header.Epoch, time.Now().Unix())
+		n.logger.Infof("📦 Submitting %d ValidationBundles in batch batch_id=%s epoch=%d", len(bundles), batchID, header.Epoch)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		resp, err := batchClient.SubmitValidationBundleBatch(ctx, bundles, batchID, true)
+		if err != nil {
+			// Batch submission failed - fall back to individual submission
+			n.logger.Warnf("⚠️ Batch submission failed, falling back to individual submission error=%v", err)
+			return n.submitIndividualValidationBundles(header, bundles, intentKeys)
+		}
+
+		// Process batch response
+		n.logger.Infof("✅ Batch submission completed batch_id=%s total=%d success=%d failed=%d",
+			batchID, len(bundles), resp.Success, resp.Failed)
+
+		// Collect results
+		successfulIntents = make([]string, 0, resp.Success)
+		failedIntents = make([]string, 0, resp.Failed)
+
+		for i, result := range resp.Results {
+			if i >= len(intentKeys) {
+				break
+			}
+			if result.Ok {
+				successfulIntents = append(successfulIntents, intentKeys[i])
+			} else {
+				failedIntents = append(failedIntents, intentKeys[i])
+				n.logger.Warnf("Intent %s failed in batch: %s", bundles[i].IntentId, result.Msg)
+			}
+		}
+
+		return successfulIntents, failedIntents
+	}
+
+	// Fallback: Client doesn't support batch submission
+	n.logger.Warn("RootLayer client doesn't support batch submission, using individual submission")
+	return n.submitIndividualValidationBundles(header, bundles, intentKeys)
+}
+
+// submitIndividualValidationBundles submits ValidationBundles one by one (fallback method)
+func (n *Node) submitIndividualValidationBundles(header *pb.CheckpointHeader, bundles []*rootpb.ValidationBundle, intentKeys []string) (successfulIntents []string, failedIntents []string) {
+	successfulIntents = make([]string, 0, len(bundles))
+	failedIntents = make([]string, 0)
+
+	for i, bundle := range bundles {
+		if i >= len(intentKeys) {
+			break
+		}
+		intentKey := intentKeys[i]
+
+		if n.submitSingleValidationBundle(header, bundle, intentKey) {
+			successfulIntents = append(successfulIntents, intentKey)
+		} else {
+			failedIntents = append(failedIntents, intentKey)
+		}
+	}
+
+	return successfulIntents, failedIntents
 }
 
 // submitSingleValidationBundle submits a single ValidationBundle to RootLayer with retry logic
