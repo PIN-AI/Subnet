@@ -38,16 +38,16 @@ func (s *IntentSubscription) Close() {
 
 // IntentPuller pulls intents from RootLayer and broadcasts to agents
 type IntentPuller struct {
-	client  rootlayer.Client
-	logger  logging.Logger
-	mu      sync.RWMutex
+	client rootlayer.Client
+	logger logging.Logger
+	mu     sync.RWMutex
 
 	// Subscriptions management
 	subscriptions map[string]*IntentSubscription // agent_id -> subscription
 
 	// Intent cache
-	pendingIntents map[string]*types.Intent // intent_id -> intent
-	processedIntents map[string]bool // intent_id -> processed
+	pendingIntents   map[string]*types.Intent // intent_id -> intent
+	processedIntents map[string]bool          // intent_id -> processed
 }
 
 // NewIntentPuller creates a new intent puller
@@ -80,7 +80,7 @@ func (p *IntentPuller) PullPendingIntents(ctx context.Context) ([]*types.Intent,
 		if err != nil {
 			// Log error but continue with empty list
 			// This allows the system to work with mock client
-			p.logger.Debugf("Failed to get pending intents from RootLayer: %v", err)
+			p.logger.Warnf("Failed to get pending intents from RootLayer: %v", err)
 			intents = make([]*types.Intent, 0)
 		} else {
 			// Convert rootpb.Intent to types.Intent
@@ -97,7 +97,7 @@ func (p *IntentPuller) PullPendingIntents(ctx context.Context) ([]*types.Intent,
 					IntentType:   ri.IntentType,
 					CreatedAt:    ri.CreatedAt,
 					Deadline:     ri.Deadline,
-					Budget:       budget,  // Converted from string
+					Budget:       budget,         // Converted from string
 					PaymentToken: ri.BudgetToken, // Use BudgetToken field
 					Status:       ri.Status.String(),
 				}

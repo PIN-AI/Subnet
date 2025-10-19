@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc"
 	"github.com/ethereum/go-ethereum/common"
+	"google.golang.org/grpc"
 
 	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
 	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
@@ -503,7 +503,7 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 			}
 			return
 		}
-		s.logger.Infof("✅ Assignment %s submitted to blockchain, tx: %s", assignmentID, chainTxHash)
+		s.logger.Infof("Assignment %s submitted to blockchain, tx: %s", assignmentID, chainTxHash)
 	}
 
 	// Step 2: Submit to RootLayer (async) - can be retried or synced from chain later
@@ -1184,14 +1184,14 @@ func (s *Server) submitAssignmentToChainSync(assignmentID, intentID, bidID, agen
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	s.logger.Infof("⏳ Submitting assignment %s to blockchain...", assignmentID)
+	s.logger.Infof("Submitting assignment %s to blockchain...", assignmentID)
 	tx, err := s.sdkClient.Assignment.AssignIntentsBySignatures(ctx, []sdk.SignedAssignment{signedAssignment})
 	if err != nil {
 		return "", fmt.Errorf("blockchain submission failed: %w", err)
 	}
 
 	txHash := tx.Hash().Hex()
-	s.logger.Infof("📝 Assignment transaction sent, hash: %s (waiting for confirmation...)", txHash)
+	s.logger.Infof("Assignment transaction sent, hash: %s (waiting for confirmation...)", txHash)
 
 	// Note: We don't wait for mining confirmation here to avoid blocking too long
 	// The transaction is in the mempool, which is sufficient for our purposes
@@ -1442,19 +1442,19 @@ func (s *Server) flushAssignmentBatch() {
 
 	if supportsBatch {
 		// Use batch submission API
-		s.logger.Infof("📦 Submitting %d Assignments in batch to RootLayer", len(assignments))
+		s.logger.Infof("Submitting %d assignments in batch to RootLayer", len(assignments))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
 		err := batchClient.PostAssignmentBatch(ctx, assignments)
 		if err != nil {
-			s.logger.Warnf("⚠️ Assignment batch submission failed, falling back to individual submission error=%v", err)
+			s.logger.Warnf("Assignment batch submission failed, falling back to individual submission error=%v", err)
 			s.submitIndividualAssignments(assignments)
 			return
 		}
 
-		s.logger.Infof("✅ Assignment batch submission completed: %d assignments", len(assignments))
+		s.logger.Infof("Assignment batch submission completed: %d assignments", len(assignments))
 	} else {
 		// Fallback to individual submission
 		s.logger.Warn("RootLayer client doesn't support batch assignment submission, using individual submission")
