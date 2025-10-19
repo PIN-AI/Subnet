@@ -543,7 +543,7 @@ func (n *Node) broadcastExecutionReport(report *pb.ExecutionReport) {
 		if err := n.broadcaster.BroadcastExecutionReport(report); err != nil {
 			n.logger.Errorf("Failed to broadcast execution report intent_id=%s assignment_id=%s error=%v", report.IntentId, report.AssignmentId, err)
 		} else {
-			n.logger.Infof("📡 Broadcasted execution report to all validators intent_id=%s assignment_id=%s agent_id=%s", report.IntentId, report.AssignmentId, report.AgentId)
+			n.logger.Infof("Broadcasted execution report to all validators intent_id=%s assignment_id=%s agent_id=%s", report.IntentId, report.AssignmentId, report.AgentId)
 		}
 	} else {
 		n.logger.Warn("No broadcaster configured, skipping execution report broadcast")
@@ -555,7 +555,7 @@ func (n *Node) broadcastFinalized(header *pb.CheckpointHeader) {
 		if err := n.broadcaster.BroadcastFinalized(header); err != nil {
 			n.logger.Errorf("Failed to broadcast finalized checkpoint epoch=%d error=%v", header.Epoch, err)
 		} else {
-			n.logger.Infof("🏁 Broadcasted finalized checkpoint epoch=%d signatures=%d", header.Epoch, header.Signatures.SignatureCount)
+			n.logger.Infof("Broadcasted finalized checkpoint epoch=%d signatures=%d", header.Epoch, header.Signatures.SignatureCount)
 		}
 	} else {
 		n.logger.Warn("No broadcaster configured, skipping finalized broadcast")
@@ -566,14 +566,14 @@ func (n *Node) broadcastFinalized(header *pb.CheckpointHeader) {
 func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 	n.mu.Lock()
 
-	n.logger.Infof("🏁 Handling finalized checkpoint received_epoch=%d current_epoch=%d current_state=%s",
+	n.logger.Infof("Handling finalized checkpoint received_epoch=%d current_epoch=%d current_state=%s",
 		header.Epoch,
 		n.currentEpoch,
 		n.fsm.GetState())
 
 	// If we're behind, catch up
 	if header.Epoch > n.currentEpoch {
-		n.logger.Infof("📈 Catching up to finalized epoch from_epoch=%d to_epoch=%d",
+		n.logger.Infof("Catching up to finalized epoch from_epoch=%d to_epoch=%d",
 			n.currentEpoch,
 			header.Epoch)
 
@@ -614,7 +614,7 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 			n.logger.Error("Failed to save finalized checkpoint", "error", err)
 		}
 
-		n.logger.Infof("✅ Successfully caught up to finalized checkpoint new_epoch=%d is_leader=%t",
+		n.logger.Infof("Caught up to finalized checkpoint new_epoch=%d is_leader=%t",
 			n.currentEpoch,
 			n.isLeader)
 	} else if header.Epoch == n.currentEpoch {
@@ -622,7 +622,7 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 		// IMPORTANT: Only transition if we're NOT already idle
 		// If we're idle, we've already moved past this epoch
 		if n.fsm.GetState() != consensus.StateIdle {
-			n.logger.Infof("📊 Updating to finalized state for current epoch epoch=%d prev_state=%s", n.currentEpoch, n.fsm.GetState())
+			n.logger.Infof("Updating to finalized state for current epoch epoch=%d prev_state=%s", n.currentEpoch, n.fsm.GetState())
 
 			// Store the finalized checkpoint
 			n.currentCheckpoint = header
@@ -695,7 +695,7 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 				n.lastCheckpointAt = time.Time{} // Reset timer if leadership changed
 			}
 
-			n.logger.Infof("✅ Advanced to next epoch after receiving finalized checkpoint new_epoch=%d is_leader=%t", n.currentEpoch, n.isLeader)
+			n.logger.Infof("Advanced to next epoch after receiving finalized checkpoint new_epoch=%d is_leader=%t", n.currentEpoch, n.isLeader)
 		} else {
 			// Already idle, which means we've already processed finalization for this epoch
 			// This is likely a duplicate broadcast - just ignore it

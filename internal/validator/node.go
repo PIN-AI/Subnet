@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
+	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
+	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
-	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
-	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
 	rootpb "rootlayer/proto"
 	"subnet/internal/config"
 	"subnet/internal/consensus"
@@ -121,10 +121,10 @@ type Config struct {
 	EnableRootLayerSubmit bool
 
 	// Blockchain config for ValidationBundle signing
-	EnableChainSubmit  bool   // Enable on-chain ValidationBundle submission
-	ChainRPCURL        string // Blockchain RPC URL
-	ChainNetwork       string // Network name (e.g., "base_sepolia")
-	IntentManagerAddr  string // IntentManager contract address
+	EnableChainSubmit bool   // Enable on-chain ValidationBundle submission
+	ChainRPCURL       string // Blockchain RPC URL
+	ChainNetwork      string // Network name (e.g., "base_sepolia")
+	IntentManagerAddr string // IntentManager contract address
 
 	// Validation policy
 	ValidationPolicy *ValidationPolicyConfig
@@ -521,7 +521,7 @@ func (n *Node) awaitConsensusReadiness() {
 
 // consensusLoop runs the main consensus state machine
 func (n *Node) consensusLoop() {
-	n.logger.Infof("🔄 Consensus loop started validator_id=%s", n.id)
+	n.logger.Infof("Consensus loop started validator_id=%s", n.id)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
@@ -566,7 +566,7 @@ func (n *Node) checkConsensusState() {
 			isLeader = true
 		}
 
-		n.logger.Infof("🔍 checkConsensusState: StateCollecting epoch=%d has_threshold=%t sign_count=%d required=%d progress=%.2f timed_out=%t is_leader=%t node_signatures=%d", n.currentEpoch, hasThreshold, signCount, required, progress, isTimedOut, isLeader, len(n.signatures))
+		n.logger.Infof("checkConsensusState: StateCollecting epoch=%d has_threshold=%t sign_count=%d required=%d progress=%.2f timed_out=%t is_leader=%t node_signatures=%d", n.currentEpoch, hasThreshold, signCount, required, progress, isTimedOut, isLeader, len(n.signatures))
 
 		// Check if leader has failed (timeout failover mechanism)
 		shouldFailover := n.leaderTracker.ShouldFailover(n.currentEpoch, time.Now())
@@ -576,11 +576,11 @@ func (n *Node) checkConsensusState() {
 		if hasThreshold {
 			// Fix: Record leader activity (reaching threshold means leader is working properly)
 			n.leaderTracker.RecordActivity(n.currentEpoch, time.Now())
-			n.logger.Infof("✅ Threshold reached! Calling finalizeCheckpoint() epoch=%d sign_count=%d", n.currentEpoch, signCount)
+			n.logger.Infof("Threshold reached; calling finalizeCheckpoint() epoch=%d sign_count=%d", n.currentEpoch, signCount)
 			n.mu.Unlock()
-			n.logger.Infof("🚀 About to call finalizeCheckpoint() epoch=%d", n.currentEpoch)
+			n.logger.Infof("About to call finalizeCheckpoint() epoch=%d", n.currentEpoch)
 			n.finalizeCheckpoint()
-			n.logger.Infof("🏁 Returned from finalizeCheckpoint() epoch=%d", n.currentEpoch)
+			n.logger.Infof("Returned from finalizeCheckpoint() epoch=%d", n.currentEpoch)
 			return // IMPORTANT: Return directly after finalize to avoid checking timeout
 		} else if isTimedOut {
 			n.mu.Unlock()
@@ -594,7 +594,7 @@ func (n *Node) checkConsensusState() {
 				}
 
 				// Leader timeout! Force epoch rotation
-				n.logger.Warnf("⚠️ Leader timeout detected, forcing epoch rotation epoch=%d failed_leader=%s", n.currentEpoch, failedLeaderID)
+				n.logger.Warnf("Leader timeout detected, forcing epoch rotation epoch=%d failed_leader=%s", n.currentEpoch, failedLeaderID)
 
 				n.mu.Lock()
 				oldEpoch := n.currentEpoch
@@ -622,7 +622,7 @@ func (n *Node) checkConsensusState() {
 					newLeaderID = "unknown"
 				}
 
-				n.logger.Infof("🔄 Epoch rotated due to leader timeout old_epoch=%d new_epoch=%d new_leader=%s i_am_new_leader=%t", oldEpoch, n.currentEpoch, newLeaderID, n.isLeader)
+				n.logger.Infof("Epoch rotated due to leader timeout old_epoch=%d new_epoch=%d new_leader=%s i_am_new_leader=%t", oldEpoch, n.currentEpoch, newLeaderID, n.isLeader)
 			} else if isLeader {
 				// Leader not timed out yet, retry
 				n.logger.Warnf("Signature collection timeout, leader will retry epoch=%d", n.currentEpoch)
@@ -965,12 +965,12 @@ func (n *Node) checkCheckpointTrigger() {
 
 	if n.lastCheckpointAt.IsZero() {
 		// First checkpoint for this leader - we have reports, trigger immediately
-		n.logger.Infof("🎯 Leader triggering first checkpoint with execution reports epoch=%d pending_reports=%d", n.currentEpoch, len(n.pendingReports))
+		n.logger.Infof("Leader triggering first checkpoint with execution reports epoch=%d pending_reports=%d", n.currentEpoch, len(n.pendingReports))
 		n.lastCheckpointAt = now
 		shouldPropose = true
 	} else if now.Sub(n.lastCheckpointAt) >= checkpointInterval {
 		// Time for next checkpoint - we have reports
-		n.logger.Infof("🎯 Leader triggering checkpoint with execution reports epoch=%d pending_reports=%d interval=%s", n.currentEpoch, len(n.pendingReports), checkpointInterval)
+		n.logger.Infof("Leader triggering checkpoint with execution reports epoch=%d pending_reports=%d interval=%s", n.currentEpoch, len(n.pendingReports), checkpointInterval)
 		n.lastCheckpointAt = now
 		shouldPropose = true
 	}
@@ -1491,7 +1491,7 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 	// - The retry logic in submitSingleValidationBundle handles edge cases
 	// - This only blocks the leader validator, not the entire subnet
 	syncDelay := 15 * time.Second
-	n.logger.Infof("⏳ Waiting %v for RootLayer state synchronization before submitting ValidationBundles epoch=%d (see node.go:1450 for rationale)",
+	n.logger.Infof("Waiting %v for RootLayer state synchronization before submitting ValidationBundles epoch=%d (see node.go:1450 for rationale)",
 		syncDelay, header.Epoch)
 	time.Sleep(syncDelay)
 
@@ -1505,7 +1505,7 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 		// Build ValidationBundle for this Intent
 		bundle := n.buildValidationBundleForIntent(header, reports, signatures)
 		if bundle == nil {
-			n.logger.Errorf("⚠️ Failed to build ValidationBundle for Intent group %s epoch=%d", intentKey, header.Epoch)
+			n.logger.Errorf("Failed to build ValidationBundle for Intent group %s epoch=%d", intentKey, header.Epoch)
 			continue
 		}
 
@@ -1548,7 +1548,7 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 	if supportsBatch {
 		// Use batch submission API
 		batchID := fmt.Sprintf("epoch-%d-%d", header.Epoch, time.Now().Unix())
-		n.logger.Infof("📦 Submitting %d ValidationBundles in batch batch_id=%s epoch=%d", len(bundles), batchID, header.Epoch)
+		n.logger.Infof("Submitting %d ValidationBundles in batch batch_id=%s epoch=%d", len(bundles), batchID, header.Epoch)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -1556,12 +1556,12 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 		resp, err := batchClient.SubmitValidationBundleBatch(ctx, bundles, batchID, true)
 		if err != nil {
 			// Batch submission failed - fall back to individual submission
-			n.logger.Warnf("⚠️ Batch submission failed, falling back to individual submission error=%v", err)
+			n.logger.Warnf("Batch submission failed, falling back to individual submission error=%v", err)
 			return n.submitIndividualValidationBundles(header, bundles, intentKeys)
 		}
 
 		// Process batch response
-		n.logger.Infof("✅ Batch submission completed batch_id=%s total=%d success=%d failed=%d",
+		n.logger.Infof("Batch submission completed batch_id=%s total=%d success=%d failed=%d",
 			batchID, len(bundles), resp.Success, resp.Failed)
 
 		// Collect results
@@ -1627,7 +1627,7 @@ func (n *Node) submitSingleValidationBundle(header *pb.CheckpointHeader, bundle 
 
 		if err == nil {
 			// Success!
-			n.logger.Infof("✅ Successfully submitted ValidationBundle to RootLayer epoch=%d intent_id=%s intent_key=%s attempt=%d",
+			n.logger.Infof("Successfully submitted ValidationBundle to RootLayer epoch=%d intent_id=%s intent_key=%s attempt=%d",
 				header.Epoch, bundle.IntentId, intentKey, attempt)
 			return true
 		}
@@ -1640,12 +1640,12 @@ func (n *Node) submitSingleValidationBundle(header *pb.CheckpointHeader, bundle 
 		if isRetryable {
 			lastErr = err
 			if attempt < maxRetries {
-				n.logger.Warnf("⚠️ ValidationBundle submission failed due to RootLayer sync delay, will retry in %v attempt=%d/%d error=%v",
+				n.logger.Warnf("ValidationBundle submission failed due to RootLayer sync delay, will retry in %v attempt=%d/%d error=%v",
 					retryDelay, attempt, maxRetries, err)
 				time.Sleep(retryDelay)
 				continue
 			} else {
-				n.logger.Errorf("❌ ValidationBundle submission failed after %d attempts due to RootLayer sync issue error=%v epoch=%d intent_id=%s",
+				n.logger.Errorf("ValidationBundle submission failed after %d attempts due to RootLayer sync issue error=%v epoch=%d intent_id=%s",
 					maxRetries, err, header.Epoch, bundle.IntentId)
 			}
 		} else {
@@ -1681,7 +1681,7 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 
 	// Validate metadata
 	if intentID == "" || assignmentID == "" || agentID == "" {
-		n.logger.Errorf("⚠️ ValidationBundle construction failed: missing metadata intent_id=%s assignment_id=%s agent_id=%s",
+		n.logger.Errorf("ValidationBundle construction failed: missing metadata intent_id=%s assignment_id=%s agent_id=%s",
 			intentID, assignmentID, agentID)
 		return nil
 	}
@@ -1738,7 +1738,7 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 					Validator: validatorAddr.Hex(),
 					Signature: signature,
 				})
-				n.logger.Infof("✅ Generated EIP-191 ValidationBundle signature validator=%s signature_len=%d",
+				n.logger.Infof("Generated EIP-191 ValidationBundle signature validator=%s signature_len=%d",
 					validatorAddr.Hex(), len(signature))
 			}
 		}
@@ -1790,7 +1790,7 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		CompletedAt:  time.Now().Unix(),
 	}
 
-	n.logger.Infof("✅ ValidationBundle constructed for Intent group intent_id=%s assignment_id=%s agent_id=%s epoch=%d signatures=%d",
+	n.logger.Infof("ValidationBundle constructed for Intent group intent_id=%s assignment_id=%s agent_id=%s epoch=%d signatures=%d",
 		bundle.IntentId, bundle.AssignmentId, bundle.AgentId, header.Epoch, len(bundle.Signatures))
 
 	return bundle
@@ -1811,11 +1811,11 @@ func (n *Node) buildValidationBundle(header *pb.CheckpointHeader) *rootpb.Valida
 // This function now internally calls the new grouping logic to avoid the single-intent bug
 // Returns the FIRST Intent's ValidationBundle for backward compatibility (warns if multiple Intents exist)
 func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendingReports map[string]*pb.ExecutionReport, signatures map[string]*pb.Signature) *rootpb.ValidationBundle {
-	n.logger.Warnf("⚠️ DEPRECATED: buildValidationBundleWithData called - use submitToRootLayerWithData for multi-intent support epoch=%d", header.Epoch)
+	n.logger.Warnf("DEPRECATED: buildValidationBundleWithData called - use submitToRootLayerWithData for multi-intent support epoch=%d", header.Epoch)
 
 	// If there are no pending reports, this is an empty consensus checkpoint - skip it
 	if len(pendingReports) == 0 {
-		n.logger.Warnf("⚠️ ValidationBundle construction skipped: no pending execution reports epoch=%d", header.Epoch)
+		n.logger.Warnf("ValidationBundle construction skipped: no pending execution reports epoch=%d", header.Epoch)
 		return nil
 	}
 
@@ -1824,7 +1824,7 @@ func (n *Node) buildValidationBundleWithData(header *pb.CheckpointHeader, pendin
 
 	// Warn if multiple Intent groups exist (backward compatibility issue)
 	if len(groupedReports) > 1 {
-		n.logger.Errorf("⚠️ CRITICAL: Multiple Intent groups detected (%d) but buildValidationBundleWithData can only return ONE! Other Intents will be LOST! Use submitToRootLayerWithData instead! epoch=%d",
+		n.logger.Errorf("CRITICAL: Multiple Intent groups detected (%d) but buildValidationBundleWithData can only return ONE! Other Intents will be LOST! Use submitToRootLayerWithData instead! epoch=%d",
 			len(groupedReports), header.Epoch)
 	}
 
