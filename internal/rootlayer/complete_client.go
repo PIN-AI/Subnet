@@ -11,10 +11,10 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	rootpb "rootlayer/proto"
-	pb "subnet/proto/subnet"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/types"
+	pb "subnet/proto/subnet"
 )
 
 // CompleteClient provides complete RootLayer integration
@@ -77,8 +77,8 @@ func (c *CompleteClient) Connect() error {
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                60 * time.Second,  // 增加到60秒，降低ping频率
-			Timeout:             20 * time.Second,  // 增加超时时间
+			Time:                60 * time.Second, // 增加到60秒，降低ping频率
+			Timeout:             20 * time.Second, // 增加超时时间
 			PermitWithoutStream: false,            // 没有stream时不发ping
 		}),
 	}
@@ -228,7 +228,7 @@ func (c *CompleteClient) buildValidationBundle(reports []*pb.ExecutionReport, ch
 
 	// Build the bundle
 	bundle := &rootpb.ValidationBundle{
-		SubnetId:     c.cfg.SubnetID,  // Field is SubnetId not SubnetID
+		SubnetId:     c.cfg.SubnetID, // Field is SubnetId not SubnetID
 		IntentId:     primaryReport.IntentId,
 		AssignmentId: primaryReport.AssignmentId,
 		AgentId:      primaryReport.AgentId,
@@ -282,7 +282,7 @@ func (c *CompleteClient) buildValidationBundleForIntent(reports []*pb.ExecutionR
 
 	// Validate metadata
 	if intentID == "" || assignmentID == "" || agentID == "" {
-		c.logger.Errorf("⚠️ ValidationBundle construction failed: missing metadata intent_id=%s assignment_id=%s agent_id=%s",
+		c.logger.Errorf("ValidationBundle construction failed: missing metadata intent_id=%s assignment_id=%s agent_id=%s",
 			intentID, assignmentID, agentID)
 		return nil
 	}
@@ -324,7 +324,7 @@ func (c *CompleteClient) buildValidationBundleForIntent(reports []*pb.ExecutionR
 		CompletedAt:  time.Now().Unix(),
 	}
 
-	c.logger.Infof("✅ ValidationBundle constructed for Intent: intent_id=%s assignment_id=%s agent_id=%s signatures=%d",
+	c.logger.Infof("ValidationBundle constructed for Intent: intent_id=%s assignment_id=%s agent_id=%s signatures=%d",
 		intentID, assignmentID, agentID, len(signatures))
 
 	return bundle
