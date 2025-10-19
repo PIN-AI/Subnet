@@ -109,7 +109,7 @@ func (a *BatchTestAgent) BatchSubmitBids(ctx context.Context, intents []*agentsd
 				IntentId: intent.ID,
 				AgentId:  a.sdk.GetAgentID(),
 				Price:    uint64(bidCalc.Price),
-				Currency: bidCalc.Currency,
+				Token:    bidCalc.Currency,
 				Metadata: map[string]string{
 					"batch_submission": "true",
 					"agent_name":       a.name,
@@ -173,10 +173,6 @@ func (a *BatchTestAgent) BatchSubmitExecutionReports(ctx context.Context) error 
 			Status:       pb.ExecutionReport_SUCCESS,
 			ResultData:   result.Data,
 			Timestamp:    time.Now().Unix(),
-			Metadata: map[string]string{
-				"batch_submission": "true",
-				"agent_name":       a.name,
-			},
 		}
 		reports = append(reports, report)
 	}
@@ -245,7 +241,6 @@ func main() {
 	// Create SDK configuration
 	config := &agentsdk.Config{
 		AgentID:     *agentID,
-		SubnetID:    *subnetID,
 		MatcherAddr: *matcherAddr,
 		Capabilities: []string{
 			"batch.processing",
