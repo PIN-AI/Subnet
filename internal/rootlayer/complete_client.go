@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/types"

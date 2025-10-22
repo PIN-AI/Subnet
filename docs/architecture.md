@@ -31,8 +31,8 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
    - Exposes gRPC for execution report submission (`proto/subnet/validator.proto`)
    - Validates report signatures and payloads with custom validation logic
    - Persists state in LevelDB for crash recovery (`internal/storage`)
-   - Participates in the threshold consensus FSM (`internal/consensus`)
-   - Broadcasts signatures via NATS messaging layer (`internal/messaging`)
+   - Uses **Raft consensus** for checkpoint replication and leader election (`internal/consensus`)
+   - Propagates checkpoint signatures via **Gossip protocol** (HashiCorp Memberlist)
    - **Batch ValidationBundle Submission**: Aggregates multiple ValidationBundles and submits in batches to RootLayer
    - Dual submission support: Both blockchain and RootLayer simultaneously
    - Automatic fallback from batch to individual submission on errors
@@ -79,12 +79,12 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
 - `internal/`
   - `matcher/` – bidding windows, matching engine, assignment manager, task streaming, and **batch assignment submission**
   - `validator/` – gRPC server, auth interceptor, execution report validation, and **batch ValidationBundle submission**
-  - `consensus/` – threshold FSM, leader rotation, NATS broadcaster wrappers, epoch-based checkpointing
+  - `consensus/` – **Raft consensus**, **Gossip signature propagation**, threshold FSM, leader election, epoch-based checkpointing
   - `rootlayer/` – HTTP/gRPC clients with **batch submission support** (CompleteClient)
   - `registry/` – in-memory registry service with health tracking
   - `storage/` – LevelDB helpers for validator persistence and crash recovery
   - `grpc/` – shared authentication interceptors and signing helpers
-  - `logging/`, `metrics/`, `messaging/`, `types/`, `crypto/` – shared utilities
+  - `logging/`, `metrics/`, `types/`, `crypto/` – shared utilities
 - `proto/` – generated protobufs for subnet and rootlayer services (`make proto` regenerates)
 - `config/` – sample configuration files for matcher and validator nodes
 - `scripts/` – deployment, testing, and E2E test scripts
@@ -103,8 +103,9 @@ For iterative work you can also run `go test ./...` or build specific binaries f
 
 ## Runtime Expectations
 
-- **NATS Messaging**: Validators rely on NATS for signature gossip (default `nats://127.0.0.1:4222`)
-- **Execution Reports**: Accepted over gRPC and revalidated before entering the threshold FSM
+- **Raft Consensus**: Validators use Raft for checkpoint replication and leader election (no external dependencies required)
+- **Gossip Protocol**: Checkpoint signatures are propagated via HashiCorp Memberlist gossip (peer-to-peer, no message broker needed)
+- **Execution Reports**: Accepted over gRPC and revalidated before entering consensus
 - **RootLayer Connectivity**: Matcher and validator require connectivity to RootLayer endpoints (gRPC: `3.17.208.238:9001`, HTTP: `http://3.17.208.238:8081`)
 - **Batch Operations**: Both Matcher and Validator use `CompleteClient` for batch submission support
 - **Dual Submission**: Validators can submit to both blockchain (Base Sepolia) and RootLayer simultaneously
@@ -188,7 +189,7 @@ rootlayer:
 
 ## Supporting Notes
 
-- See `docs/batch_test.md` for comprehensive batch operations testing guide
-- `docs/jetstream_evaluation.md` captures NATS JetStream trade-offs for durable messaging
+- See `docs/e2e_test_guide.md` for comprehensive E2E testing guide
+- `docs/jetstream_evaluation.md` captures historical NATS JetStream evaluation (system now uses Raft+Gossip)
 - Proto files under `proto/rootlayer` and `proto/subnet` are authoritative; regenerate with `make proto` when protocol changes
 - Both Chinese (`*.zh.md`) and English documentation available in `docs/`

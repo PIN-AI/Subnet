@@ -9,7 +9,7 @@ import (
 
 	"subnet/internal/logging"
 	"subnet/internal/matcher"
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 	pb "subnet/proto/subnet"
 
 	"github.com/stretchr/testify/assert"

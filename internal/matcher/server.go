@@ -15,7 +15,7 @@ import (
 
 	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
 	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/blockchain"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
