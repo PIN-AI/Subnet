@@ -41,6 +41,16 @@ func TestSimpleE2EFlow(t *testing.T) {
 	validators := make([]*validator.Node, 3)
 	servers := make([]*validator.Server, 3)
 
+	// Define Raft peers for all nodes
+	raftPeers := []validator.RaftPeerConfig{
+		{ID: "validator-1", Address: "127.0.0.1:7000"},
+		{ID: "validator-2", Address: "127.0.0.1:7001"},
+		{ID: "validator-3", Address: "127.0.0.1:7002"},
+	}
+
+	// Define Gossip seeds for cluster formation
+	gossipSeeds := []string{"127.0.0.1:7900", "127.0.0.1:7901", "127.0.0.1:7902"}
+
 	for i := 0; i < 3; i++ {
 		cfg := &validator.Config{
 			ValidatorID:           fmt.Sprintf("validator-%d", i+1),
@@ -48,10 +58,29 @@ func TestSimpleE2EFlow(t *testing.T) {
 			PrivateKey:            validatorKeys[i].PrivateKeyHex,
 			ValidatorSet:          validatorSet,
 			StoragePath:           fmt.Sprintf("/tmp/e2e-val-%d-%d", i+1, time.Now().Unix()),
-			NATSUrl:               "nats://127.0.0.1:4222",
 			GRPCPort:              9200 + i,
 			Timeouts:              config.DefaultTimeoutConfig(),
 			CheckpointInterval:    8 * time.Second,
+			// Raft consensus configuration (required - NATS removed)
+			Raft: &validator.RaftConfig{
+				Enable:           true,
+				DataDir:          fmt.Sprintf("/tmp/e2e-raft-%d-%d", i+1, time.Now().Unix()),
+				BindAddress:      fmt.Sprintf("127.0.0.1:%d", 7000+i),
+				Bootstrap:        i == 0, // First node bootstraps the cluster
+				Peers:            raftPeers,
+				HeartbeatTimeout: 1 * time.Second,
+				ElectionTimeout:  2 * time.Second,
+				CommitTimeout:    500 * time.Millisecond,
+			},
+			// Gossip for signature propagation
+			Gossip: &validator.GossipConfig{
+				Enable:          true,
+				BindAddress:     "127.0.0.1",
+				BindPort:        7900 + i,
+				Seeds:           gossipSeeds,
+				GossipInterval:  200 * time.Millisecond,
+				ProbeInterval:   1 * time.Second,
+			},
 		}
 
 		node, err := validator.NewNode(cfg, logger, agentRegistry)

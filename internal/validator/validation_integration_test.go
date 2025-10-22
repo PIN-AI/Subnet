@@ -16,7 +16,7 @@ import (
 	"subnet/internal/types"
 	"subnet/internal/validator"
 	pb "subnet/proto/subnet"
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 )
 
 // TestValidationFlowComplete tests the complete validation flow:
@@ -40,6 +40,17 @@ func TestValidationFlowComplete(t *testing.T) {
 	nodes := make([]*validator.Node, 4)
 	servers := make([]*validator.Server, 4)
 
+	// Define Raft peers for 4-node cluster
+	raftPeers := []validator.RaftPeerConfig{
+		{ID: "validator-1", Address: "127.0.0.1:7300"},
+		{ID: "validator-2", Address: "127.0.0.1:7301"},
+		{ID: "validator-3", Address: "127.0.0.1:7302"},
+		{ID: "validator-4", Address: "127.0.0.1:7303"},
+	}
+
+	// Define Gossip seeds
+	gossipSeeds := []string{"127.0.0.1:8000", "127.0.0.1:8001", "127.0.0.1:8002", "127.0.0.1:8003"}
+
 	for i := 0; i < 4; i++ {
 		cfg := &validator.Config{
 			ValidatorID:           fmt.Sprintf("validator-%d", i+1),
@@ -47,7 +58,6 @@ func TestValidationFlowComplete(t *testing.T) {
 			PrivateKey:            validators[i].PrivateKeyHex,
 			ValidatorSet:          validatorSet,
 			StoragePath:           fmt.Sprintf("/tmp/validator-test-%d-%d", i+1, time.Now().Unix()),
-			NATSUrl:               "nats://127.0.0.1:4222", // Using in-memory for test
 			GRPCPort:              9090 + i,
 			MetricsPort:           0, // Disable metrics for test
 			RegistryEndpoint:      fmt.Sprintf("localhost:%d", 9090+i),
@@ -62,6 +72,26 @@ func TestValidationFlowComplete(t *testing.T) {
 				RequireProofOfExecution: true,
 				MinConfidenceScore:      0.7,
 				MaxRetries:              3,
+			},
+			// Raft consensus configuration (required - NATS removed)
+			Raft: &validator.RaftConfig{
+				Enable:           true,
+				DataDir:          fmt.Sprintf("/tmp/raft-flow-test-%d-%d", i+1, time.Now().Unix()),
+				BindAddress:      fmt.Sprintf("127.0.0.1:%d", 7300+i),
+				Bootstrap:        i == 0,
+				Peers:            raftPeers,
+				HeartbeatTimeout: 1 * time.Second,
+				ElectionTimeout:  2 * time.Second,
+				CommitTimeout:    500 * time.Millisecond,
+			},
+			// Gossip for signature propagation
+			Gossip: &validator.GossipConfig{
+				Enable:          true,
+				BindAddress:     "127.0.0.1",
+				BindPort:        8000 + i,
+				Seeds:           gossipSeeds,
+				GossipInterval:  200 * time.Millisecond,
+				ProbeInterval:   1 * time.Second,
 			},
 		}
 
@@ -102,8 +132,8 @@ func TestValidationFlowComplete(t *testing.T) {
 		}
 	}()
 
-	// Give validators time to connect
-	time.Sleep(2 * time.Second)
+	// Give validators time to form Raft cluster and Gossip to stabilize
+	time.Sleep(5 * time.Second)
 
 	// Step 3: Test Agent submits ExecutionReport to Validator
 	t.Log("📤 Agent submitting ExecutionReport to Validator...")
@@ -241,7 +271,6 @@ func TestExecutionReportValidation(t *testing.T) {
 		PrivateKey:   validators[0].PrivateKeyHex,
 		ValidatorSet: validatorSet,
 		StoragePath:  fmt.Sprintf("/tmp/validator-validation-test-%d", time.Now().Unix()),
-		NATSUrl:      "nats://127.0.0.1:4222",
 		Timeouts:     config.DefaultTimeoutConfig(),
 		ValidationPolicy: &validator.ValidationPolicyConfig{
 			PolicyID:                "strict-policy",
@@ -251,6 +280,25 @@ func TestExecutionReportValidation(t *testing.T) {
 			RequireProofOfExecution: true,
 			MinConfidenceScore:      0.8,
 		},
+		// Raft consensus configuration (required - NATS removed)
+		Raft: &validator.RaftConfig{
+			Enable:           true,
+			DataDir:          fmt.Sprintf("/tmp/raft-validation-test-%d", time.Now().Unix()),
+			BindAddress:      "127.0.0.1:7100",
+			Bootstrap:        true,
+			HeartbeatTimeout: 500 * time.Millisecond,
+			ElectionTimeout:  1 * time.Second,  // Shorter for single-node testing
+			CommitTimeout:    250 * time.Millisecond,
+		},
+		// Gossip for signature propagation
+		Gossip: &validator.GossipConfig{
+			Enable:          true,
+			BindAddress:     "127.0.0.1",
+			BindPort:        7910,
+			Seeds:           []string{}, // Empty seeds for single node
+			GossipInterval:  200 * time.Millisecond,
+			ProbeInterval:   1 * time.Second,
+		},
 	}
 
 	node, err := validator.NewNode(cfg, logger, agentRegistry)
@@ -259,6 +307,10 @@ func TestExecutionReportValidation(t *testing.T) {
 
 	err = node.Start(ctx)
 	if err != nil { t.Fatalf("Error: %v", err) }
+
+	// Wait for Raft leader election (single-node cluster)
+	// With 1s election timeout, should elect within 2-3 seconds
+	time.Sleep(3 * time.Second)
 
 	server := validator.NewServer(node, logger)
 	defer server.Stop()
@@ -339,6 +391,17 @@ func TestMultiValidatorSignatureCollection(t *testing.T) {
 
 	nodes := make([]*validator.Node, 4)
 
+	// Define Raft peers for 4-node cluster
+	raftPeers := []validator.RaftPeerConfig{
+		{ID: "validator-1", Address: "127.0.0.1:7200"},
+		{ID: "validator-2", Address: "127.0.0.1:7201"},
+		{ID: "validator-3", Address: "127.0.0.1:7202"},
+		{ID: "validator-4", Address: "127.0.0.1:7203"},
+	}
+
+	// Define Gossip seeds
+	gossipSeeds := []string{"127.0.0.1:7920", "127.0.0.1:7921", "127.0.0.1:7922", "127.0.0.1:7923"}
+
 	for i := 0; i < 4; i++ {
 		cfg := &validator.Config{
 			ValidatorID:  fmt.Sprintf("validator-%d", i+1),
@@ -346,8 +409,27 @@ func TestMultiValidatorSignatureCollection(t *testing.T) {
 			PrivateKey:   validators[i].PrivateKeyHex,
 			ValidatorSet: validatorSet,
 			StoragePath:  fmt.Sprintf("/tmp/validator-sig-test-%d-%d", i+1, time.Now().Unix()),
-			NATSUrl:      "nats://127.0.0.1:4222",
 			Timeouts:     config.DefaultTimeoutConfig(),
+			// Raft consensus configuration (required - NATS removed)
+			Raft: &validator.RaftConfig{
+				Enable:           true,
+				DataDir:          fmt.Sprintf("/tmp/raft-sig-test-%d-%d", i+1, time.Now().Unix()),
+				BindAddress:      fmt.Sprintf("127.0.0.1:%d", 7200+i),
+				Bootstrap:        i == 0,
+				Peers:            raftPeers,
+				HeartbeatTimeout: 1 * time.Second,
+				ElectionTimeout:  2 * time.Second,
+				CommitTimeout:    500 * time.Millisecond,
+			},
+			// Gossip for signature propagation
+			Gossip: &validator.GossipConfig{
+				Enable:          true,
+				BindAddress:     "127.0.0.1",
+				BindPort:        7920 + i,
+				Seeds:           gossipSeeds,
+				GossipInterval:  200 * time.Millisecond,
+				ProbeInterval:   1 * time.Second,
+			},
 		}
 
 		node, err := validator.NewNode(cfg, logger, agentRegistry)
@@ -366,8 +448,8 @@ func TestMultiValidatorSignatureCollection(t *testing.T) {
 		}
 	}()
 
-	// Give time for NATS connection
-	time.Sleep(2 * time.Second)
+	// Give time for Raft cluster formation and Gossip to stabilize
+	time.Sleep(3 * time.Second)
 
 	t.Run("ThresholdSignatures", func(t *testing.T) {
 		// Submit reports to trigger checkpoint

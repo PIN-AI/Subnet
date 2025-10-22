@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -16,9 +17,8 @@ import (
 	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
 	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/config"
 	"subnet/internal/consensus"
 	"subnet/internal/crypto"
@@ -42,17 +42,15 @@ type Node struct {
 	logger       logging.Logger
 
 	// Consensus components
-	fsm           *consensus.StateMachine
-	leaderTracker *consensus.LeaderTracker
-	chain         *consensus.Chain
+	raftConsensus  *consensus.RaftConsensus
+	gossipManager  *consensus.GossipManager
+	gossipDelegate *consensus.SignatureGossipDelegate
+	fsm            *consensus.StateMachine
+	leaderTracker  *consensus.LeaderTracker
+	chain          *consensus.Chain
 
 	// Storage
 	store storage.Store
-
-	// Network
-	broadcaster consensus.Broadcaster
-	natsConn    *nats.Conn
-	natsSubs    []*nats.Subscription
 
 	// RootLayer client
 	rootlayerClient rootlayer.Client
@@ -128,6 +126,12 @@ type Config struct {
 
 	// Validation policy
 	ValidationPolicy *ValidationPolicyConfig
+
+	// Raft consensus configuration
+	Raft *RaftConfig
+
+	// Gossip signature propagation configuration
+	Gossip *GossipConfig
 }
 
 // ValidationPolicyConfig defines validation policy configuration
@@ -139,6 +143,25 @@ type ValidationPolicyConfig struct {
 	RequireProofOfExecution bool    // Whether to require proof of execution
 	MinConfidenceScore      float32 // Minimum confidence score (0-1)
 	MaxRetries              int     // Maximum retry attempts
+}
+
+// RaftConfig configures the embedded Raft consensus instance.
+type RaftConfig struct {
+	Enable           bool
+	DataDir          string
+	BindAddress      string
+	Bootstrap        bool
+	Peers            []RaftPeerConfig
+	HeartbeatTimeout time.Duration
+	ElectionTimeout  time.Duration
+	CommitTimeout    time.Duration
+	MaxPool          int
+}
+
+// RaftPeerConfig describes a known Raft peer.
+type RaftPeerConfig struct {
+	ID      string
+	Address string
 }
 
 // NewNode creates a new validator node
@@ -243,6 +266,47 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 		cancel:          cancel,
 	}
 
+	// Initialise Raft consensus if enabled (transitional; will replace legacy path).
+	if config.Raft != nil && config.Raft.Enable {
+		raftCfg, err := config.buildRaftConsensusConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build raft config: %w", err)
+		}
+		raftConsensus, err := consensus.NewRaftConsensus(raftCfg, node, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create raft consensus: %w", err)
+		}
+		node.raftConsensus = raftConsensus
+		logger.Info("Raft consensus initialised",
+			"bind_addr", raftCfg.BindAddress,
+			"data_dir", raftCfg.DataDir,
+			"bootstrap", raftCfg.Bootstrap)
+	}
+
+	// Initialise Gossip for signature propagation if enabled
+	if config.Gossip != nil && config.Gossip.Enable {
+		// Create signature handler
+		gossipDelegate := consensus.NewSignatureGossipDelegate(
+			config.ValidatorID,
+			node.onGossipSignatureReceived,
+			logger,
+		)
+
+		// Create gossip manager
+		gossipCfg := config.Gossip.ToConsensusConfig(config.ValidatorID)
+		gossipManager, err := consensus.NewGossipManager(gossipCfg, gossipDelegate, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create gossip manager: %w", err)
+		}
+
+		node.gossipManager = gossipManager
+		node.gossipDelegate = gossipDelegate
+
+		logger.Info("Gossip initialized",
+			"bind_addr", fmt.Sprintf("%s:%d", gossipCfg.BindAddress, gossipCfg.BindPort),
+			"seeds", gossipCfg.Seeds)
+	}
+
 	// Load latest checkpoint from storage
 	if err := node.loadCheckpoint(); err != nil {
 		logger.Warnf("Failed to load checkpoint error=%v", err)
@@ -256,6 +320,269 @@ func (n *Node) GetID() string {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return n.id
+}
+
+// OnCheckpointCommitted satisfies consensus.RaftApplyHandler; full integration will replace legacy path.
+func (n *Node) OnCheckpointCommitted(header *pb.CheckpointHeader) {
+	if header == nil {
+		return
+	}
+	if n.raftConsensus == nil {
+		return
+	}
+	n.handleCommittedCheckpoint(header)
+}
+
+// OnExecutionReportCommitted satisfies consensus.RaftApplyHandler.
+func (n *Node) OnExecutionReportCommitted(report *pb.ExecutionReport, reportKey string) {
+	if report == nil || reportKey == "" {
+		return
+	}
+	n.mu.Lock()
+	if _, exists := n.pendingReports[reportKey]; !exists {
+		n.pendingReports[reportKey] = report
+		score := n.scoreReport(report)
+		n.reportScores[reportKey] = score
+	}
+	n.mu.Unlock()
+	n.logger.Debugf("Raft committed execution report intent=%s assignment=%s", report.IntentId, report.AssignmentId)
+}
+
+// onGossipSignatureReceived handles signatures received via gossip
+func (n *Node) onGossipSignatureReceived(sig *pb.Signature, checkpointHash []byte) {
+	if sig == nil {
+		return
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// Basic validation
+	if sig.SignerId == "" || len(sig.Der) == 0 {
+		n.logger.Warn("Invalid gossip signature: missing fields",
+			"signer", sig.SignerId)
+		return
+	}
+
+	// Check if signer is in validator set
+	if n.validatorSet == nil {
+		n.logger.Warn("No validator set configured, ignoring gossip signature")
+		return
+	}
+
+	var validatorInSet *types.Validator
+	for _, v := range n.validatorSet.Validators {
+		if v.ID == sig.SignerId {
+			validatorInSet = &v
+			break
+		}
+	}
+	if validatorInSet == nil {
+		n.logger.Warn("Signature from unknown validator, rejecting",
+			"signer", sig.SignerId)
+		return
+	}
+
+	// Verify checkpoint hash matches current checkpoint
+	if n.currentCheckpoint == nil {
+		n.logger.Warn("No current checkpoint, cannot verify gossip signature")
+		return
+	}
+
+	currentHash := n.computeCheckpointHash(n.currentCheckpoint)
+	if len(checkpointHash) > 0 && !bytesEqual(currentHash[:], checkpointHash) {
+		n.logger.Warn("Checkpoint hash mismatch, rejecting signature",
+			"signer", sig.SignerId,
+			"expected_epoch", n.currentCheckpoint.Epoch)
+		return
+	}
+
+	// Cryptographically verify the signature
+	if err := n.verifySignature(sig); err != nil {
+		n.logger.Warn("Signature verification failed",
+			"signer", sig.SignerId,
+			"error", err)
+		return
+	}
+
+	// Skip if we already have this signature
+	if n.signatures == nil {
+		n.signatures = make(map[string]*pb.Signature)
+	}
+	if _, exists := n.signatures[sig.SignerId]; exists {
+		n.logger.Debug("Duplicate signature ignored",
+			"signer", sig.SignerId)
+		return
+	}
+
+	// Add verified signature to map
+	n.signatures[sig.SignerId] = sig
+
+	n.logger.Debug("Received and verified signature via gossip",
+		"signer", sig.SignerId,
+		"total_sigs", len(n.signatures),
+		"epoch", n.currentCheckpoint.Epoch)
+
+	// Check if we've reached threshold (use weight-based if validators have weights)
+	thresholdReached := false
+	totalWeight := n.validatorSet.TotalWeight()
+	if totalWeight > 0 {
+		// Use weight-based threshold
+		thresholdReached = n.validatorSet.CheckWeightedThreshold(n.signatures)
+		if thresholdReached {
+			n.logger.Info("Weighted signature threshold reached via gossip",
+				"sigs", len(n.signatures),
+				"required_weight", n.validatorSet.RequiredWeight(),
+				"total_weight", totalWeight,
+				"epoch", n.currentCheckpoint.Epoch)
+		}
+	} else {
+		// Fall back to count-based threshold
+		thresholdReached = n.validatorSet.CheckThreshold(len(n.signatures))
+		if thresholdReached {
+			n.logger.Info("Signature threshold reached via gossip",
+				"sigs", len(n.signatures),
+				"required", n.validatorSet.RequiredSignatures(),
+				"epoch", n.currentCheckpoint.Epoch)
+		}
+	}
+
+	if thresholdReached {
+		// If we're the leader and using Raft, finalize checkpoint
+		if n.raftConsensus != nil && n.raftConsensus.IsLeader() {
+			go n.finalizeCheckpointAfterGossip()
+		}
+	}
+}
+
+// bytesEqual compares two byte slices for equality
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// finalizeCheckpointAfterGossip finalizes checkpoint after gossip threshold is reached
+func (n *Node) finalizeCheckpointAfterGossip() {
+	n.mu.RLock()
+	header := n.currentCheckpoint
+	if header == nil {
+		n.mu.RUnlock()
+		return
+	}
+	headerCopy := proto.Clone(header).(*pb.CheckpointHeader)
+
+	// Copy signatures and reports for async submission
+	signaturesCopy := make(map[string]*pb.Signature, len(n.signatures))
+	for k, v := range n.signatures {
+		signaturesCopy[k] = proto.Clone(v).(*pb.Signature)
+	}
+
+	pendingCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
+	for k, v := range n.pendingReports {
+		pendingCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+	}
+	n.mu.RUnlock()
+
+	// Submit to RootLayer (will fill header.Signatures with collected sigs)
+	n.submitToRootLayerWithData(headerCopy, pendingCopy, signaturesCopy)
+}
+
+func (n *Node) handleCommittedCheckpoint(header *pb.CheckpointHeader) {
+	headerCopy := proto.Clone(header).(*pb.CheckpointHeader)
+
+	n.mu.Lock()
+	if err := n.chain.AddCheckpoint(headerCopy); err != nil {
+		n.logger.Warnf("Failed to append checkpoint to chain error=%v", err)
+	}
+	if err := n.saveCheckpoint(headerCopy); err != nil {
+		n.logger.Warnf("Failed to persist checkpoint error=%v", err)
+	}
+	n.currentCheckpoint = headerCopy
+	if headerCopy.Epoch >= n.currentEpoch {
+		n.currentEpoch = headerCopy.Epoch + 1
+	}
+	n.lastCheckpointAt = time.Now()
+
+	// Reset signatures for new checkpoint
+	if n.gossipManager != nil {
+		n.signatures = make(map[string]*pb.Signature)
+	}
+
+	// Sign the checkpoint locally
+	sig, err := n.signCheckpoint(headerCopy)
+	if err != nil {
+		n.logger.Errorf("Failed to sign checkpoint error=%v", err)
+		n.mu.Unlock()
+		return
+	}
+
+	// Add own signature
+	if n.signatures == nil {
+		n.signatures = make(map[string]*pb.Signature)
+	}
+	n.signatures[n.id] = sig
+
+	// Compute checkpoint hash for verification
+	checkpointHash := n.computeCheckpointHash(headerCopy)
+
+	n.mu.Unlock()
+
+	// Broadcast signature via gossip (if enabled)
+	if n.gossipManager != nil {
+		if err := n.gossipManager.BroadcastSignature(sig, headerCopy.Epoch, checkpointHash[:]); err != nil {
+			n.logger.Errorf("Failed to gossip signature error=%v", err)
+		} else {
+			n.logger.Debugf("Broadcasted signature via gossip epoch=%d validator=%s", headerCopy.Epoch, n.id)
+		}
+
+		// Check if we've already reached threshold (important for single-node mode)
+		// In single-node mode, we already have the only signature needed
+		n.mu.RLock()
+		thresholdReached := false
+		totalWeight := n.validatorSet.TotalWeight()
+		if totalWeight > 0 {
+			thresholdReached = n.validatorSet.CheckWeightedThreshold(n.signatures)
+		} else {
+			thresholdReached = n.validatorSet.CheckThreshold(len(n.signatures))
+		}
+		isLeader := n.raftConsensus != nil && n.raftConsensus.IsLeader()
+		n.mu.RUnlock()
+
+		// If threshold already reached and we're leader, submit immediately
+		// (handles single-node case where gossip won't deliver own message back)
+		if thresholdReached && isLeader {
+			n.logger.Infof("Signature threshold already reached after local sign (single-node mode), finalizing epoch=%d", headerCopy.Epoch)
+			go n.finalizeCheckpointAfterGossip()
+		}
+
+		// Otherwise wait for gossip to collect signatures (handled by onGossipSignatureReceived)
+		return
+	}
+
+	// Legacy path: if no gossip, submit directly (for backward compatibility)
+	n.mu.RLock()
+	pendingCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
+	for k, v := range n.pendingReports {
+		pendingCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+	}
+	signaturesCopy := make(map[string]*pb.Signature, len(n.signatures))
+	for k, v := range n.signatures {
+		signaturesCopy[k] = proto.Clone(v).(*pb.Signature)
+	}
+	isLeader := n.raftConsensus != nil && n.raftConsensus.IsLeader()
+	n.mu.RUnlock()
+
+	if isLeader {
+		n.logger.Infof("Raft leader submitting checkpoint to RootLayer epoch=%d", headerCopy.Epoch)
+		n.submitToRootLayerWithData(headerCopy, pendingCopy, signaturesCopy)
+	}
 }
 
 // Start starts the validator node
@@ -272,13 +599,10 @@ func (n *Node) Start(ctx context.Context) error {
 		}
 	}
 
-	// Connect to NATS
-	if err := n.connectNATS(); err != nil {
-		return fmt.Errorf("failed to connect to NATS: %w", err)
+	// Raft consensus is required
+	if n.raftConsensus == nil {
+		return fmt.Errorf("Raft consensus is required - legacy NATS mode has been removed")
 	}
-
-	// Wait for all validators to be ready on the NATS bus before starting consensus
-	n.awaitConsensusReadiness()
 
 	// Start metrics server if configured
 	if n.config.MetricsPort > 0 {
@@ -289,9 +613,14 @@ func (n *Node) Start(ctx context.Context) error {
 	n.startValidatorRegistry()
 
 	// Initialize leadership status
-	_, leader := n.leaderTracker.Leader(n.currentEpoch)
-	n.isLeader = leader != nil && leader.ID == n.id
-	n.logger.Infof("Initial leadership status is_leader=%t epoch=%d", n.isLeader, n.currentEpoch)
+	if n.raftConsensus != nil {
+		n.isLeader = n.raftConsensus.IsLeader()
+		n.logger.Infof("Initial Raft leadership status is_leader=%t epoch=%d", n.isLeader, n.currentEpoch)
+	} else {
+		_, leader := n.leaderTracker.Leader(n.currentEpoch)
+		n.isLeader = leader != nil && leader.ID == n.id
+		n.logger.Infof("Initial leadership status is_leader=%t epoch=%d", n.isLeader, n.currentEpoch)
+	}
 
 	// Start consensus loop - this will handle checkpoint creation dynamically
 	go n.consensusLoop()
@@ -306,26 +635,22 @@ func (n *Node) Stop() error {
 
 	n.cancel()
 
-	if n.validatorHB != nil {
-		n.validatorHB()
-		n.validatorHB = nil
-	}
-
-	// Close broadcaster
-	if n.broadcaster != nil {
-		if err := n.broadcaster.Close(); err != nil {
-			n.logger.Errorf("Failed to close broadcaster error=%v", err)
+	if n.raftConsensus != nil {
+		if err := n.raftConsensus.Shutdown(); err != nil {
+			n.logger.Errorf("Failed to shutdown Raft consensus error=%v", err)
 		}
 	}
 
-	// Unsubscribe from NATS (if using old method)
-	for _, sub := range n.natsSubs {
-		sub.Unsubscribe()
+	// Shutdown gossip manager
+	if n.gossipManager != nil {
+		if err := n.gossipManager.Shutdown(); err != nil {
+			n.logger.Errorf("Failed to shutdown gossip manager error=%v", err)
+		}
 	}
 
-	// Close NATS connection (if using old method)
-	if n.natsConn != nil {
-		n.natsConn.Close()
+	if n.validatorHB != nil {
+		n.validatorHB()
+		n.validatorHB = nil
 	}
 
 	// Close RootLayer connection
@@ -365,160 +690,6 @@ func (n *Node) Stop() error {
 	return nil
 }
 
-// connectNATS establishes NATS connection and subscriptions
-func (n *Node) connectNATS() error {
-	// Create NATS broadcaster
-	subnetID := n.config.SubnetID
-	if subnetID == "" {
-		subnetID = "default"
-	}
-
-	broadcaster, err := consensus.NewNATSBroadcaster(
-		n.config.NATSUrl,
-		n.id,
-		subnetID,
-		n.logger,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create NATS broadcaster: %w", err)
-	}
-	n.broadcaster = broadcaster
-
-	// Subscribe to checkpoint proposals
-	if err := broadcaster.SubscribeToProposals(func(header *pb.CheckpointHeader) {
-		if err := n.HandleProposal(header); err != nil {
-			n.logger.Errorf("Failed to handle proposal error=%v", err)
-		}
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to proposals: %w", err)
-	}
-
-	// Subscribe to signatures
-	if err := broadcaster.SubscribeToSignatures(func(sig *pb.Signature) {
-		if err := n.AddSignature(sig); err != nil {
-			n.logger.Errorf("Failed to add signature error=%v", err)
-		}
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to signatures: %w", err)
-	}
-
-	// Subscribe to execution reports
-	if err := broadcaster.SubscribeToExecutionReports(func(report *pb.ExecutionReport) {
-		if _, err := n.ProcessExecutionReport(report); err != nil {
-			n.logger.Errorf("Failed to process execution report error=%v", err)
-		}
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to execution reports: %w", err)
-	}
-
-	// Subscribe to finalized checkpoints
-	if err := broadcaster.SubscribeToFinalized(func(header *pb.CheckpointHeader) {
-		if err := n.HandleFinalized(header); err != nil {
-			n.logger.Errorf("Failed to handle finalized checkpoint error=%v", err)
-		}
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to finalized checkpoints: %w", err)
-	}
-
-	n.logger.Infof("Connected to NATS with broadcaster url=%s subnet=%s", n.config.NATSUrl, subnetID)
-	return nil
-}
-
-// awaitConsensusReadiness blocks startup until a quorum of validators have subscribed to
-// the NATS subjects used for consensus. This prevents the first leader from proposing before
-// followers have active subscriptions, which previously caused proposals to be dropped.
-func (n *Node) awaitConsensusReadiness() {
-	if n.broadcaster == nil || n.validatorSet == nil {
-		return
-	}
-
-	required := make(map[string]struct{})
-	for _, v := range n.validatorSet.Validators {
-		required[v.ID] = struct{}{}
-	}
-
-	if _, ok := required[n.id]; !ok {
-		required[n.id] = struct{}{}
-	}
-
-	total := len(required)
-	if total == 0 {
-		return
-	}
-
-	ready := make(map[string]struct{}, total)
-	ready[n.id] = struct{}{}
-	readyCount := len(ready)
-
-	const (
-		readinessTimeout  = 8 * time.Second
-		readinessInterval = 500 * time.Millisecond
-	)
-
-	readyCh := make(chan string, total*2)
-
-	if err := n.broadcaster.SubscribeToReadiness(func(id string) {
-		select {
-		case readyCh <- id:
-		default:
-			n.logger.Debug("Dropping readiness signal (channel full)", "validator_id", id)
-		}
-	}); err != nil {
-		n.logger.Warnf("Failed to subscribe to consensus readiness error=%v", err)
-		if err := n.broadcaster.BroadcastReadiness(n.id); err != nil {
-			n.logger.Warnf("Failed to broadcast readiness error=%v", err)
-		}
-		return
-	}
-
-	start := time.Now()
-	if err := n.broadcaster.BroadcastReadiness(n.id); err != nil {
-		n.logger.Warnf("Failed to broadcast readiness error=%v", err)
-	} else {
-		n.logger.Infof("Announced consensus readiness validator_id=%s", n.id)
-	}
-
-	if readyCount >= total {
-		n.logger.Debug("Consensus readiness satisfied locally", "validators", total)
-		return
-	}
-
-	ticker := time.NewTicker(readinessInterval)
-	defer ticker.Stop()
-	timeout := time.NewTimer(readinessTimeout)
-	defer timeout.Stop()
-
-	for readyCount < total {
-		select {
-		case id := <-readyCh:
-			if _, ok := required[id]; !ok {
-				n.logger.Debug("Ignoring readiness from unknown validator", "validator_id", id)
-				continue
-			}
-			if _, seen := ready[id]; seen {
-				continue
-			}
-			ready[id] = struct{}{}
-			readyCount++
-			n.logger.Infof("Validator ready for consensus validator_id=%s ready=%d total=%d", id, readyCount, total)
-			if readyCount >= total {
-				n.logger.Infof("All validators ready for consensus total=%d wait_duration=%s", total, time.Since(start))
-				return
-			}
-		case <-ticker.C:
-			if err := n.broadcaster.BroadcastReadiness(n.id); err != nil {
-				n.logger.Warnf("Failed to re-broadcast readiness error=%v", err)
-			}
-		case <-timeout.C:
-			n.logger.Warnf("Timed out waiting for validator readiness ready=%d total=%d", readyCount, total)
-			return
-		case <-n.ctx.Done():
-			n.logger.Debug("Stopped waiting for readiness (context cancelled)")
-			return
-		}
-	}
-}
-
 // consensusLoop runs the main consensus state machine
 func (n *Node) consensusLoop() {
 	n.logger.Infof("Consensus loop started validator_id=%s", n.id)
@@ -536,14 +707,71 @@ func (n *Node) consensusLoop() {
 			if tickCount%10 == 0 {
 				n.logger.Debug("Consensus loop tick", "count", tickCount)
 			}
-			n.checkConsensusState()
-			n.checkCheckpointTrigger() // Check if leader should create checkpoint
+			if n.raftConsensus != nil {
+				n.checkRaftConsensusState()
+				n.checkRaftCheckpointTrigger()
+			} else {
+				n.checkConsensusState()
+				n.checkCheckpointTrigger() // Check if leader should create checkpoint
+			}
 		}
+	}
+}
+
+func (n *Node) checkRaftConsensusState() {
+	if n.raftConsensus == nil {
+		return
+	}
+	isLeader := n.raftConsensus.IsLeader()
+	n.mu.Lock()
+	if n.isLeader != isLeader {
+		n.isLeader = isLeader
+		if isLeader {
+			n.lastCheckpointAt = time.Time{}
+			n.logger.Infof("Became Raft leader epoch=%d", n.currentEpoch)
+		} else {
+			n.logger.Infof("Lost Raft leadership epoch=%d", n.currentEpoch)
+		}
+	}
+	n.mu.Unlock()
+}
+
+func (n *Node) checkRaftCheckpointTrigger() {
+	if n.raftConsensus == nil {
+		return
+	}
+
+	n.mu.Lock()
+	if !n.isLeader {
+		n.mu.Unlock()
+		return
+	}
+	pendingCount := len(n.pendingReports)
+	if pendingCount == 0 {
+		n.mu.Unlock()
+		return
+	}
+
+	checkpointInterval := n.getCheckpointInterval()
+	now := time.Now()
+	shouldPropose := false
+	if n.lastCheckpointAt.IsZero() || now.Sub(n.lastCheckpointAt) >= checkpointInterval {
+		shouldPropose = true
+		n.lastCheckpointAt = now
+	}
+	n.mu.Unlock()
+
+	if shouldPropose {
+		n.proposeCheckpointRaft()
 	}
 }
 
 // checkConsensusState checks and updates consensus state
 func (n *Node) checkConsensusState() {
+	if n.raftConsensus != nil {
+		n.checkRaftConsensusState()
+		return
+	}
 	n.mu.Lock()
 	state := n.fsm.GetState()
 	n.recordMetrics(state)
@@ -686,6 +914,11 @@ func (n *Node) checkConsensusState() {
 
 // proposeCheckpoint creates and broadcasts a new checkpoint proposal
 func (n *Node) proposeCheckpoint() {
+	if n.raftConsensus != nil {
+		n.proposeCheckpointRaft()
+		return
+	}
+
 	// Build checkpoint header first (without lock, as it needs to acquire RLock)
 	header := n.buildCheckpointHeader()
 
@@ -717,16 +950,59 @@ func (n *Node) proposeCheckpoint() {
 		return
 	}
 
-	// Broadcast proposal
-	if err := n.broadcastProposal(header); err != nil {
-		n.logger.Errorf("Failed to broadcast proposal error=%v", err)
-		return
-	}
+	// Proposals are now handled by Raft - no separate broadcast needed
+	// Raft will replicate the checkpoint to all followers
 
 	// Fix: Record leader activity when proposing checkpoint
 	n.leaderTracker.RecordActivity(header.Epoch, time.Now())
 
 	n.logger.Infof("Proposed checkpoint epoch=%d fsm_state=%s", header.Epoch, n.fsm.GetState())
+}
+
+func (n *Node) proposeCheckpointRaft() {
+	if n.raftConsensus == nil || !n.raftConsensus.IsLeader() {
+		return
+	}
+
+	header := n.buildCheckpointHeader()
+
+	sig, err := n.signCheckpoint(header)
+	if err != nil {
+		n.logger.Errorf("Failed to sign checkpoint error=%v", err)
+		return
+	}
+
+	n.mu.Lock()
+	if n.signatures == nil {
+		n.signatures = make(map[string]*pb.Signature)
+	}
+	// Reset signatures for the new checkpoint
+	n.signatures = map[string]*pb.Signature{
+		n.id: sig,
+	}
+	bitmap := n.createSignersBitmapLocked()
+
+	if header.Signatures == nil {
+		header.Signatures = &pb.CheckpointSignatures{}
+	}
+	header.Signatures.EcdsaSignatures = [][]byte{sig.Der}
+	header.Signatures.SignersBitmap = bitmap
+	header.Signatures.SignatureCount = 1
+	if validator := n.validatorSet.GetValidator(n.id); validator != nil {
+		header.Signatures.TotalWeight = validator.Weight
+	} else {
+		header.Signatures.TotalWeight = 1
+	}
+
+	n.currentCheckpoint = header
+	n.lastCheckpointAt = time.Now()
+	n.mu.Unlock()
+
+	if err := n.raftConsensus.ApplyCheckpoint(header, n.id); err != nil {
+		n.logger.Errorf("Failed to replicate checkpoint via Raft error=%v", err)
+		return
+	}
+	n.logger.Infof("Replicated checkpoint via Raft epoch=%d", header.Epoch)
 }
 
 // buildCheckpointHeader creates a new checkpoint header
@@ -922,9 +1198,8 @@ func (n *Node) finalizeCheckpoint() {
 
 	n.mu.Unlock()
 
-	// Broadcast finalized checkpoint to all validators
-	// This helps followers sync their state even if they missed some signatures
-	go n.broadcastFinalized(headerCopy)
+	// Finalized checkpoints are now propagated via Raft - no broadcast needed
+	// All nodes will be notified through Raft log replication
 
 	// Submit to RootLayer if we are the leader
 	if isLeader {
@@ -936,6 +1211,10 @@ func (n *Node) finalizeCheckpoint() {
 // ONLY creates checkpoints when there are pending execution reports (on-demand checkpointing)
 // Fix Problem 8: Removed double unlock bug by avoiding manual unlock/lock inside defer scope
 func (n *Node) checkCheckpointTrigger() {
+	if n.raftConsensus != nil {
+		n.checkRaftCheckpointTrigger()
+		return
+	}
 	n.mu.Lock()
 
 	// Only leaders should create checkpoints
@@ -1299,12 +1578,7 @@ func (n *Node) saveCheckpoint(header *pb.CheckpointHeader) error {
 	return nil
 }
 
-func (n *Node) broadcastProposal(header *pb.CheckpointHeader) error {
-	if n.broadcaster != nil {
-		return n.broadcaster.BroadcastProposal(header)
-	}
-	return fmt.Errorf("no broadcaster configured")
-}
+// broadcastProposal removed - proposals are now handled by Raft
 
 // computeReportsRoot is deprecated - use computeEventRoot instead
 func (n *Node) computeReportsRoot() []byte {
@@ -1413,14 +1687,20 @@ func (n *Node) clearReportsForIntent(intentKey string) {
 	defer n.mu.Unlock()
 
 	removed := 0
+	var removedKeys []string
 	for reportID, report := range n.pendingReports {
 		// Check if this report belongs to the Intent group
 		key := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
 		if key == intentKey {
 			delete(n.pendingReports, reportID)
 			delete(n.reportScores, reportID)
+			removedKeys = append(removedKeys, reportID)
 			removed++
 		}
+	}
+
+	if n.raftConsensus != nil && len(removedKeys) > 0 {
+		n.raftConsensus.ClearPending(removedKeys)
 	}
 
 	n.logger.Infof("Cleared %d execution reports for Intent group %s", removed, intentKey)
@@ -1854,6 +2134,11 @@ func (c *Config) Validate() error {
 	}
 	// Apply defaults from unified config
 	c.applyDefaults()
+	if c.Raft != nil && c.Raft.Enable {
+		if _, err := c.buildRaftConsensusConfig(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1871,6 +2156,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Limits == nil {
 		c.Limits = config.DefaultLimitsConfig()
+	}
+	if c.Raft == nil {
+		c.Raft = &RaftConfig{}
 	}
 
 	// Apply legacy fields from unified config if not set
@@ -1892,10 +2180,65 @@ func (c *Config) applyDefaults() {
 	if c.SubnetID == "" {
 		c.SubnetID = c.Identity.SubnetID
 	}
+	if c.Raft.DataDir == "" {
+		if c.StoragePath != "" {
+			c.Raft.DataDir = filepath.Join(c.StoragePath, "raft")
+		} else {
+			c.Raft.DataDir = "./data/raft"
+		}
+	}
+	if c.Raft.BindAddress == "" {
+		c.Raft.BindAddress = "127.0.0.1:7000"
+	}
+	if c.Raft.HeartbeatTimeout == 0 {
+		c.Raft.HeartbeatTimeout = 1 * time.Second
+	}
+	if c.Raft.ElectionTimeout == 0 {
+		c.Raft.ElectionTimeout = 1 * time.Second
+	}
+	if c.Raft.CommitTimeout == 0 {
+		c.Raft.CommitTimeout = 50 * time.Millisecond
+	}
+	if c.Raft.MaxPool <= 0 {
+		c.Raft.MaxPool = 3
+	}
 
 	if c.RegistryHeartbeatInterval <= 0 {
 		c.RegistryHeartbeatInterval = 30 * time.Second
 	}
+}
+
+func (c *Config) buildRaftConsensusConfig() (consensus.RaftConfig, error) {
+	if c.Raft == nil || !c.Raft.Enable {
+		return consensus.RaftConfig{}, fmt.Errorf("raft not enabled")
+	}
+	if c.Raft.DataDir == "" {
+		return consensus.RaftConfig{}, fmt.Errorf("raft data_dir is required when raft is enabled")
+	}
+	if c.Raft.BindAddress == "" {
+		return consensus.RaftConfig{}, fmt.Errorf("raft bind_address is required when raft is enabled")
+	}
+	peers := make([]consensus.RaftPeer, 0, len(c.Raft.Peers))
+	for _, peer := range c.Raft.Peers {
+		if peer.ID == "" || peer.Address == "" {
+			return consensus.RaftConfig{}, fmt.Errorf("raft peer configuration requires both id and address")
+		}
+		peers = append(peers, consensus.RaftPeer{
+			ID:      peer.ID,
+			Address: peer.Address,
+		})
+	}
+	return consensus.RaftConfig{
+		NodeID:           c.ValidatorID,
+		DataDir:          c.Raft.DataDir,
+		BindAddress:      c.Raft.BindAddress,
+		Bootstrap:        c.Raft.Bootstrap,
+		Peers:            peers,
+		HeartbeatTimeout: c.Raft.HeartbeatTimeout,
+		ElectionTimeout:  c.Raft.ElectionTimeout,
+		CommitTimeout:    c.Raft.CommitTimeout,
+		MaxPool:          c.Raft.MaxPool,
+	}, nil
 }
 
 // computeCheckpointHash computes the canonical hash of a checkpoint header
