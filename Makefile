@@ -91,18 +91,21 @@ proto-rootlayer:
 		-I $(GOOGLEAPIS) \
 		--go_out=. \
 		--go-grpc_out=. \
-		--go_opt=Mrootlayer/intent.proto=rootlayer/proto \
-		--go_opt=Mrootlayer/assignment.proto=rootlayer/proto \
-		--go_opt=Mrootlayer/validation.proto=rootlayer/proto \
-		--go_opt=Mrootlayer/service.proto=rootlayer/proto \
-		--go_opt=Mrootlayer/error_reason.proto=rootlayer/proto \
-		--go-grpc_opt=Mrootlayer/intent.proto=rootlayer/proto \
-		--go-grpc_opt=Mrootlayer/assignment.proto=rootlayer/proto \
-		--go-grpc_opt=Mrootlayer/validation.proto=rootlayer/proto \
-		--go-grpc_opt=Mrootlayer/service.proto=rootlayer/proto \
-		--go-grpc_opt=Mrootlayer/error_reason.proto=rootlayer/proto \
+		--go_opt=Mrootlayer/intent.proto=subnet/proto/rootlayer \
+		--go_opt=Mrootlayer/assignment.proto=subnet/proto/rootlayer \
+		--go_opt=Mrootlayer/validation.proto=subnet/proto/rootlayer \
+		--go_opt=Mrootlayer/service.proto=subnet/proto/rootlayer \
+		--go_opt=Mrootlayer/error_reason.proto=subnet/proto/rootlayer \
+		--go-grpc_opt=Mrootlayer/intent.proto=subnet/proto/rootlayer \
+		--go-grpc_opt=Mrootlayer/assignment.proto=subnet/proto/rootlayer \
+		--go-grpc_opt=Mrootlayer/validation.proto=subnet/proto/rootlayer \
+		--go-grpc_opt=Mrootlayer/service.proto=subnet/proto/rootlayer \
+		--go-grpc_opt=Mrootlayer/error_reason.proto=subnet/proto/rootlayer \
 		../pin_protocol/proto/rootlayer/*.proto
-	@mv ./rootlayer/proto/*.pb.go ./proto/rootlayer/
+	@if [ -d ./subnet/proto/rootlayer ]; then \
+		cp ./subnet/proto/rootlayer/*.pb.go ./proto/rootlayer/ 2>/dev/null || true; \
+		rm -rf ./subnet; \
+	fi
 	@rm -rf ./rootlayer
 	@echo "[INFO] Protobuf code generation from pin_protocol (rootlayer) complete"
 

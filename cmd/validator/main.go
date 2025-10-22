@@ -27,12 +27,24 @@ func main() {
 		validatorID      = flag.String("id", "", "Validator ID")
 		privateKey       = flag.String("key", "", "Private key hex (without 0x)")
 		grpcPort         = flag.Int("grpc", 9090, "gRPC server port")
-		natsURL          = flag.String("nats", "nats://127.0.0.1:4222", "NATS server URL")
+		natsURL          = flag.String("nats", "", "NATS server URL (deprecated - use Raft instead)")
 		storagePath      = flag.String("storage", "./data", "Storage path for LevelDB")
 		metricsPort      = flag.Int("metrics", 9095, "Metrics server port")
 		registryGRPC     = flag.String("registry-grpc", ":8091", "Registry gRPC listen address (empty to disable)")
 		registryHTTP     = flag.String("registry-http", ":8092", "Registry HTTP listen address (empty to disable)")
 		registryEndpoint = flag.String("registry-endpoint", "", "Validator endpoint advertised via registry")
+
+		// Raft consensus configuration
+		raftEnable    = flag.Bool("raft-enable", false, "Enable Raft consensus")
+		raftBootstrap = flag.Bool("raft-bootstrap", false, "Bootstrap Raft cluster (first node only)")
+		raftBind      = flag.String("raft-bind", "127.0.0.1:7000", "Raft bind address")
+		raftDataDir   = flag.String("raft-data-dir", "./data/raft", "Raft data directory")
+		raftPeers     = flag.String("raft-peers", "", "Comma-separated list of validator_id:raft_address pairs (e.g. 'v1:127.0.0.1:7000,v2:127.0.0.1:7001')")
+
+		// Gossip configuration
+		gossipEnable = flag.Bool("gossip-enable", false, "Enable Gossip for signature propagation")
+		gossipBind   = flag.String("gossip-bind", "127.0.0.1", "Gossip bind address")
+		gossipPort   = flag.Int("gossip-port", 7946, "Gossip port")
 
 		// Validator set configuration
 		validatorCount  = flag.Int("validators", 4, "Total number of validators")
@@ -87,10 +99,21 @@ func main() {
 
 	// Setup logger
 	logger := logging.NewDefaultLogger()
-	logger.Info("Starting validator node",
-		"id", *validatorID,
-		"grpc_port", *grpcPort,
-		"nats_url", *natsURL)
+	if *raftEnable {
+		logger.Info("Starting validator node",
+			"id", *validatorID,
+			"grpc_port", *grpcPort,
+			"consensus", "Raft+Gossip",
+			"raft_bind", *raftBind)
+	} else if *natsURL != "" {
+		logger.Warn("NATS mode is deprecated - please use Raft consensus",
+			"id", *validatorID,
+			"grpc_port", *grpcPort)
+	} else {
+		logger.Info("Starting validator node",
+			"id", *validatorID,
+			"grpc_port", *grpcPort)
+	}
 
 	// Create validator set (simplified for MVP)
 	validatorSet := createValidatorSet(*validatorCount, *thresholdNum, *thresholdDenom, *validatorID, *privateKey, *validatorPubkey)
@@ -102,7 +125,7 @@ func main() {
 		PrivateKey:       *privateKey,
 		ValidatorSet:     validatorSet,
 		StoragePath:      *storagePath,
-		NATSUrl:          *natsURL,
+		NATSUrl:          *natsURL,  // Deprecated but kept for backward compatibility
 		GRPCPort:         *grpcPort,
 		MetricsPort:      *metricsPort,
 		RegistryEndpoint: *registryEndpoint,
@@ -125,6 +148,27 @@ func main() {
 		ChainRPCURL:        *valChainRPCURL,
 		ChainNetwork:       *valChainNetwork,
 		IntentManagerAddr:  *intentManagerAddr,
+
+		// Raft consensus configuration
+		Raft: &validator.RaftConfig{
+			Enable:           *raftEnable,
+			DataDir:          *raftDataDir,
+			BindAddress:      *raftBind,
+			Bootstrap:        *raftBootstrap,
+			Peers:            parseRaftPeers(*raftPeers),
+			HeartbeatTimeout: 1 * time.Second,
+			ElectionTimeout:  2 * time.Second,
+			CommitTimeout:    500 * time.Millisecond,
+		},
+
+		// Gossip configuration
+		Gossip: &validator.GossipConfig{
+			Enable:         *gossipEnable,
+			BindAddress:    *gossipBind,
+			BindPort:       *gossipPort,
+			GossipInterval: 200 * time.Millisecond,
+			ProbeInterval:  1 * time.Second,
+		},
 	}
 
 	var chainVerifier *blockchain.ParticipantVerifier
@@ -287,6 +331,34 @@ func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey
 		ThresholdNum:   thresholdNum,
 		ThresholdDenom: thresholdDenom,
 	}
+}
+
+// parseRaftPeers parses comma-separated raft peer config: "id1:addr1:port1,id2:addr2:port2,..."
+func parseRaftPeers(peerStr string) []validator.RaftPeerConfig {
+	if peerStr == "" {
+		return nil
+	}
+
+	peers := []validator.RaftPeerConfig{}
+	for _, pair := range splitAndTrim(peerStr, ",") {
+		parts := splitAndTrim(pair, ":")
+		if len(parts) >= 2 {
+			// First part is ID, rest is address (which may contain colons for host:port)
+			id := parts[0]
+			// Rejoin remaining parts with ":" to reconstruct address
+			address := parts[1]
+			for i := 2; i < len(parts); i++ {
+				address += ":" + parts[i]
+			}
+			peers = append(peers, validator.RaftPeerConfig{
+				ID:      id,
+				Address: address,
+			})
+		} else {
+			log.Printf("Warning: invalid raft peer format '%s', expected 'id:address:port'", pair)
+		}
+	}
+	return peers
 }
 
 // splitAndTrim splits a string by delimiter and trims whitespace from each part

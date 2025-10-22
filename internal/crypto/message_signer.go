@@ -8,7 +8,7 @@ import (
 	"time"
 
 	pb "subnet/proto/subnet"
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 )
 
 // MessageSigner handles signing of protocol messages

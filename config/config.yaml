@@ -148,14 +148,45 @@ validator:
       evidence_weight: 0.4
       output_weight: 0.3
 
-# NATS configuration for consensus broadcasting
-nats:
-  url: "nats://localhost:4222"
-  subject_propose: "checkpoint.propose"
-  subject_signature: "checkpoint.signature"
-  subject_finalized: "checkpoint.finalized"
-  dedupe_ttl_seconds: 60
-  dedupe_max: 10000
+# NATS has been removed - now using Raft + Gossip for all consensus
+# Legacy NATS configuration removed in favor of:
+# - Raft for consensus ordering
+# - Gossip for P2P signature propagation
+
+# Gossip configuration for P2P signature propagation
+# Uses HashiCorp memberlist (SWIM protocol) for decentralized signature broadcasting
+gossip:
+  # Enable gossip (if false, falls back to NATS if available)
+  enable: true
+
+  # Bind address for gossip listener (local interface)
+  bind_address: "0.0.0.0"
+
+  # Bind port for gossip communication (default: 7946 - memberlist default)
+  bind_port: 7946
+
+  # Advertise address (external IP/hostname that other nodes should use to reach this node)
+  # If empty, uses bind_address
+  advertise_address: ""
+
+  # Advertise port (external port that other nodes should use)
+  # If 0, uses bind_port
+  advertise_port: 0
+
+  # Seed nodes to join (bootstrap gossip cluster)
+  # Format: ["ip:port", "ip:port", ...]
+  # Leave empty for the first bootstrap node
+  seeds:
+    - "127.0.0.1:7946"  # For local testing with single node
+    # - "validator-1:7946"  # For multi-node deployment
+    # - "validator-2:7946"
+    # - "validator-3:7946"
+
+  # How often to gossip messages (default: 200ms for fast propagation)
+  gossip_interval: 200ms
+
+  # How often to probe nodes for health (default: 1s)
+  probe_interval: 1s
 
 # Recovery configuration
 recovery:

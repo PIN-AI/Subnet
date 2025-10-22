@@ -92,21 +92,9 @@ LOGS_DIR="$PROJECT_ROOT/subnet-logs"
 mkdir -p "$LOGS_DIR"
 print_success "Logs directory: $LOGS_DIR"
 
-# Check NATS
-print_info "Checking NATS server..."
-if ! lsof -Pi :4222 -sTCP:LISTEN -t >/dev/null 2>&1; then
-    print_warning "NATS not running, starting NATS server..."
-    nats-server -D > "$LOGS_DIR/nats.log" 2>&1 &
-    sleep 2
-    if lsof -Pi :4222 -sTCP:LISTEN -t >/dev/null 2>&1; then
-        print_success "NATS server started"
-    else
-        print_error "Failed to start NATS server"
-        exit 1
-    fi
-else
-    print_success "NATS server running"
-fi
+# Note: NATS is no longer required - using Raft + Gossip for consensus
+# Keeping NATS check for backward compatibility with other components if needed
+print_info "Note: Using Raft + Gossip for consensus (NATS no longer required for validator)"
 
 # Check binaries
 print_info "Checking binaries..."
@@ -211,12 +199,17 @@ else
     exit 1
 fi
 
-# Start Validator (single-node mode for development)
-print_info "Starting Validator service (single-node mode)..."
+# Start Validator (single-node mode with Raft)
+print_info "Starting Validator service (single-node Raft mode)..."
+
+# For single-node Raft, we need to add a peer config with itself
+# This allows the node to bootstrap as a single-member cluster
+VALIDATOR_ID="validator-e2e-1"
+RAFT_BIND="127.0.0.1:7400"
+
 "$PROJECT_ROOT/bin/validator" \
-    -id "validator-e2e-1" \
+    -id "$VALIDATOR_ID" \
     -grpc 9200 \
-    -nats "nats://127.0.0.1:4222" \
     -subnet-id "$SUBNET_ID" \
     -key "${TEST_PRIVATE_KEY#0x}" \
     -rootlayer-endpoint "$ROOTLAYER_GRPC" \
@@ -230,6 +223,14 @@ print_info "Starting Validator service (single-node mode)..."
     -validators 1 \
     -threshold-num 1 \
     -threshold-denom 1 \
+    -raft-enable \
+    -raft-bootstrap \
+    -raft-bind "$RAFT_BIND" \
+    -raft-data-dir "$LOGS_DIR/raft-data" \
+    -raft-peers "$VALIDATOR_ID:$RAFT_BIND" \
+    -gossip-enable \
+    -gossip-bind "127.0.0.1" \
+    -gossip-port 7950 \
     > "$LOGS_DIR/validator.log" 2>&1 &
 VALIDATOR_PID=$!
 sleep 3

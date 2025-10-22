@@ -5,22 +5,9 @@ This guide will help you quickly set up and run PinAI Subnet services for develo
 ## Prerequisites
 
 - **Go 1.21+** - [Install Go](https://go.dev/doc/install)
-- **NATS Server** - Message broker for validator communication
 - **Git** - For cloning the repository
 
-### Install NATS
-
-```bash
-# macOS
-brew install nats-server
-
-# Linux
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.0/nats-server-v2.10.0-linux-amd64.tar.gz | tar xz
-sudo mv nats-server-v2.10.0-linux-amd64/nats-server /usr/local/bin/
-
-# Start NATS
-nats-server &
-```
+**Note**: Validators use **Raft consensus** and **Gossip protocol** for coordination - no external message broker required! You can run a single validator for development or multiple validators for production.
 
 ## Setup
 
@@ -86,12 +73,14 @@ Replace all values above with your production configuration. Use secure key mana
 ```
 
 This script will:
-- Check and start NATS if needed
 - Start Registry service (gRPC: 8091, HTTP: 8101)
 - Start Matcher service (gRPC: 8090)
-- Start Validator service (gRPC: 9200)
+- Start Validator service in **single-node Raft mode** (gRPC: 9200)
+- Start a test agent for demonstration
 - Generate necessary configuration files
 - Save process IDs for easy management
+
+The validator automatically bootstraps as a single-node Raft cluster for development. For production multi-validator setup, see [Deployment Guide](subnet_deployment_guide.md).
 
 Logs are saved to `subnet-logs/` directory.
 
@@ -124,11 +113,10 @@ EOF
 
 ./bin/matcher --config /tmp/matcher-config.yaml > subnet-logs/matcher.log 2>&1 &
 
-# 3. Start Validator
+# 3. Start Validator (single-node Raft mode)
 ./bin/validator \
     -id "validator-main" \
     -grpc 9200 \
-    -nats "nats://127.0.0.1:4222" \
     -subnet-id "$SUBNET_ID" \
     -key "$TEST_PRIVATE_KEY" \
     -rootlayer-endpoint "$ROOTLAYER_GRPC" \
@@ -139,7 +127,20 @@ EOF
     -intent-manager-addr "$INTENT_MANAGER_ADDR" \
     -enable-chain-submit \
     -enable-rootlayer \
+    -validators 1 \
+    -threshold-num 1 \
+    -threshold-denom 1 \
+    -raft-enable \
+    -raft-bootstrap \
+    -raft-bind "127.0.0.1:7400" \
+    -raft-data-dir "./data/raft" \
+    -raft-peers "validator-main:127.0.0.1:7400" \
+    -gossip-enable \
+    -gossip-bind "127.0.0.1" \
+    -gossip-port 7950 \
     > subnet-logs/validator.log 2>&1 &
+
+# For multi-validator setup, see subnet_deployment_guide.md
 ```
 
 ## Verify Services
@@ -257,19 +258,14 @@ kill $(cat subnet-logs/validator.pid)
 
 ### Services Won't Start
 
-1. **Check NATS is running**:
-   ```bash
-   ps aux | grep nats-server
-   # If not running: nats-server &
-   ```
-
-2. **Check port availability**:
+1. **Check port availability**:
    ```bash
    lsof -i :8090  # Matcher
    lsof -i :8091  # Registry gRPC
    lsof -i :8101  # Registry HTTP
-   lsof -i :9200  # Validator
-   lsof -i :4222  # NATS
+   lsof -i :9200  # Validator gRPC
+   lsof -i :7400  # Validator Raft
+   lsof -i :7950  # Validator Gossip
    ```
 
 3. **Check environment variables**:
@@ -303,9 +299,10 @@ kill $(cat subnet-logs/validator.pid)
 
 ### Validator Not Processing Reports
 
-1. **Check NATS connection**:
+1. **Check Raft consensus**:
    ```bash
-   tail -f subnet-logs/validator.log | grep -i nats
+   tail -f subnet-logs/validator.log | grep -i raft
+   # Look for "entering leader state" or "Became Raft leader"
    ```
 
 2. **Verify validator registered**:
@@ -313,9 +310,9 @@ kill $(cat subnet-logs/validator.pid)
    curl http://localhost:8101/validators
    ```
 
-3. **Check consensus state**:
+3. **Check consensus and gossip state**:
    ```bash
-   tail -f subnet-logs/validator.log | grep -i consensus
+   tail -f subnet-logs/validator.log | grep -E "consensus|gossip|checkpoint"
    ```
 
 ## Next Steps

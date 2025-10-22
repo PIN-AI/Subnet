@@ -2,13 +2,14 @@ package validator
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
 	"subnet/internal/consensus"
 	"subnet/internal/crypto"
@@ -18,6 +19,10 @@ import (
 
 // ProcessExecutionReport processes an execution report from an agent
 func (n *Node) ProcessExecutionReport(report *pb.ExecutionReport) (*pb.Receipt, error) {
+	if n.raftConsensus != nil {
+		return n.processExecutionReportRaft(report)
+	}
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -55,11 +60,75 @@ func (n *Node) ProcessExecutionReport(report *pb.ExecutionReport) (*pb.Receipt, 
 		score,
 		len(n.pendingReports))
 
-	// Broadcast the execution report to all validators (including leader)
-	// This ensures all nodes, especially the current leader, can include this report in the next checkpoint
-	go n.broadcastExecutionReport(report)
+	// Execution reports are now propagated via Raft - no need for broadcast
+	// Raft will replicate the report to all nodes
 
 	return receipt, nil
+}
+
+func (n *Node) processExecutionReportRaft(report *pb.ExecutionReport) (*pb.Receipt, error) {
+	if report == nil {
+		return nil, fmt.Errorf("report cannot be nil")
+	}
+
+	if report.Timestamp == 0 {
+		report.Timestamp = time.Now().Unix()
+	}
+
+	reportID := n.generateReportID(report)
+
+	// Fast path: if we've already committed this report, return duplicate receipt.
+	n.mu.RLock()
+	if _, exists := n.pendingReports[reportID]; exists {
+		n.mu.RUnlock()
+		return &pb.Receipt{
+			ReportId:    reportID,
+			ValidatorId: n.id,
+			IntentId:    report.IntentId,
+			ReceivedTs:  time.Now().Unix(),
+			Status:      "duplicate",
+		}, nil
+	}
+	n.mu.RUnlock()
+
+	if n.raftConsensus.IsLeader() {
+		// Leader applies report directly through Raft.
+		if err := n.raftConsensus.ApplyExecutionReport(report, n.id); err != nil {
+			return nil, fmt.Errorf("apply execution report via raft: %w", err)
+		}
+	} else {
+		leaderAddr := n.raftConsensus.LeaderAddress()
+		if leaderAddr == "" {
+			return nil, fmt.Errorf("no raft leader available")
+		}
+		return n.forwardReportToLeader(leaderAddr, report)
+	}
+
+	receipt := &pb.Receipt{
+		ReportId:    reportID,
+		ValidatorId: n.id,
+		IntentId:    report.IntentId,
+		ReceivedTs:  time.Now().Unix(),
+		Status:      "accepted",
+	}
+	return receipt, nil
+}
+
+func (n *Node) forwardReportToLeader(addr string, report *pb.ExecutionReport) (*pb.Receipt, error) {
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("dial leader %s: %w", addr, err)
+	}
+	defer conn.Close()
+
+	client := pb.NewValidatorServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := client.SubmitExecutionReport(ctx, report)
+	if err != nil {
+		return nil, fmt.Errorf("forward execution report to leader: %w", err)
+	}
+	return resp, nil
 }
 
 // GetCheckpoint retrieves a checkpoint by epoch
@@ -155,8 +224,8 @@ func (n *Node) HandleProposal(header *pb.CheckpointHeader) error {
 		header.Epoch,
 		n.id)
 
-	// Broadcast signature
-	go n.broadcastSignature(sig)
+	// Signatures are now broadcast via Gossip (handled in handleCommittedCheckpoint)
+	// No legacy NATS broadcast needed
 
 	return nil
 }
@@ -409,11 +478,7 @@ func (n *Node) GetMetrics() *pb.ValidatorMetrics {
 // Helper methods
 
 func (n *Node) generateReportID(report *pb.ExecutionReport) string {
-	h := sha256.New()
-	h.Write([]byte(report.AssignmentId))
-	h.Write([]byte(report.AgentId))
-	h.Write([]byte(fmt.Sprintf("%d", time.Now().Unix())))
-	return hex.EncodeToString(h.Sum(nil))[:16]
+	return fmt.Sprintf("%s:%s:%s:%d", report.IntentId, report.AssignmentId, report.AgentId, report.Timestamp)
 }
 
 func (n *Node) scoreReport(report *pb.ExecutionReport) int32 {
@@ -524,43 +589,7 @@ func (n *Node) verifySignature(sig *pb.Signature) error {
 	return nil
 }
 
-func (n *Node) broadcastSignature(sig *pb.Signature) {
-	if n.broadcaster != nil {
-		if err := n.broadcaster.BroadcastSignature(sig); err != nil {
-			n.logger.Error("Failed to broadcast signature",
-				"error", err,
-				"signer", sig.SignerId)
-		} else {
-			n.logger.Debug("Broadcasted signature", "signer", sig.SignerId)
-		}
-	} else {
-		n.logger.Warn("No broadcaster configured, skipping signature broadcast")
-	}
-}
-
-func (n *Node) broadcastExecutionReport(report *pb.ExecutionReport) {
-	if n.broadcaster != nil {
-		if err := n.broadcaster.BroadcastExecutionReport(report); err != nil {
-			n.logger.Errorf("Failed to broadcast execution report intent_id=%s assignment_id=%s error=%v", report.IntentId, report.AssignmentId, err)
-		} else {
-			n.logger.Infof("Broadcasted execution report to all validators intent_id=%s assignment_id=%s agent_id=%s", report.IntentId, report.AssignmentId, report.AgentId)
-		}
-	} else {
-		n.logger.Warn("No broadcaster configured, skipping execution report broadcast")
-	}
-}
-
-func (n *Node) broadcastFinalized(header *pb.CheckpointHeader) {
-	if n.broadcaster != nil {
-		if err := n.broadcaster.BroadcastFinalized(header); err != nil {
-			n.logger.Errorf("Failed to broadcast finalized checkpoint epoch=%d error=%v", header.Epoch, err)
-		} else {
-			n.logger.Infof("Broadcasted finalized checkpoint epoch=%d signatures=%d", header.Epoch, header.Signatures.SignatureCount)
-		}
-	} else {
-		n.logger.Warn("No broadcaster configured, skipping finalized broadcast")
-	}
-}
+// Legacy NATS broadcast methods removed - now using Raft + Gossip
 
 // HandleFinalized handles a finalized checkpoint broadcast from another validator
 func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {

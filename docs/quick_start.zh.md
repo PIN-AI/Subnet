@@ -5,22 +5,9 @@
 ## 前置要求
 
 - **Go 1.21+** - [安装 Go](https://go.dev/doc/install)
-- **NATS Server** - 用于验证器通信的消息代理
 - **Git** - 用于克隆代码库
 
-### 安装 NATS
-
-```bash
-# macOS
-brew install nats-server
-
-# Linux
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.0/nats-server-v2.10.0-linux-amd64.tar.gz | tar xz
-sudo mv nats-server-v2.10.0-linux-amd64/nats-server /usr/local/bin/
-
-# 启动 NATS
-nats-server &
-```
+**注意**：验证器使用 **Raft 共识**和 **Gossip 协议**进行协调 - 不需要外部消息代理！您可以运行单个验证器用于开发，或多个验证器用于生产。
 
 ## 设置
 
@@ -86,12 +73,14 @@ INTENT_MANAGER_ADDR=0xD04d23775D3B8e028e6104E31eb0F6c07206EB46
 ```
 
 此脚本将：
-- 检查并在需要时启动 NATS
 - 启动 Registry 服务（gRPC: 8091, HTTP: 8101）
 - 启动 Matcher 服务（gRPC: 8090）
-- 启动 Validator 服务（gRPC: 9200）
+- 启动 Validator 服务以**单节点 Raft 模式**（gRPC: 9200）
+- 启动一个测试 agent 用于演示
 - 生成必要的配置文件
 - 保存进程 ID 以便管理
+
+验证器会自动引导为单节点 Raft 集群用于开发。对于生产环境的多验证器设置，请参见[部署指南](subnet_deployment_guide.zh.md)。
 
 日志保存在 `subnet-logs/` 目录。
 
@@ -124,11 +113,10 @@ EOF
 
 ./bin/matcher --config /tmp/matcher-config.yaml > subnet-logs/matcher.log 2>&1 &
 
-# 3. 启动 Validator
+# 3. 启动 Validator（单节点 Raft 模式）
 ./bin/validator \
     -id "validator-main" \
     -grpc 9200 \
-    -nats "nats://127.0.0.1:4222" \
     -subnet-id "$SUBNET_ID" \
     -key "$TEST_PRIVATE_KEY" \
     -rootlayer-endpoint "$ROOTLAYER_GRPC" \
@@ -139,7 +127,20 @@ EOF
     -intent-manager-addr "$INTENT_MANAGER_ADDR" \
     -enable-chain-submit \
     -enable-rootlayer \
+    -validators 1 \
+    -threshold-num 1 \
+    -threshold-denom 1 \
+    -raft-enable \
+    -raft-bootstrap \
+    -raft-bind "127.0.0.1:7400" \
+    -raft-data-dir "./data/raft" \
+    -raft-peers "validator-main:127.0.0.1:7400" \
+    -gossip-enable \
+    -gossip-bind "127.0.0.1" \
+    -gossip-port 7950 \
     > subnet-logs/validator.log 2>&1 &
+
+# 对于多验证器设置，请参见 subnet_deployment_guide.zh.md
 ```
 
 ## 验证服务
@@ -257,19 +258,14 @@ kill $(cat subnet-logs/validator.pid)
 
 ### 服务无法启动
 
-1. **检查 NATS 是否运行**：
-   ```bash
-   ps aux | grep nats-server
-   # 如果未运行：nats-server &
-   ```
-
-2. **检查端口可用性**：
+1. **检查端口可用性**：
    ```bash
    lsof -i :8090  # Matcher
    lsof -i :8091  # Registry gRPC
    lsof -i :8101  # Registry HTTP
-   lsof -i :9200  # Validator
-   lsof -i :4222  # NATS
+   lsof -i :9200  # Validator gRPC
+   lsof -i :7400  # Validator Raft
+   lsof -i :7950  # Validator Gossip
    ```
 
 3. **检查环境变量**：
@@ -303,9 +299,10 @@ kill $(cat subnet-logs/validator.pid)
 
 ### Validator 不处理报告
 
-1. **检查 NATS 连接**：
+1. **检查 Raft 共识**：
    ```bash
-   tail -f subnet-logs/validator.log | grep -i nats
+   tail -f subnet-logs/validator.log | grep -i raft
+   # 查找 "entering leader state" 或 "Became Raft leader"
    ```
 
 2. **验证 validator 已注册**：
@@ -313,9 +310,9 @@ kill $(cat subnet-logs/validator.pid)
    curl http://localhost:8101/validators
    ```
 
-3. **检查共识状态**：
+3. **检查共识和 gossip 状态**：
    ```bash
-   tail -f subnet-logs/validator.log | grep -i consensus
+   tail -f subnet-logs/validator.log | grep -E "consensus|gossip|checkpoint"
    ```
 
 ## 下一步

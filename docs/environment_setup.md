@@ -62,18 +62,7 @@ Used for generating gRPC service definitions.
 - Generate protocol buffer code
 - Compile `.proto` files to Go/Python
 
-### 3. NATS Message Broker
-
-**Version Required**: NATS 2.9.0 or later
-
-Distributed messaging system for validator consensus.
-
-**Why needed**:
-- Validator-to-validator communication
-- Consensus message broadcasting
-- Checkpoint coordination
-
-### 4. Git
+### 3. Git
 
 **Version Required**: Git 2.30.0 or later
 
@@ -91,7 +80,6 @@ Version control system.
 ### For Testing & Development
 
 1. **Docker & Docker Compose**
-   - Quick NATS deployment
    - Containerized testing
    - Version: Docker 20.10+ / Docker Compose 2.0+
 
@@ -148,9 +136,6 @@ brew install protobuf
 # Verify protoc installation
 protoc --version  # Should show libprotoc 3.20.0 or later
 
-# Install NATS server
-brew install nats-server
-
 # Install optional tools
 brew install curl jq git
 
@@ -191,21 +176,6 @@ unzip protoc-24.4-osx-universal_binary.zip -d $HOME/protoc
 export PATH=$PATH:$HOME/protoc/bin
 ```
 
-**NATS**:
-```bash
-# Download from https://github.com/nats-io/nats-server/releases
-curl -OL https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-darwin-arm64.zip
-
-# Extract
-unzip nats-server-v2.10.7-darwin-arm64.zip
-
-# Move to /usr/local/bin
-sudo mv nats-server-v2.10.7-darwin-arm64/nats-server /usr/local/bin/
-
-# Verify
-nats-server --version
-```
-
 ---
 
 ### Linux (Ubuntu/Debian)
@@ -242,15 +212,6 @@ export PATH="$PATH:$HOME/.local/bin"
 # Verify protoc
 protoc --version
 
-# Install NATS server
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-linux-amd64.tar.gz -o nats-server.tar.gz
-tar -xzf nats-server.tar.gz
-sudo mv nats-server-v2.10.7-linux-amd64/nats-server /usr/local/bin/
-rm -rf nats-server*
-
-# Verify NATS
-nats-server --version
-
 # Install Docker (optional)
 sudo apt install -y docker.io docker-compose
 sudo systemctl start docker
@@ -281,11 +242,6 @@ source ~/.bashrc
 
 # Install Protocol Buffers
 sudo yum install -y protobuf-compiler
-
-# Install NATS
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-linux-amd64.tar.gz -o nats-server.tar.gz
-tar -xzf nats-server.tar.gz
-sudo mv nats-server-v2.10.7-linux-amd64/nats-server /usr/local/bin/
 
 # Install Docker (Fedora/CentOS 8+)
 sudo dnf install -y docker docker-compose
@@ -379,23 +335,7 @@ ls -lh bin/
 
 ## Configuration
 
-### 1. Start NATS Server
-
-```bash
-# Start NATS with default configuration
-nats-server
-
-# Or start in background
-nats-server -D
-
-# Or use Docker
-docker run -d --name nats -p 4222:4222 nats:latest
-
-# Verify NATS is running
-curl http://localhost:8222/varz  # NATS monitoring endpoint
-```
-
-### 2. Obtain Testnet ETH
+### 1. Obtain Testnet ETH
 
 For testing on Base Sepolia:
 
@@ -420,7 +360,7 @@ For testing on Base Sepolia:
    chmod 600 .env
    ```
 
-### 3. Configure RootLayer Connection
+### 2. Configure RootLayer Connection
 
 ```bash
 # Set RootLayer endpoints (example - adjust for your deployment)
@@ -432,7 +372,7 @@ echo "ROOTLAYER_GRPC=3.17.208.238:9001" >> .env
 echo "ROOTLAYER_HTTP=http://3.17.208.238:8081" >> .env
 ```
 
-### 4. Create Configuration File
+### 3. Create Configuration File
 
 ```bash
 # Copy example configuration
@@ -453,7 +393,6 @@ identity:
   subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
 
 network:
-  nats_url: "nats://127.0.0.1:4222"
   matcher_grpc_port: ":8090"
 
 rootlayer:
@@ -485,24 +424,19 @@ go env GOPATH
 # 2. Verify protoc works
 protoc --version
 
-# 3. Verify NATS is accessible
-nc -zv localhost 4222
-# or
-telnet localhost 4222
-
-# 4. Verify binaries run
+# 3. Verify binaries run
 ./bin/matcher --help
 ./bin/validator --help
 
-# 5. Run unit tests
+# 4. Run unit tests
 make test
 # or
 go test ./...
 
-# 6. Build protocol buffers
+# 5. Build protocol buffers
 make proto
 
-# 7. Check Go module status
+# 6. Check Go module status
 go mod verify
 go mod tidy
 ```
@@ -563,52 +497,6 @@ go mod verify
 
 # Update dependencies
 go mod tidy
-```
-
----
-
-### NATS Issues
-
-**Problem**: `connection refused` to NATS
-
-**Solution**:
-```bash
-# Check if NATS is running
-ps aux | grep nats-server
-
-# Check port 4222
-lsof -i :4222
-# or
-netstat -an | grep 4222
-
-# Start NATS if not running
-nats-server -D
-
-# Or use Docker
-docker run -d --name nats -p 4222:4222 nats:latest
-
-# Check NATS logs
-docker logs nats
-```
-
----
-
-**Problem**: NATS connection timeout
-
-**Solution**:
-```bash
-# Test connection
-nc -zv localhost 4222
-
-# Check firewall
-sudo ufw status  # Ubuntu/Debian
-sudo firewall-cmd --list-all  # CentOS/RHEL
-
-# Allow NATS port
-sudo ufw allow 4222
-# or
-sudo firewall-cmd --add-port=4222/tcp --permanent
-sudo firewall-cmd --reload
 ```
 
 ---
@@ -734,9 +622,10 @@ docker ps
 **Solution**:
 ```bash
 # Find what's using the port
-lsof -i :4222  # NATS
 lsof -i :8090  # Matcher
 lsof -i :9200  # Validator
+lsof -i :7400  # Validator Raft
+lsof -i :7950  # Validator Gossip
 
 # Kill the process
 kill -9 <PID>
@@ -870,15 +759,7 @@ git commit -m "feat: improve matcher bidding logic"
    export GOGC=50  # More aggressive GC
    ```
 
-3. **NATS tuning**:
-   ```bash
-   # Create nats-server.conf
-   max_connections: 10000
-   max_payload: 10MB
-   write_deadline: "10s"
-   ```
-
-4. **Monitor resources**:
+3. **Monitor resources**:
    ```bash
    # Install monitoring tools
    sudo apt install htop iotop nethogs

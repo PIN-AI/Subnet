@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/logging"
 	pb "subnet/proto/subnet"
 )
