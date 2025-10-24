@@ -1,6 +1,6 @@
 #!/bin/bash
 # PinAI Subnet Services Startup Script
-# 一键启动所有 Subnet 服务
+# One-click launch for all Subnet services
 
 set -e
 
@@ -77,6 +77,21 @@ echo "   RootLayer gRPC: $ROOTLAYER_GRPC"
 echo "   RootLayer HTTP: $ROOTLAYER_HTTP"
 echo "   Chain Submit: $ENABLE_CHAIN_SUBMIT"
 echo ""
+
+if [ "${SKIP_REGISTRATION_PROMPT:-}" != "1" ]; then
+    print_warning "Ensure the target subnet exists on-chain and participants (matcher/validator/agent) have been registered."
+    print_warning "Make sure ./scripts/create-subnet.sh and ./scripts/register.sh have been run to finish subnet setup."
+    echo ""
+    read -r -p "On-chain setup complete? Continue starting services? [y/N]: " CONTINUE_START
+    case "$CONTINUE_START" in
+        [yY]|[yY][eE][sS])
+            ;;
+        *)
+            print_error "Startup cancelled. Complete subnet creation and participant registration first."
+            exit 1
+            ;;
+    esac
+fi
 
 # Clean up old processes
 print_info "Cleaning up old processes..."

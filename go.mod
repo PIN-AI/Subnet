@@ -6,7 +6,7 @@ toolchain go1.24.7
 
 require (
 	github.com/PIN-AI/intent-protocol-contract-sdk v0.0.0-20251022030721-5234a59c532a
-	github.com/PIN-AI/subnet-sdk/go v0.0.0-20251014141001-d720bc79e3ee
+	github.com/PIN-AI/subnet-sdk/go v0.0.0-20251016080933-ad554ea24b90
 	github.com/ethereum/go-ethereum v1.16.4
 	github.com/hashicorp/golang-lru/v2 v2.0.7
 	github.com/nats-io/nats.go v1.45.0
