@@ -22,3 +22,5 @@ e2e-test-logs/
 validation-consensus-test-logs/
 simple-consensus-logs/
 subnet-logs/
+# Notion 文档（本地使用，不提交）
+NOTION_DOCUMENTATION_GUIDE.md
