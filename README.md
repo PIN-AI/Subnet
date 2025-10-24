@@ -1,22 +1,41 @@
-# Subnet (Go) MVP
+# PinAI Subnet Template
 
-Go implementation of a PinAI Subnet that coordinates matcher, validator, and registry services. The matcher distributes intents pulled from the RootLayer, agents execute work using the published SDKs, and validators verify execution reports before assembling threshold validation bundles.
+**Production-ready Subnet template** for building custom intent execution networks on PinAI protocol. This implementation coordinates matcher, validator, and registry services with built-in batch submission support for high-throughput operations.
+
+## 🚀 What is This?
+
+This is a **template** for creating your own Subnet. Fork this repository to:
+- Build specialized intent execution networks (e.g., image processing, data computation, AI inference)
+- Customize matching strategies for your use case
+- Implement domain-specific validation logic
+- Deploy production-grade infrastructure
+
+## ✨ Key Features
+
+- **Batch Operations**: High-performance batch submission for ValidationBundles and Assignments
+- **Flexible Matching**: Pluggable matching strategies (price-based, reputation-based, geo-location, etc.)
+- **Threshold Consensus**: Byzantine fault-tolerant validator consensus with configurable thresholds
+- **Dual Submission**: Simultaneous blockchain and RootLayer submission for redundancy
+- **Production Ready**: Docker support, comprehensive monitoring, and production deployment guides
 
 ## 📚 Documentation
 
-- **[Subnet Deployment Guide](docs/SUBNET_DEPLOYMENT_GUIDE.md)** - Complete deployment and customization tutorial
+### Getting Started
+- **[Quick Start Guide](docs/quick_start.md)** - Get your Subnet running in 5 minutes
+- **[E2E Test Guide](docs/e2e_test_guide.md)** - End-to-end testing workflow
+
+### Deployment & Customization
+- **[Subnet Deployment Guide](docs/subnet_deployment_guide.md)** - Complete deployment and customization tutorial
   - Quick deployment with default configuration
   - Custom matcher strategy development
   - Custom validator verification logic
   - Custom agent executor development
   - Production deployment guide
 
-- **[Custom Validation Guide](docs/CUSTOM_VALIDATION_GUIDE.md)** - Detailed guide for implementing custom validation logic
-  - Result validation (business logic)
-  - Evidence verification (TEE, ZK proofs, etc.)
-  - Integration examples
-
-- **[Architecture Overview](docs/ARCHITECTURE_OVERVIEW.md)** - Full component walkthrough
+### Architecture & Testing
+- **[Architecture Overview](docs/architecture.md)** - Full component walkthrough and system design
+- **[Batch Operations Testing](docs/batch_test.md)** - Testing batch submission features (ValidationBundles, Assignments)
+- **[Scripts Guide](docs/scripts_guide.md)** - Development and deployment scripts reference
 
 ## Layout
 

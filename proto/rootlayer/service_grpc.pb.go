@@ -4,7 +4,7 @@
 // - protoc             v4.25.3
 // source: rootlayer/service.proto
 
-package rootpb
+package rootlayerv1
 
 import (
 	context "context"
@@ -20,12 +20,15 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	IntentPoolService_SubmitIntent_FullMethodName           = "/rootlayer.v1.IntentPoolService/SubmitIntent"
-	IntentPoolService_GetIntents_FullMethodName             = "/rootlayer.v1.IntentPoolService/GetIntents"
-	IntentPoolService_GetIntent_FullMethodName              = "/rootlayer.v1.IntentPoolService/GetIntent"
-	IntentPoolService_PostAssignment_FullMethodName         = "/rootlayer.v1.IntentPoolService/PostAssignment"
-	IntentPoolService_PostAssignments_FullMethodName        = "/rootlayer.v1.IntentPoolService/PostAssignments"
-	IntentPoolService_SubmitValidationBundle_FullMethodName = "/rootlayer.v1.IntentPoolService/SubmitValidationBundle"
+	IntentPoolService_SubmitIntentBatch_FullMethodName           = "/rootlayer.v1.IntentPoolService/SubmitIntentBatch"
+	IntentPoolService_SubmitIntent_FullMethodName                = "/rootlayer.v1.IntentPoolService/SubmitIntent"
+	IntentPoolService_GetIntents_FullMethodName                  = "/rootlayer.v1.IntentPoolService/GetIntents"
+	IntentPoolService_GetIntent_FullMethodName                   = "/rootlayer.v1.IntentPoolService/GetIntent"
+	IntentPoolService_PostAssignment_FullMethodName              = "/rootlayer.v1.IntentPoolService/PostAssignment"
+	IntentPoolService_PostAssignmentBatch_FullMethodName         = "/rootlayer.v1.IntentPoolService/PostAssignmentBatch"
+	IntentPoolService_PostAssignments_FullMethodName             = "/rootlayer.v1.IntentPoolService/PostAssignments"
+	IntentPoolService_SubmitValidationBundle_FullMethodName      = "/rootlayer.v1.IntentPoolService/SubmitValidationBundle"
+	IntentPoolService_SubmitValidationBundleBatch_FullMethodName = "/rootlayer.v1.IntentPoolService/SubmitValidationBundleBatch"
 )
 
 // IntentPoolServiceClient is the client API for IntentPoolService service.
@@ -35,6 +38,8 @@ const (
 // IntentPoolService exposes REST endpoints for intent submission,
 // querying, and asynchronous callbacks from subnets.
 type IntentPoolServiceClient interface {
+	// Submit a batch of intents.
+	SubmitIntentBatch(ctx context.Context, in *SubmitIntentBatchRequest, opts ...grpc.CallOption) (*SubmitIntentBatchResponse, error)
 	// Submit a new intent into the RootLayer mempool.
 	//
 	// Body is a SubmitIntentRequest. The signature proves ownership of
@@ -69,40 +74,44 @@ type IntentPoolServiceClient interface {
 	// Example request body:
 	//
 	//	{
-	//	  "assignmentId": "84DDC59E-4048-41C9-A620-FF43C7BE08FA",
-	//	  "intentId": "0xb7c98798a6ec454427a60cff94b54276fe82396f714c02499a40c8f3f6325f8d",
-	//	  "agentId": "6CF637B0-8D48-489E-B899-467D99D842FF",
-	//	  "bidId": "0F6E6E64-EF8F-4A69-90BE-A9B0490CEF2E",
-	//	  "status": 1,
-	//	  "matcherId": "ACA2F35F-97E2-4D69-B4BD-771EDACD1DEB",
-	//	  "signature": "tempor"
+	//	  "assignmentId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // bytes32 hex
+	//	  "intentId": "0xb7c98798a6ec454427a60cff94b54276fe82396f714c02499a40c8f3f6325f8d", // bytes32 hex
+	//	  "agentId": "0x9290085Cd66bD1A3C7D277EF7DBcbD2e98457b6f",                         // address (EIP-55 tolerated)
+	//	  "bidId": "0x0000000000000000000000000000000000000000000000000000000000000000",   // bytes32 hex
+	//	  "status": 1, // 1=ACTIVE, 2=FAILED
+	//	  "matcherId": "0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266",                          // address
+	//	  "signature": "0x..65-bytes-signature.."                                                // EIP-191 signature
 	//	}
 	PostAssignment(ctx context.Context, in *Assignment, opts ...grpc.CallOption) (*Ack, error)
 	// Post a batch of assignments from a subnet matcher.
+	PostAssignmentBatch(ctx context.Context, in *AssignmentBatch, opts ...grpc.CallOption) (*Ack, error)
+	// Deprecated alias for backward compatibility.
 	PostAssignments(ctx context.Context, in *AssignmentBatch, opts ...grpc.CallOption) (*Ack, error)
 	// Submit an aggregated ValidationBundle from subnet validators.
 	//
 	// Example request body:
 	//
 	//	{
-	//	  "subnetId": "0x0000000000000000000000000000000000000000000000000000000000000001",
-	//	  "intentId": "0xb7c98798a6ec454427a60cff94b54276fe82396f714c02499a40c8f3f6325f8d",
-	//	  "assignmentId": "84DDC59E-4048-41C9-A620-FF43C7BE08FA",
-	//	  "agentId": "6CF637B0-8D48-489E-B899-467D99D842FF",
+	//	  "subnetId": "0x0000000000000000000000000000000000000000000000000000000000000001",  // bytes32 hex
+	//	  "intentId": "0xb7c98798a6ec454427a60cff94b54276fe82396f714c02499a40c8f3f6325f8d",  // bytes32 hex
+	//	  "assignmentId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // bytes32 hex
+	//	  "agentId": "0x9290085Cd66bD1A3C7D277EF7DBcbD2e98457b6f",                           // address
 	//	  "rootHeight": "1",
-	//	  "rootHash": "0x01",
+	//	  "rootHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", // bytes32 hex
 	//	  "executedAt": "1",
-	//	  "resultHash": "0x01",
-	//	  "proofHash": "0x01",
+	//	  "resultHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", // bytes32 hex
+	//	  "proofHash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",  // bytes32 hex
 	//	  "signatures": [
-	//	    { "validatorId": "75", "signature": "0x01", "msgHash": "0x01", "pubkey": "0x01" }
+	//	    { "validator": "0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266", "signature": "0x..65-bytes.." }
 	//	  ],
 	//	  "signerBitmap": "0x01",
 	//	  "totalWeight": "1",
-	//	  "aggregatorId": "46",
+	//	  "aggregatorId": "0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266",
 	//	  "completedAt": "1822275330"
 	//	}
 	SubmitValidationBundle(ctx context.Context, in *ValidationBundle, opts ...grpc.CallOption) (*ValidationAck, error)
+	// Submit a batch of validation bundles.
+	SubmitValidationBundleBatch(ctx context.Context, in *ValidationBundleBatchRequest, opts ...grpc.CallOption) (*ValidationBundleBatchResponse, error)
 }
 
 type intentPoolServiceClient struct {
@@ -111,6 +120,16 @@ type intentPoolServiceClient struct {
 
 func NewIntentPoolServiceClient(cc grpc.ClientConnInterface) IntentPoolServiceClient {
 	return &intentPoolServiceClient{cc}
+}
+
+func (c *intentPoolServiceClient) SubmitIntentBatch(ctx context.Context, in *SubmitIntentBatchRequest, opts ...grpc.CallOption) (*SubmitIntentBatchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SubmitIntentBatchResponse)
+	err := c.cc.Invoke(ctx, IntentPoolService_SubmitIntentBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *intentPoolServiceClient) SubmitIntent(ctx context.Context, in *SubmitIntentRequest, opts ...grpc.CallOption) (*SubmitIntentResponse, error) {
@@ -153,6 +172,16 @@ func (c *intentPoolServiceClient) PostAssignment(ctx context.Context, in *Assign
 	return out, nil
 }
 
+func (c *intentPoolServiceClient) PostAssignmentBatch(ctx context.Context, in *AssignmentBatch, opts ...grpc.CallOption) (*Ack, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Ack)
+	err := c.cc.Invoke(ctx, IntentPoolService_PostAssignmentBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *intentPoolServiceClient) PostAssignments(ctx context.Context, in *AssignmentBatch, opts ...grpc.CallOption) (*Ack, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Ack)
@@ -173,6 +202,16 @@ func (c *intentPoolServiceClient) SubmitValidationBundle(ctx context.Context, in
 	return out, nil
 }
 
+func (c *intentPoolServiceClient) SubmitValidationBundleBatch(ctx context.Context, in *ValidationBundleBatchRequest, opts ...grpc.CallOption) (*ValidationBundleBatchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ValidationBundleBatchResponse)
+	err := c.cc.Invoke(ctx, IntentPoolService_SubmitValidationBundleBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // IntentPoolServiceServer is the server API for IntentPoolService service.
 // All implementations must embed UnimplementedIntentPoolServiceServer
 // for forward compatibility.
@@ -180,6 +219,8 @@ func (c *intentPoolServiceClient) SubmitValidationBundle(ctx context.Context, in
 // IntentPoolService exposes REST endpoints for intent submission,
 // querying, and asynchronous callbacks from subnets.
 type IntentPoolServiceServer interface {
+	// Submit a batch of intents.
+	SubmitIntentBatch(context.Context, *SubmitIntentBatchRequest) (*SubmitIntentBatchResponse, error)
 	// Submit a new intent into the RootLayer mempool.
 	//
 	// Body is a SubmitIntentRequest. The signature proves ownership of
@@ -214,40 +255,44 @@ type IntentPoolServiceServer interface {
 	// Example request body:
 	//
 	//	{
-	//	  "assignmentId": "84DDC59E-4048-41C9-A620-FF43C7BE08FA",
-	//	  "intentId": "0xb7c98798a6ec454427a60cff94b54276fe82396f714c02499a40c8f3f6325f8d",
-	//	  "agentId": "6CF637B0-8D48-489E-B899-467D99D842FF",
-	//	  "bidId": "0F6E6E64-EF8F-4A69-90BE-A9B0490CEF2E",
-	//	  "status": 1,
-	//	  "matcherId": "ACA2F35F-97E2-4D69-B4BD-771EDACD1DEB",
-	//	  "signature": "tempor"
+	//	  "assignmentId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // bytes32 hex
+	//	  "intentId": "0xb7c98798a6ec454427a60cff94b54276fe82396f714c02499a40c8f3f6325f8d", // bytes32 hex
+	//	  "agentId": "0x9290085Cd66bD1A3C7D277EF7DBcbD2e98457b6f",                         // address (EIP-55 tolerated)
+	//	  "bidId": "0x0000000000000000000000000000000000000000000000000000000000000000",   // bytes32 hex
+	//	  "status": 1, // 1=ACTIVE, 2=FAILED
+	//	  "matcherId": "0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266",                          // address
+	//	  "signature": "0x..65-bytes-signature.."                                                // EIP-191 signature
 	//	}
 	PostAssignment(context.Context, *Assignment) (*Ack, error)
 	// Post a batch of assignments from a subnet matcher.
+	PostAssignmentBatch(context.Context, *AssignmentBatch) (*Ack, error)
+	// Deprecated alias for backward compatibility.
 	PostAssignments(context.Context, *AssignmentBatch) (*Ack, error)
 	// Submit an aggregated ValidationBundle from subnet validators.
 	//
 	// Example request body:
 	//
 	//	{
-	//	  "subnetId": "0x0000000000000000000000000000000000000000000000000000000000000001",
-	//	  "intentId": "0xb7c98798a6ec454427a60cff94b54276fe82396f714c02499a40c8f3f6325f8d",
-	//	  "assignmentId": "84DDC59E-4048-41C9-A620-FF43C7BE08FA",
-	//	  "agentId": "6CF637B0-8D48-489E-B899-467D99D842FF",
+	//	  "subnetId": "0x0000000000000000000000000000000000000000000000000000000000000001",  // bytes32 hex
+	//	  "intentId": "0xb7c98798a6ec454427a60cff94b54276fe82396f714c02499a40c8f3f6325f8d",  // bytes32 hex
+	//	  "assignmentId": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", // bytes32 hex
+	//	  "agentId": "0x9290085Cd66bD1A3C7D277EF7DBcbD2e98457b6f",                           // address
 	//	  "rootHeight": "1",
-	//	  "rootHash": "0x01",
+	//	  "rootHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", // bytes32 hex
 	//	  "executedAt": "1",
-	//	  "resultHash": "0x01",
-	//	  "proofHash": "0x01",
+	//	  "resultHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", // bytes32 hex
+	//	  "proofHash": "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",  // bytes32 hex
 	//	  "signatures": [
-	//	    { "validatorId": "75", "signature": "0x01", "msgHash": "0x01", "pubkey": "0x01" }
+	//	    { "validator": "0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266", "signature": "0x..65-bytes.." }
 	//	  ],
 	//	  "signerBitmap": "0x01",
 	//	  "totalWeight": "1",
-	//	  "aggregatorId": "46",
+	//	  "aggregatorId": "0xF39fd6e51aad88F6F4ce6aB8827279cffFb92266",
 	//	  "completedAt": "1822275330"
 	//	}
 	SubmitValidationBundle(context.Context, *ValidationBundle) (*ValidationAck, error)
+	// Submit a batch of validation bundles.
+	SubmitValidationBundleBatch(context.Context, *ValidationBundleBatchRequest) (*ValidationBundleBatchResponse, error)
 	mustEmbedUnimplementedIntentPoolServiceServer()
 }
 
@@ -258,6 +303,9 @@ type IntentPoolServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedIntentPoolServiceServer struct{}
 
+func (UnimplementedIntentPoolServiceServer) SubmitIntentBatch(context.Context, *SubmitIntentBatchRequest) (*SubmitIntentBatchResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitIntentBatch not implemented")
+}
 func (UnimplementedIntentPoolServiceServer) SubmitIntent(context.Context, *SubmitIntentRequest) (*SubmitIntentResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitIntent not implemented")
 }
@@ -270,11 +318,17 @@ func (UnimplementedIntentPoolServiceServer) GetIntent(context.Context, *GetInten
 func (UnimplementedIntentPoolServiceServer) PostAssignment(context.Context, *Assignment) (*Ack, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PostAssignment not implemented")
 }
+func (UnimplementedIntentPoolServiceServer) PostAssignmentBatch(context.Context, *AssignmentBatch) (*Ack, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PostAssignmentBatch not implemented")
+}
 func (UnimplementedIntentPoolServiceServer) PostAssignments(context.Context, *AssignmentBatch) (*Ack, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PostAssignments not implemented")
 }
 func (UnimplementedIntentPoolServiceServer) SubmitValidationBundle(context.Context, *ValidationBundle) (*ValidationAck, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitValidationBundle not implemented")
+}
+func (UnimplementedIntentPoolServiceServer) SubmitValidationBundleBatch(context.Context, *ValidationBundleBatchRequest) (*ValidationBundleBatchResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SubmitValidationBundleBatch not implemented")
 }
 func (UnimplementedIntentPoolServiceServer) mustEmbedUnimplementedIntentPoolServiceServer() {}
 func (UnimplementedIntentPoolServiceServer) testEmbeddedByValue()                           {}
@@ -295,6 +349,24 @@ func RegisterIntentPoolServiceServer(s grpc.ServiceRegistrar, srv IntentPoolServ
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&IntentPoolService_ServiceDesc, srv)
+}
+
+func _IntentPoolService_SubmitIntentBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SubmitIntentBatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IntentPoolServiceServer).SubmitIntentBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IntentPoolService_SubmitIntentBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IntentPoolServiceServer).SubmitIntentBatch(ctx, req.(*SubmitIntentBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _IntentPoolService_SubmitIntent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -369,6 +441,24 @@ func _IntentPoolService_PostAssignment_Handler(srv interface{}, ctx context.Cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IntentPoolService_PostAssignmentBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignmentBatch)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IntentPoolServiceServer).PostAssignmentBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IntentPoolService_PostAssignmentBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IntentPoolServiceServer).PostAssignmentBatch(ctx, req.(*AssignmentBatch))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _IntentPoolService_PostAssignments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AssignmentBatch)
 	if err := dec(in); err != nil {
@@ -405,6 +495,24 @@ func _IntentPoolService_SubmitValidationBundle_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _IntentPoolService_SubmitValidationBundleBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ValidationBundleBatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(IntentPoolServiceServer).SubmitValidationBundleBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: IntentPoolService_SubmitValidationBundleBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(IntentPoolServiceServer).SubmitValidationBundleBatch(ctx, req.(*ValidationBundleBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // IntentPoolService_ServiceDesc is the grpc.ServiceDesc for IntentPoolService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -412,6 +520,10 @@ var IntentPoolService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "rootlayer.v1.IntentPoolService",
 	HandlerType: (*IntentPoolServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SubmitIntentBatch",
+			Handler:    _IntentPoolService_SubmitIntentBatch_Handler,
+		},
 		{
 			MethodName: "SubmitIntent",
 			Handler:    _IntentPoolService_SubmitIntent_Handler,
@@ -429,12 +541,20 @@ var IntentPoolService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _IntentPoolService_PostAssignment_Handler,
 		},
 		{
+			MethodName: "PostAssignmentBatch",
+			Handler:    _IntentPoolService_PostAssignmentBatch_Handler,
+		},
+		{
 			MethodName: "PostAssignments",
 			Handler:    _IntentPoolService_PostAssignments_Handler,
 		},
 		{
 			MethodName: "SubmitValidationBundle",
 			Handler:    _IntentPoolService_SubmitValidationBundle_Handler,
+		},
+		{
+			MethodName: "SubmitValidationBundleBatch",
+			Handler:    _IntentPoolService_SubmitValidationBundleBatch_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

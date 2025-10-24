@@ -4,7 +4,7 @@
 // 	protoc        v4.25.3
 // source: rootlayer/intent.proto
 
-package rootpb
+package rootlayerv1
 
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"

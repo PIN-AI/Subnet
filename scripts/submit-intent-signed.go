@@ -22,16 +22,18 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
+	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
 	sdkcrypto "github.com/PIN-AI/intent-protocol-contract-sdk/sdk/crypto"
 )
 
 func main() {
 	// Command line flags
 	var (
-		rootLayerHTTP = flag.String("rootlayer-http", envOr("ROOTLAYER_HTTP", "http://3.17.208.238:8081/api/v1"), "RootLayer HTTP API endpoint")
-		rpcURL        = flag.String("rpc", envOr("RPC_URL", "https://sepolia.base.org"), "Blockchain RPC URL")
-		privateKey    = flag.String("key", envOr("PRIVATE_KEY", ""), "Private key hex")
-		network       = flag.String("network", envOr("PIN_NETWORK", "base_sepolia"), "Network name")
+		rootLayerHTTP     = flag.String("rootlayer-http", envOr("ROOTLAYER_HTTP", "http://3.17.208.238:8081/api/v1"), "RootLayer HTTP API endpoint")
+		rpcURL            = flag.String("rpc", envOr("RPC_URL", "https://sepolia.base.org"), "Blockchain RPC URL")
+		privateKey        = flag.String("key", envOr("PRIVATE_KEY", ""), "Private key hex")
+		network           = flag.String("network", envOr("PIN_NETWORK", "base_sepolia"), "Network name")
+		intentManagerAddr = flag.String("intent-manager", envOr("INTENT_MANAGER_ADDR", envOr("PIN_BASE_SEPOLIA_INTENT_MANAGER", "")), "IntentManager contract address")
 
 		subnetIDHex   = flag.String("subnet", envOr("SUBNET_ID", "0x0000000000000000000000000000000000000000000000000000000000000002"), "Subnet ID (0x64 hex)")
 		intentType    = flag.String("type", envOr("INTENT_TYPE", "e2e-test"), "Intent type")
@@ -94,13 +96,20 @@ func main() {
 	log.Printf("   Deadline: %s (%d)", time.Unix(deadline.Int64(), 0).Format(time.RFC3339), deadline.Int64())
 
 	// Initialize SDK client for signing
-	// Try WITHOUT specifying IntentManager to use SDK defaults or env vars only
-	client, err := sdk.NewClient(ctx, sdk.Config{
+	sdkConfig := sdk.Config{
 		RPCURL:        *rpcURL,
 		PrivateKeyHex: *privateKey,
 		Network:       *network,
-		// Not specifying Addresses - let SDK use defaults + env vars
-	})
+	}
+
+	// Add IntentManager address if provided
+	if *intentManagerAddr != "" {
+		sdkConfig.Addresses = &addressbook.Addresses{
+			IntentManager: common.HexToAddress(*intentManagerAddr),
+		}
+	}
+
+	client, err := sdk.NewClient(ctx, sdkConfig)
 	if err != nil {
 		log.Fatalf("Failed to init SDK client: %v", err)
 	}

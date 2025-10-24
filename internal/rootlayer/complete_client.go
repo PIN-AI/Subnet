@@ -11,10 +11,10 @@ import (
 	"google.golang.org/grpc/keepalive"
 
 	rootpb "rootlayer/proto"
-	pb "subnet/proto/subnet"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/types"
+	pb "subnet/proto/subnet"
 )
 
 // CompleteClient provides complete RootLayer integration
@@ -77,8 +77,8 @@ func (c *CompleteClient) Connect() error {
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                60 * time.Second,  // 增加到60秒，降低ping频率
-			Timeout:             20 * time.Second,  // 增加超时时间
+			Time:                60 * time.Second, // 增加到60秒，降低ping频率
+			Timeout:             20 * time.Second, // 增加超时时间
 			PermitWithoutStream: false,            // 没有stream时不发ping
 		}),
 	}
@@ -157,6 +157,47 @@ func (c *CompleteClient) SubmitValidationBundle(ctx context.Context, bundle *roo
 	return nil
 }
 
+// SubmitValidationBundleBatch submits multiple validation bundles to RootLayer in a single call
+func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, bundles []*rootpb.ValidationBundle, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error) {
+	c.mu.RLock()
+	client := c.intentPoolClient
+	c.mu.RUnlock()
+
+	if client == nil {
+		return nil, fmt.Errorf("not connected to RootLayer")
+	}
+
+	if len(bundles) == 0 {
+		return nil, fmt.Errorf("no validation bundles provided for batch submission")
+	}
+
+	req := &rootpb.ValidationBundleBatchRequest{
+		Bundles:   bundles,
+		BatchId:   batchID,
+		PartialOk: &partialOk,
+	}
+
+	resp, err := client.SubmitValidationBundleBatch(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to submit validation bundle batch: %w", err)
+	}
+
+	c.logger.Infof("Validation bundle batch submitted: batch_id=%s total=%d success=%d failed=%d",
+		batchID, len(bundles), resp.Success, resp.Failed)
+
+	// Log individual failures if any
+	if resp.Failed > 0 {
+		for i, result := range resp.Results {
+			if !result.Ok {
+				c.logger.Warnf("Validation bundle %d failed: %s (intent_id=%s)",
+					i, result.Msg, bundles[i].IntentId)
+			}
+		}
+	}
+
+	return resp, nil
+}
+
 // buildValidationBundle creates a validation bundle from execution reports
 func (c *CompleteClient) buildValidationBundle(reports []*pb.ExecutionReport, checkpoint *types.CheckpointHeader) *rootpb.ValidationBundle {
 	if len(reports) == 0 {
@@ -187,7 +228,7 @@ func (c *CompleteClient) buildValidationBundle(reports []*pb.ExecutionReport, ch
 
 	// Build the bundle
 	bundle := &rootpb.ValidationBundle{
-		SubnetId:     c.cfg.SubnetID,  // Field is SubnetId not SubnetID
+		SubnetId:     c.cfg.SubnetID, // Field is SubnetId not SubnetID
 		IntentId:     primaryReport.IntentId,
 		AssignmentId: primaryReport.AssignmentId,
 		AgentId:      primaryReport.AgentId,
@@ -241,7 +282,7 @@ func (c *CompleteClient) buildValidationBundleForIntent(reports []*pb.ExecutionR
 
 	// Validate metadata
 	if intentID == "" || assignmentID == "" || agentID == "" {
-		c.logger.Errorf("⚠️ ValidationBundle construction failed: missing metadata intent_id=%s assignment_id=%s agent_id=%s",
+		c.logger.Errorf("ValidationBundle construction failed: missing metadata intent_id=%s assignment_id=%s agent_id=%s",
 			intentID, assignmentID, agentID)
 		return nil
 	}
@@ -283,7 +324,7 @@ func (c *CompleteClient) buildValidationBundleForIntent(reports []*pb.ExecutionR
 		CompletedAt:  time.Now().Unix(),
 	}
 
-	c.logger.Infof("✅ ValidationBundle constructed for Intent: intent_id=%s assignment_id=%s agent_id=%s signatures=%d",
+	c.logger.Infof("ValidationBundle constructed for Intent: intent_id=%s assignment_id=%s agent_id=%s signatures=%d",
 		intentID, assignmentID, agentID, len(signatures))
 
 	return bundle
@@ -291,8 +332,8 @@ func (c *CompleteClient) buildValidationBundleForIntent(reports []*pb.ExecutionR
 
 // ===== Intent Management Methods =====
 
-// GetPendingIntents retrieves pending intents
-func (c *CompleteClient) GetPendingIntents(ctx context.Context) ([]*rootpb.Intent, error) {
+// SubmitIntentBatch submits multiple intents to RootLayer in a single call
+func (c *CompleteClient) SubmitIntentBatch(ctx context.Context, intents []*rootpb.SubmitIntentRequest, batchID string, partialOk, treatExistsAsOk bool) (*rootpb.SubmitIntentBatchResponse, error) {
 	c.mu.RLock()
 	client := c.intentPoolClient
 	c.mu.RUnlock()
@@ -301,8 +342,45 @@ func (c *CompleteClient) GetPendingIntents(ctx context.Context) ([]*rootpb.Inten
 		return nil, fmt.Errorf("not connected to RootLayer")
 	}
 
+	if len(intents) == 0 {
+		return nil, fmt.Errorf("no intents provided for batch submission")
+	}
+
+	req := &rootpb.SubmitIntentBatchRequest{
+		Items:           intents,
+		BatchId:         batchID,
+		PartialOk:       &partialOk,
+		TreatExistsAsOk: &treatExistsAsOk,
+	}
+
+	resp, err := client.SubmitIntentBatch(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to submit intent batch: %w", err)
+	}
+
+	c.logger.Infof("Intent batch submitted: batch_id=%s total=%d success=%d failed=%d",
+		batchID, len(intents), resp.Success, resp.Failed)
+
+	return resp, nil
+}
+
+// GetPendingIntents retrieves pending intents (implements Client interface)
+func (c *CompleteClient) GetPendingIntents(ctx context.Context, subnetID string) ([]*rootpb.Intent, error) {
+	c.mu.RLock()
+	client := c.intentPoolClient
+	c.mu.RUnlock()
+
+	if client == nil {
+		return nil, fmt.Errorf("not connected to RootLayer")
+	}
+
+	// Use provided subnetID if given, otherwise use configured subnetID
+	if subnetID == "" {
+		subnetID = c.cfg.SubnetID
+	}
+
 	req := &rootpb.GetIntentsRequest{
-		SubnetId: c.cfg.SubnetID,
+		SubnetId: subnetID,
 		Status:   "PENDING",
 		Page:     1,
 		PageSize: 100,
@@ -314,6 +392,56 @@ func (c *CompleteClient) GetPendingIntents(ctx context.Context) ([]*rootpb.Inten
 	}
 
 	return resp.Intents, nil
+}
+
+// StreamIntents subscribes to real-time intent updates (implements Client interface)
+func (c *CompleteClient) StreamIntents(ctx context.Context, subnetID string) (<-chan *rootpb.Intent, error) {
+	c.mu.RLock()
+	client := c.subscriptionClient
+	c.mu.RUnlock()
+
+	if client == nil {
+		return nil, fmt.Errorf("not connected to RootLayer")
+	}
+
+	// Use provided subnetID if given, otherwise use configured subnetID
+	if subnetID == "" {
+		subnetID = c.cfg.SubnetID
+	}
+
+	req := &rootpb.SubscribeIntentsRequest{
+		SubnetId:     subnetID,
+		StatusFilter: []rootpb.IntentStatus{rootpb.IntentStatus_INTENT_STATUS_PENDING},
+	}
+
+	stream, err := client.SubscribeIntents(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to subscribe to intents: %w", err)
+	}
+
+	intentChan := make(chan *rootpb.Intent, 10)
+
+	go func() {
+		defer close(intentChan)
+		for {
+			event, err := stream.Recv()
+			if err != nil {
+				c.logger.Errorf("Intent stream error: %v", err)
+				return
+			}
+
+			// Extract intent from event
+			if event.Intent != nil {
+				select {
+				case intentChan <- event.Intent:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+
+	return intentChan, nil
 }
 
 // ===== Assignment Management Methods =====
@@ -349,21 +477,83 @@ func (c *CompleteClient) SubmitAssignment(ctx context.Context, assignment *rootp
 	return nil
 }
 
-// SubmitMatchingResult submits a matching result
-func (c *CompleteClient) SubmitMatchingResult(ctx context.Context, intentID string, winningBid *pb.Bid) error {
-	// Convert to Assignment
-	assignment := &rootpb.Assignment{
-		AssignmentId: fmt.Sprintf("match-%s-%d", intentID, time.Now().Unix()),
-		IntentId:    intentID,
-		AgentId:     winningBid.AgentId,
-		BidId:       winningBid.BidId,
-		Status:      rootpb.AssignmentStatus_ASSIGNMENT_ACTIVE,
-		MatcherId:   c.cfg.MatcherID,
-		Signature:   nil,
+// GetAssignment retrieves an assignment by ID (implements Client interface)
+func (c *CompleteClient) GetAssignment(ctx context.Context, assignmentID string) (*rootpb.Assignment, error) {
+	// Note: The proto doesn't have a direct GetAssignment method yet
+	// This is a placeholder implementation
+	// In production, this should be implemented on the RootLayer side
+
+	c.mu.RLock()
+	client := c.intentPoolClient
+	c.mu.RUnlock()
+
+	if client == nil {
+		return nil, fmt.Errorf("not connected to RootLayer")
 	}
 
-	// Sign if signer available
-	if c.signer != nil {
+	// For now, return a mock assignment since there's no direct method
+	// This should be replaced when RootLayer adds GetAssignment method
+	return &rootpb.Assignment{
+		AssignmentId: assignmentID,
+		Status:       rootpb.AssignmentStatus_ASSIGNMENT_ACTIVE,
+	}, nil
+}
+
+// PostAssignmentBatch submits multiple assignments to RootLayer in a single call
+func (c *CompleteClient) PostAssignmentBatch(ctx context.Context, assignments []*rootpb.Assignment) error {
+	c.mu.RLock()
+	client := c.intentPoolClient
+	c.mu.RUnlock()
+
+	if client == nil {
+		return fmt.Errorf("not connected to RootLayer")
+	}
+
+	if len(assignments) == 0 {
+		return fmt.Errorf("no assignments provided for batch submission")
+	}
+
+	// Ensure all assignments have valid status
+	for _, assignment := range assignments {
+		if assignment.Status == rootpb.AssignmentStatus_ASSIGNMENT_STATUS_UNSPECIFIED {
+			assignment.Status = rootpb.AssignmentStatus_ASSIGNMENT_ACTIVE
+		} else if assignment.Status != rootpb.AssignmentStatus_ASSIGNMENT_FAILED {
+			assignment.Status = rootpb.AssignmentStatus_ASSIGNMENT_ACTIVE
+		}
+	}
+
+	batch := &rootpb.AssignmentBatch{
+		Assignments: assignments,
+	}
+
+	resp, err := client.PostAssignmentBatch(ctx, batch)
+	if err != nil {
+		return fmt.Errorf("failed to submit assignment batch: %w", err)
+	}
+
+	if !resp.Ok {
+		return fmt.Errorf("assignment batch rejected: %s", resp.Msg)
+	}
+
+	c.logger.Infof("Assignment batch submitted: count=%d", len(assignments))
+	return nil
+}
+
+// SubmitMatchingResult submits a matching result (implements Client interface)
+func (c *CompleteClient) SubmitMatchingResult(ctx context.Context, result *MatchingResult) error {
+	// Convert to Assignment
+	assignment := &rootpb.Assignment{
+		AssignmentId: fmt.Sprintf("match-%s-%d", result.IntentID, time.Now().Unix()),
+		IntentId:     result.IntentID,
+		AgentId:      result.WinningAgentID,
+		BidId:        result.WinningBidID,
+		Status:       rootpb.AssignmentStatus_ASSIGNMENT_ACTIVE,
+		MatcherId:    result.MatcherID,
+		Signature:    result.Signature,
+	}
+
+	// Sign if signer available and no signature provided
+	if c.signer != nil && len(result.Signature) == 0 {
 		canonical := fmt.Sprintf("assignment:%s:%s:%s:%s",
 			assignment.AssignmentId,
 			assignment.IntentId,

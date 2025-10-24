@@ -56,7 +56,12 @@ func NewMatchingEngine(cfg *Config, logger logging.Logger) (*MatchingEngine, err
 
 // Match runs the matching algorithm on a bid snapshot
 func (e *MatchingEngine) Match(snapshot *IntentBidSnapshot) *types.MatchingResult {
-	if snapshot == nil || len(snapshot.Bids) == 0 {
+	if snapshot == nil {
+		e.logger.Warn("Matching skipped: received nil snapshot")
+		return nil
+	}
+
+	if len(snapshot.Bids) == 0 {
 		e.logger.Warnf("No bids to match for intent %s", snapshot.IntentID)
 		return nil
 	}
