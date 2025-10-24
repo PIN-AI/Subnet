@@ -331,7 +331,7 @@ kill $(cat subnet-logs/validator.pid)
 
 ## Next Steps
 
-- Read the [Architecture Overview](ARCHITECTURE_OVERVIEW.md) to understand the system design
+- Read the [Architecture Overview](architecture.md) to understand the system design
 - See [Production Deployment](production_deployment.md) for production setup
 - Explore [Testing Guide](testing_guide.md) for comprehensive testing
 - Review [API Documentation](api_reference.md) for integration
