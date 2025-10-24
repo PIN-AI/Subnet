@@ -817,7 +817,7 @@ export CHAIN_RPC_URL="https://sepolia.base.org"
 4. **阅读文档**:
    - [子网部署指南](./subnet_deployment_guide.zh.md)
    - [脚本指南](./scripts_guide.zh.md)
-   - [架构概述](./ARCHITECTURE_OVERVIEW.md)
+   - [架构概述](./architecture.md)
 
 5. **加入社区**:
    - GitHub: https://github.com/PIN-AI/Subnet

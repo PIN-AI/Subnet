@@ -751,7 +751,7 @@ echo $PARAMS_JSON | jq .
 
 - **子网部署指南**: `docs/subnet_deployment_guide.md`
 - **注册指南**: `scripts/REGISTRATION_GUIDE.md`
-- **架构概述**: `docs/ARCHITECTURE_OVERVIEW.md`
+- **架构概述**: `docs/architecture.md`
 - **API 文档**: 见 `proto/` 中的 proto 定义
 
 ---

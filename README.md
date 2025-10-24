@@ -47,7 +47,7 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 - `internal/` – shared packages (matcher, validator, consensus FSM, rootlayer client, storage, grpc interceptors, logging, metrics, messaging, types, crypto)
 - `proto/` – generated protobufs for subnet and rootlayer APIs (authoritative definitions in `../pin_protocol/proto`)
 - `config/` – sample validator configuration (`config.yaml`)
-- `docs/` – curated documentation (`ARCHITECTURE_OVERVIEW.md`, `jetstream_evaluation.md`)
+- `docs/` – curated documentation (`architecture.md`, `jetstream_evaluation.md`)
 
 ## Build & Test
 

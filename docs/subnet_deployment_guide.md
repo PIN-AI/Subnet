@@ -724,7 +724,7 @@ tail -f logs/validator-1.log | grep "ValidationBundle"
 
 ## Next Steps
 
-1. **Read Architecture Docs** - `docs/ARCHITECTURE_OVERVIEW.md`
+1. **Read Architecture Docs** - `docs/architecture.md`
 2. **Review API Docs** - `docs/API_REFERENCE.md`
 3. **Join Community** - [Discord](https://discord.gg/pinai) / [GitHub Discussions](https://github.com/PIN-AI/protocol/discussions)
 4. **Report Issues** - [GitHub Issues](https://github.com/PIN-AI/protocol/issues)

@@ -331,7 +331,7 @@ kill $(cat subnet-logs/validator.pid)
 
 ## 下一步
 
-- 阅读[架构概览](ARCHITECTURE_OVERVIEW.md)了解系统设计
+- 阅读[架构概览](architecture.md)了解系统设计
 - 参考[生产环境部署](production_deployment.zh.md)了解生产设置
 - 探索[测试指南](testing_guide.zh.md)了解全面测试
 - 查看[API 文档](api_reference.zh.md)了解集成
