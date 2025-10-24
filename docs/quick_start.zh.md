@@ -69,8 +69,11 @@ ENABLE_CHAIN_SUBMIT=true
 CHAIN_RPC_URL=https://sepolia.base.org
 CHAIN_NETWORK=base_sepolia
 
-# 测试合约地址（Base Sepolia）
-INTENT_MANAGER_ADDR=0xD04d23775D3B8e028e6104E31eb0F6c07206EB46
+# Base Sepolia 合约地址
+PIN_BASE_SEPOLIA_INTENT_MANAGER=0xD04d23775D3B8e028e6104E31eb0F6c07206EB46
+PIN_BASE_SEPOLIA_SUBNET_FACTORY=0x493c5B1c7Ee9eDe75bf2e57e5250E695F929A796
+PIN_BASE_SEPOLIA_STAKING_MANAGER=0xAc11AE66c7831A70Bea940b0AE16c967f940cB65
+PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER=0xe947c9C4183D583fB2E500aD05B105Fa01abE57e
 ```
 
 **生产环境：**
@@ -78,12 +81,20 @@ INTENT_MANAGER_ADDR=0xD04d23775D3B8e028e6104E31eb0F6c07206EB46
 
 ## 启动服务
 
+### 启动前检查
+
+在启动运行时之前，请先确认链上前置条件已经完成：
+- 已创建或选择目标子网（例如运行 `./scripts/create-subnet.sh`）。
+- 已使用 `./scripts/register.sh` 为该子网上的 matcher/validator/agent 完成本地地址注册；否则这些服务的链上交易会失败。
+
 ### 方式一：一键启动（推荐）
 
 ```bash
 # 使用一个命令启动所有服务
 ./start-subnet.sh
 ```
+
+脚本会提示您确认子网已创建且参与者已注册。如在自动化场景需要跳过，可设置 `SKIP_REGISTRATION_PROMPT=1`。
 
 此脚本将：
 - 检查并在需要时启动 NATS
@@ -118,7 +129,7 @@ network:
 enable_chain_submit: true
 chain_rpc_url: "$CHAIN_RPC_URL"
 chain_network: "$CHAIN_NETWORK"
-intent_manager_addr: "$INTENT_MANAGER_ADDR"
+intent_manager_addr: "$PIN_BASE_SEPOLIA_INTENT_MANAGER"
 private_key: "$TEST_PRIVATE_KEY"
 EOF
 
@@ -136,7 +147,7 @@ EOF
     -registry-http "localhost:8101" \
     -chain-rpc-url "$CHAIN_RPC_URL" \
     -chain-network "$CHAIN_NETWORK" \
-    -intent-manager-addr "$INTENT_MANAGER_ADDR" \
+    -intent-manager-addr "$PIN_BASE_SEPOLIA_INTENT_MANAGER" \
     -enable-chain-submit \
     -enable-rootlayer \
     > subnet-logs/validator.log 2>&1 &

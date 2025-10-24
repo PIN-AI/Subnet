@@ -41,6 +41,21 @@ This script deploys a new subnet to the blockchain using the intent-protocol-con
   --auto-approve true
 ```
 
+When targeting Base Sepolia, make sure the required on-chain contract addresses are supplied (replace them if you deploy to a different network):
+```bash
+export PIN_BASE_SEPOLIA_INTENT_MANAGER="0xD04d23775D3B8e028e6104E31eb0F6c07206EB46"
+export PIN_BASE_SEPOLIA_SUBNET_FACTORY="0x493c5B1c7Ee9eDe75bf2e57e5250E695F929A796"
+export PIN_BASE_SEPOLIA_STAKING_MANAGER="0xAc11AE66c7831A70Bea940b0AE16c967f940cB65"
+export PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER="0xe947c9C4183D583fB2E500aD05B105Fa01abE57e"
+
+export RPC_URL="https://sepolia.base.org"
+export PRIVATE_KEY="0xYOUR_PRIVATE_KEY"
+export NETWORK="base_sepolia"
+export SUBNET_NAME="PinAI Test Subnet"
+
+./scripts/create-subnet.sh
+```
+
 **Options**:
 - `--config FILE` - Path to config file (default: config/config.yaml)
 - `--network NAME` - Network name (default: base_sepolia)
@@ -55,6 +70,10 @@ This script deploys a new subnet to the blockchain using the intent-protocol-con
 - `RPC_URL` - RPC URL
 - `PRIVATE_KEY` - Private key hex
 - `SUBNET_NAME` - Subnet name
+- `PIN_BASE_SEPOLIA_INTENT_MANAGER` - Base Sepolia IntentManager contract address
+- `PIN_BASE_SEPOLIA_SUBNET_FACTORY` - Base Sepolia SubnetFactory contract address
+- `PIN_BASE_SEPOLIA_STAKING_MANAGER` - Base Sepolia StakingManager contract address
+- `PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER` - Base Sepolia CheckpointManager contract address
 
 **Output**:
 - Creates subnet on blockchain

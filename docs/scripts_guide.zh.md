@@ -41,6 +41,21 @@
   --auto-approve true
 ```
 
+在 Base Sepolia 网络上运行前，请先明确链上合约地址与 RPC 信息(如需使用其他网络，请替换为对应地址):
+```bash
+export PIN_BASE_SEPOLIA_INTENT_MANAGER="0xD04d23775D3B8e028e6104E31eb0F6c07206EB46"
+export PIN_BASE_SEPOLIA_SUBNET_FACTORY="0x493c5B1c7Ee9eDe75bf2e57e5250E695F929A796"
+export PIN_BASE_SEPOLIA_STAKING_MANAGER="0xAc11AE66c7831A70Bea940b0AE16c967f940cB65"
+export PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER="0xe947c9C4183D583fB2E500aD05B105Fa01abE57e"
+
+export RPC_URL="https://sepolia.base.org"
+export PRIVATE_KEY="0x你的私钥"
+export NETWORK="base_sepolia"
+export SUBNET_NAME="PinAI Test Subnet"
+
+./scripts/create-subnet.sh
+```
+
 **选项**:
 - `--config FILE` - 配置文件路径(默认: config/config.yaml)
 - `--network NAME` - 网络名称(默认: base_sepolia)
@@ -55,6 +70,10 @@
 - `RPC_URL` - RPC URL
 - `PRIVATE_KEY` - 私钥十六进制
 - `SUBNET_NAME` - 子网名称
+- `PIN_BASE_SEPOLIA_INTENT_MANAGER` - Base Sepolia IntentManager 合约地址
+- `PIN_BASE_SEPOLIA_SUBNET_FACTORY` - Base Sepolia SubnetFactory 合约地址
+- `PIN_BASE_SEPOLIA_STAKING_MANAGER` - Base Sepolia StakingManager 合约地址
+- `PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER` - Base Sepolia CheckpointManager 合约地址
 
 **输出**:
 - 在区块链上创建子网

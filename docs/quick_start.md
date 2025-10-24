@@ -69,8 +69,11 @@ ENABLE_CHAIN_SUBMIT=true
 CHAIN_RPC_URL=https://sepolia.base.org
 CHAIN_NETWORK=base_sepolia
 
-# Test contract addresses (Base Sepolia)
-INTENT_MANAGER_ADDR=0xD04d23775D3B8e028e6104E31eb0F6c07206EB46
+# Base Sepolia contract addresses
+PIN_BASE_SEPOLIA_INTENT_MANAGER=0xD04d23775D3B8e028e6104E31eb0F6c07206EB46
+PIN_BASE_SEPOLIA_SUBNET_FACTORY=0x493c5B1c7Ee9eDe75bf2e57e5250E695F929A796
+PIN_BASE_SEPOLIA_STAKING_MANAGER=0xAc11AE66c7831A70Bea940b0AE16c967f940cB65
+PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER=0xe947c9C4183D583fB2E500aD05B105Fa01abE57e
 ```
 
 **For Production:**
@@ -78,12 +81,20 @@ Replace all values above with your production configuration. Use secure key mana
 
 ## Start Services
 
+### Pre-flight Checklist
+
+Before starting the runtime, make sure the on-chain prerequisites are complete:
+- Create or select the subnet you want to operate (`./scripts/create-subnet.sh` or your own deployment).
+- Register the matcher, validator, and agent accounts on that subnet (`./scripts/register.sh`). Without registration, on-chain submissions from these services will fail.
+
 ### Option 1: One-Click Startup (Recommended)
 
 ```bash
 # Start all services with one command
 ./start-subnet.sh
 ```
+
+The launcher will ask you to confirm that subnet creation and participant registration are done. Set `SKIP_REGISTRATION_PROMPT=1` if you need to bypass the prompt in automated environments.
 
 This script will:
 - Check and start NATS if needed
@@ -118,7 +129,7 @@ network:
 enable_chain_submit: true
 chain_rpc_url: "$CHAIN_RPC_URL"
 chain_network: "$CHAIN_NETWORK"
-intent_manager_addr: "$INTENT_MANAGER_ADDR"
+intent_manager_addr: "$PIN_BASE_SEPOLIA_INTENT_MANAGER"
 private_key: "$TEST_PRIVATE_KEY"
 EOF
 
@@ -136,7 +147,7 @@ EOF
     -registry-http "localhost:8101" \
     -chain-rpc-url "$CHAIN_RPC_URL" \
     -chain-network "$CHAIN_NETWORK" \
-    -intent-manager-addr "$INTENT_MANAGER_ADDR" \
+    -intent-manager-addr "$PIN_BASE_SEPOLIA_INTENT_MANAGER" \
     -enable-chain-submit \
     -enable-rootlayer \
     > subnet-logs/validator.log 2>&1 &

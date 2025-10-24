@@ -85,13 +85,19 @@ nats-server &
 ### Step 2: Create Subnet on Blockchain
 
 ```bash
-# Set environment variables
+# Provide chain contract addresses and network context
+export PIN_BASE_SEPOLIA_INTENT_MANAGER="0xD04d23775D3B8e028e6104E31eb0F6c07206EB46"
+export PIN_BASE_SEPOLIA_SUBNET_FACTORY="0x493c5B1c7Ee9eDe75bf2e57e5250E695F929A796"
+export PIN_BASE_SEPOLIA_STAKING_MANAGER="0xAc11AE66c7831A70Bea940b0AE16c967f940cB65"
+export PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER="0xe947c9C4183D583fB2E500aD05B105Fa01abE57e"
+
 export RPC_URL="https://sepolia.base.org"
 export PRIVATE_KEY="<your-private-key>"
-export PIN_NETWORK="base_sepolia"
+export NETWORK="base_sepolia"
+export SUBNET_NAME="PinAI Test Subnet"
 
-# Run creation script
-./scripts/create-subnet.sh --name "My Test Subnet"
+# Run the creation script (CLI flags can still override defaults)
+./scripts/create-subnet.sh
 
 # Example output:
 # ✅ Subnet created successfully!
