@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
+	rootpb "rootlayer/proto"
 	"subnet/internal/logging"
 	pb "subnet/proto/subnet"
-	rootpb "rootlayer/proto"
 )
 
 // TaskDistributor interface for task distribution (reserved for future extension)
@@ -38,7 +38,7 @@ type SimpleTaskDistributor struct {
 	cfg    *Config
 
 	mu           sync.RWMutex
-	activeTasks  map[string]*ActiveTask  // taskID -> task
+	activeTasks  map[string]*ActiveTask            // taskID -> task
 	agentStreams map[string]chan *pb.ExecutionTask // agentID -> stream
 
 	// Configuration
@@ -49,13 +49,13 @@ type SimpleTaskDistributor struct {
 
 // ActiveTask represents an active task
 type ActiveTask struct {
-	Task           *pb.ExecutionTask
-	Intent         *rootpb.Intent
-	AgentID        string
-	Status         string // "pending", "accepted", "rejected", "completed"
-	CreatedAt      time.Time
-	RespondedAt    *time.Time
-	Retries        int
+	Task            *pb.ExecutionTask
+	Intent          *rootpb.Intent
+	AgentID         string
+	Status          string // "pending", "accepted", "rejected", "completed"
+	CreatedAt       time.Time
+	RespondedAt     *time.Time
+	Retries         int
 	ResponseTimeout time.Duration // Calculated based on intent
 }
 
@@ -115,7 +115,7 @@ func (d *SimpleTaskDistributor) SendTaskWithPriority(agentID string, task *pb.Ex
 	// Send task
 	select {
 	case stream <- task:
-		d.logger.Infof("Sent task %s to agent %s (response timeout: %v, max retries: %d)",
+		d.logger.Debugf("Sent task %s to agent %s (response timeout: %v, max retries: %d)",
 			task.TaskId, agentID, timeoutSettings.ResponseTimeout, timeoutSettings.MaxRetries)
 
 		// Start timeout check with calculated timeout
@@ -149,7 +149,7 @@ func (d *SimpleTaskDistributor) HandleResponse(response *pb.TaskResponse) error 
 		active.Status = "accepted"
 		d.mu.Unlock()
 
-		d.logger.Infof("Task %s accepted by agent %s", response.TaskId, response.AgentId)
+		d.logger.Debugf("Task %s accepted by agent %s", response.TaskId, response.AgentId)
 
 		// Submit to RootLayer
 		d.submitToRootLayer(active)
@@ -159,7 +159,7 @@ func (d *SimpleTaskDistributor) HandleResponse(response *pb.TaskResponse) error 
 		intentID := active.Task.IntentId
 		d.mu.Unlock()
 
-		d.logger.Infof("Task %s rejected by agent %s: %s",
+		d.logger.Debugf("Task %s rejected by agent %s: %s",
 			response.TaskId, response.AgentId, response.Reason)
 
 		// Try to reassign
@@ -322,11 +322,11 @@ func (d *SimpleTaskDistributor) GetStats() *DistributorStats {
 	defer d.mu.RUnlock()
 
 	stats := &DistributorStats{
-		ActiveTasks: 0,
-		PendingTasks: 0,
+		ActiveTasks:    0,
+		PendingTasks:   0,
 		CompletedTasks: 0,
-		FailedTasks: 0,
-		AgentCount: len(d.agentStreams),
+		FailedTasks:    0,
+		AgentCount:     len(d.agentStreams),
 	}
 
 	for _, task := range d.activeTasks {
