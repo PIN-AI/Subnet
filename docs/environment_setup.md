@@ -817,7 +817,7 @@ After completing environment setup:
 4. **Read Documentation**:
    - [Subnet Deployment Guide](./subnet_deployment_guide.md)
    - [Scripts Guide](./scripts_guide.md)
-   - [Architecture Overview](./ARCHITECTURE_OVERVIEW.md)
+   - [Architecture Overview](./architecture.md)
 
 5. **Join Community**:
    - GitHub: https://github.com/PIN-AI/Subnet

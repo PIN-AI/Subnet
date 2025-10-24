@@ -394,7 +394,7 @@ A complete successful E2E test should have:
 
 ## 📚 Related Documentation
 
-- **Architecture Overview**: `docs/ARCHITECTURE_OVERVIEW.md`
+- **Architecture Overview**: `docs/architecture.md`
 - **Signature Guide**: `../pin_protocol/signature-guide.md` (sections 1-3)
 - **SDK Documentation**: `../intent-protocol-contract-sdk/README.md`
 - **Coding Assistant Guide**: `CLAUDE.md`

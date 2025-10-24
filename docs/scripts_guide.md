@@ -751,7 +751,7 @@ echo $PARAMS_JSON | jq .
 
 - **Subnet Deployment Guide**: `docs/subnet_deployment_guide.md`
 - **Registration Guide**: `scripts/REGISTRATION_GUIDE.md`
-- **Architecture Overview**: `docs/ARCHITECTURE_OVERVIEW.md`
+- **Architecture Overview**: `docs/architecture.md`
 - **API Documentation**: See proto definitions in `proto/`
 
 ---
