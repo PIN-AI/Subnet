@@ -159,7 +159,7 @@ func (b *NATSBroadcaster) BroadcastFinalized(header *pb.CheckpointHeader) error 
 		b.logger.Warn("Failed to flush after finalized broadcast", "error", err)
 	}
 
-	b.logger.Info("🏁 Broadcasted finalized checkpoint",
+	b.logger.Info("Broadcasted finalized checkpoint",
 		"epoch", header.Epoch,
 		"subject", subject,
 		"signatures", header.Signatures.SignatureCount)
@@ -333,7 +333,7 @@ func (b *NATSBroadcaster) SubscribeToFinalized(handler func(*pb.CheckpointHeader
 			return
 		}
 
-		b.logger.Info("🏁 Received finalized checkpoint",
+		b.logger.Info("Received finalized checkpoint",
 			"epoch", header.Epoch,
 			"subject", msg.Subject,
 			"signatures", header.Signatures.SignatureCount)

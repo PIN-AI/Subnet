@@ -185,9 +185,10 @@ const file_proto_subnet_matcher_service_proto_rawDesc = "" +
 	"\vintent_data\x18\a \x01(\fR\n" +
 	"intentData\x12\x1f\n" +
 	"\vintent_type\x18\b \x01(\tR\n" +
-	"intentType2\xbe\x04\n" +
+	"intentType2\x95\x05\n" +
 	"\x0eMatcherService\x12F\n" +
-	"\tSubmitBid\x12\x1b.subnet.v1.SubmitBidRequest\x1a\x1c.subnet.v1.SubmitBidResponse\x12^\n" +
+	"\tSubmitBid\x12\x1b.subnet.v1.SubmitBidRequest\x1a\x1c.subnet.v1.SubmitBidResponse\x12U\n" +
+	"\x0eSubmitBidBatch\x12 .subnet.v1.SubmitBidBatchRequest\x1a!.subnet.v1.SubmitBidBatchResponse\x12^\n" +
 	"\x11GetIntentSnapshot\x12#.subnet.v1.GetIntentSnapshotRequest\x1a$.subnet.v1.GetIntentSnapshotResponse\x12R\n" +
 	"\rStreamIntents\x12\x1f.subnet.v1.StreamIntentsRequest\x1a\x1e.subnet.v1.MatcherIntentUpdate0\x01\x12A\n" +
 	"\n" +
@@ -213,35 +214,39 @@ var file_proto_subnet_matcher_service_proto_goTypes = []any{
 	(*StreamTasksRequest)(nil),        // 0: subnet.v1.StreamTasksRequest
 	(*ExecutionTask)(nil),             // 1: subnet.v1.ExecutionTask
 	(*SubmitBidRequest)(nil),          // 2: subnet.v1.SubmitBidRequest
-	(*GetIntentSnapshotRequest)(nil),  // 3: subnet.v1.GetIntentSnapshotRequest
-	(*StreamIntentsRequest)(nil),      // 4: subnet.v1.StreamIntentsRequest
-	(*StreamBidsRequest)(nil),         // 5: subnet.v1.StreamBidsRequest
-	(*MatchingResult)(nil),            // 6: subnet.v1.MatchingResult
-	(*RespondToTaskRequest)(nil),      // 7: subnet.v1.RespondToTaskRequest
-	(*SubmitBidResponse)(nil),         // 8: subnet.v1.SubmitBidResponse
-	(*GetIntentSnapshotResponse)(nil), // 9: subnet.v1.GetIntentSnapshotResponse
-	(*MatcherIntentUpdate)(nil),       // 10: subnet.v1.MatcherIntentUpdate
-	(*BidEvent)(nil),                  // 11: subnet.v1.BidEvent
-	(*BidSubmissionAck)(nil),          // 12: subnet.v1.BidSubmissionAck
-	(*RespondToTaskResponse)(nil),     // 13: subnet.v1.RespondToTaskResponse
+	(*SubmitBidBatchRequest)(nil),     // 3: subnet.v1.SubmitBidBatchRequest
+	(*GetIntentSnapshotRequest)(nil),  // 4: subnet.v1.GetIntentSnapshotRequest
+	(*StreamIntentsRequest)(nil),      // 5: subnet.v1.StreamIntentsRequest
+	(*StreamBidsRequest)(nil),         // 6: subnet.v1.StreamBidsRequest
+	(*MatchingResult)(nil),            // 7: subnet.v1.MatchingResult
+	(*RespondToTaskRequest)(nil),      // 8: subnet.v1.RespondToTaskRequest
+	(*SubmitBidResponse)(nil),         // 9: subnet.v1.SubmitBidResponse
+	(*SubmitBidBatchResponse)(nil),    // 10: subnet.v1.SubmitBidBatchResponse
+	(*GetIntentSnapshotResponse)(nil), // 11: subnet.v1.GetIntentSnapshotResponse
+	(*MatcherIntentUpdate)(nil),       // 12: subnet.v1.MatcherIntentUpdate
+	(*BidEvent)(nil),                  // 13: subnet.v1.BidEvent
+	(*BidSubmissionAck)(nil),          // 14: subnet.v1.BidSubmissionAck
+	(*RespondToTaskResponse)(nil),     // 15: subnet.v1.RespondToTaskResponse
 }
 var file_proto_subnet_matcher_service_proto_depIdxs = []int32{
 	2,  // 0: subnet.v1.MatcherService.SubmitBid:input_type -> subnet.v1.SubmitBidRequest
-	3,  // 1: subnet.v1.MatcherService.GetIntentSnapshot:input_type -> subnet.v1.GetIntentSnapshotRequest
-	4,  // 2: subnet.v1.MatcherService.StreamIntents:input_type -> subnet.v1.StreamIntentsRequest
-	5,  // 3: subnet.v1.MatcherService.StreamBids:input_type -> subnet.v1.StreamBidsRequest
-	6,  // 4: subnet.v1.MatcherService.PublishMatchingResult:input_type -> subnet.v1.MatchingResult
-	7,  // 5: subnet.v1.MatcherService.RespondToTask:input_type -> subnet.v1.RespondToTaskRequest
-	0,  // 6: subnet.v1.MatcherService.StreamTasks:input_type -> subnet.v1.StreamTasksRequest
-	8,  // 7: subnet.v1.MatcherService.SubmitBid:output_type -> subnet.v1.SubmitBidResponse
-	9,  // 8: subnet.v1.MatcherService.GetIntentSnapshot:output_type -> subnet.v1.GetIntentSnapshotResponse
-	10, // 9: subnet.v1.MatcherService.StreamIntents:output_type -> subnet.v1.MatcherIntentUpdate
-	11, // 10: subnet.v1.MatcherService.StreamBids:output_type -> subnet.v1.BidEvent
-	12, // 11: subnet.v1.MatcherService.PublishMatchingResult:output_type -> subnet.v1.BidSubmissionAck
-	13, // 12: subnet.v1.MatcherService.RespondToTask:output_type -> subnet.v1.RespondToTaskResponse
-	1,  // 13: subnet.v1.MatcherService.StreamTasks:output_type -> subnet.v1.ExecutionTask
-	7,  // [7:14] is the sub-list for method output_type
-	0,  // [0:7] is the sub-list for method input_type
+	3,  // 1: subnet.v1.MatcherService.SubmitBidBatch:input_type -> subnet.v1.SubmitBidBatchRequest
+	4,  // 2: subnet.v1.MatcherService.GetIntentSnapshot:input_type -> subnet.v1.GetIntentSnapshotRequest
+	5,  // 3: subnet.v1.MatcherService.StreamIntents:input_type -> subnet.v1.StreamIntentsRequest
+	6,  // 4: subnet.v1.MatcherService.StreamBids:input_type -> subnet.v1.StreamBidsRequest
+	7,  // 5: subnet.v1.MatcherService.PublishMatchingResult:input_type -> subnet.v1.MatchingResult
+	8,  // 6: subnet.v1.MatcherService.RespondToTask:input_type -> subnet.v1.RespondToTaskRequest
+	0,  // 7: subnet.v1.MatcherService.StreamTasks:input_type -> subnet.v1.StreamTasksRequest
+	9,  // 8: subnet.v1.MatcherService.SubmitBid:output_type -> subnet.v1.SubmitBidResponse
+	10, // 9: subnet.v1.MatcherService.SubmitBidBatch:output_type -> subnet.v1.SubmitBidBatchResponse
+	11, // 10: subnet.v1.MatcherService.GetIntentSnapshot:output_type -> subnet.v1.GetIntentSnapshotResponse
+	12, // 11: subnet.v1.MatcherService.StreamIntents:output_type -> subnet.v1.MatcherIntentUpdate
+	13, // 12: subnet.v1.MatcherService.StreamBids:output_type -> subnet.v1.BidEvent
+	14, // 13: subnet.v1.MatcherService.PublishMatchingResult:output_type -> subnet.v1.BidSubmissionAck
+	15, // 14: subnet.v1.MatcherService.RespondToTask:output_type -> subnet.v1.RespondToTaskResponse
+	1,  // 15: subnet.v1.MatcherService.StreamTasks:output_type -> subnet.v1.ExecutionTask
+	8,  // [8:16] is the sub-list for method output_type
+	0,  // [0:8] is the sub-list for method input_type
 	0,  // [0:0] is the sub-list for extension type_name
 	0,  // [0:0] is the sub-list for extension extendee
 	0,  // [0:0] is the sub-list for field type_name
