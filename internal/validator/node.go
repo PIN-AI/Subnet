@@ -77,6 +77,12 @@ type Node struct {
 	lastCheckpointAt  time.Time                // Track last checkpoint time
 	isLeader          bool                     // Track current leadership status
 
+	// ValidationBundle signature collection (per intent)
+	validationBundleSignatures map[string]map[string]*pb.ValidationBundleSignature // intent_key -> (validator_address -> signature)
+
+	// Validator endpoints mapping (validator_id -> grpc_endpoint)
+	validatorEndpoints map[string]string
+
 	// Configuration
 	config *Config
 
@@ -132,6 +138,9 @@ type Config struct {
 
 	// Gossip signature propagation configuration
 	Gossip *GossipConfig
+
+	// Validator endpoints (validator_id -> grpc_address mapping for report forwarding)
+	ValidatorEndpoints map[string]string
 }
 
 // ValidationPolicyConfig defines validation policy configuration
@@ -255,15 +264,17 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 		chain:           chain,
 		store:           store,
 		rootlayerClient: rootClient,
-		sdkClient:       sdkClient,
-		agentRegistry:   agentReg,
-		metrics:         metrics.Noop{},
-		pendingReports:  make(map[string]*pb.ExecutionReport),
-		reportScores:    make(map[string]int32),
-		signatures:      make(map[string]*pb.Signature),
-		config:          config,
-		ctx:             ctx,
-		cancel:          cancel,
+		sdkClient:                  sdkClient,
+		agentRegistry:              agentReg,
+		metrics:                    metrics.Noop{},
+		pendingReports:             make(map[string]*pb.ExecutionReport),
+		reportScores:               make(map[string]int32),
+		signatures:                 make(map[string]*pb.Signature),
+		validationBundleSignatures: make(map[string]map[string]*pb.ValidationBundleSignature),
+		validatorEndpoints:         config.ValidatorEndpoints,
+		config:                     config,
+		ctx:                        ctx,
+		cancel:                     cancel,
 	}
 
 	// Initialise Raft consensus if enabled (transitional; will replace legacy path).
@@ -301,6 +312,9 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 
 		node.gossipManager = gossipManager
 		node.gossipDelegate = gossipDelegate
+
+		// Set ValidationBundle signature handler
+		gossipManager.SetValidationBundleSignatureHandler(node.onValidationBundleSignatureReceived)
 
 		logger.Info("Gossip initialized",
 			"bind_addr", fmt.Sprintf("%s:%d", gossipCfg.BindAddress, gossipCfg.BindPort),
@@ -455,6 +469,58 @@ func (n *Node) onGossipSignatureReceived(sig *pb.Signature, checkpointHash []byt
 	}
 }
 
+// onValidationBundleSignatureReceived handles ValidationBundle signatures received via gossip
+func (n *Node) onValidationBundleSignatureReceived(vbSig *pb.ValidationBundleSignature) {
+	if vbSig == nil {
+		return
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// Basic validation
+	if vbSig.IntentId == "" || vbSig.AssignmentId == "" || vbSig.ValidatorAddress == "" || len(vbSig.Signature) == 0 {
+		n.logger.Warn("Invalid ValidationBundle signature: missing fields",
+			"validator", vbSig.ValidatorAddress,
+			"intent_id", vbSig.IntentId)
+		return
+	}
+
+	// Create intent key for grouping
+	intentKey := fmt.Sprintf("%s-%s", vbSig.IntentId, vbSig.AssignmentId)
+
+	// Initialize map for this intent if needed
+	if n.validationBundleSignatures == nil {
+		n.validationBundleSignatures = make(map[string]map[string]*pb.ValidationBundleSignature)
+	}
+	if n.validationBundleSignatures[intentKey] == nil {
+		n.validationBundleSignatures[intentKey] = make(map[string]*pb.ValidationBundleSignature)
+	}
+
+	// Skip if we already have this validator's signature for this intent
+	if _, exists := n.validationBundleSignatures[intentKey][vbSig.ValidatorAddress]; exists {
+		n.logger.Debug("Duplicate ValidationBundle signature ignored",
+			"validator", vbSig.ValidatorAddress,
+			"intent_id", vbSig.IntentId)
+		return
+	}
+
+	// Add signature to map
+	n.validationBundleSignatures[intentKey][vbSig.ValidatorAddress] = vbSig
+
+	n.logger.Infof("Received ValidationBundle signature via gossip validator=%s intent_id=%s assignment_id=%s epoch=%d total_sigs=%d",
+		vbSig.ValidatorAddress, vbSig.IntentId, vbSig.AssignmentId, vbSig.Epoch, len(n.validationBundleSignatures[intentKey]))
+
+	// Check if we've reached threshold
+	sigCount := len(n.validationBundleSignatures[intentKey])
+	thresholdReached := n.validatorSet.CheckThreshold(sigCount)
+
+	if thresholdReached {
+		n.logger.Infof("ValidationBundle signature threshold reached intent_id=%s sigs=%d required=%d",
+			vbSig.IntentId, sigCount, n.validatorSet.RequiredSignatures())
+	}
+}
+
 // bytesEqual compares two byte slices for equality
 func bytesEqual(a, b []byte) bool {
 	if len(a) != len(b) {
@@ -532,7 +598,20 @@ func (n *Node) handleCommittedCheckpoint(header *pb.CheckpointHeader) {
 	// Compute checkpoint hash for verification
 	checkpointHash := n.computeCheckpointHash(headerCopy)
 
+	// Copy pending reports for ValidationBundle signing (before unlock)
+	pendingReportsCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
+	for k, v := range n.pendingReports {
+		pendingReportsCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+	}
+
 	n.mu.Unlock()
+
+	// ALL validators sign ValidationBundle for this checkpoint
+	if len(pendingReportsCopy) > 0 {
+		groupedReports := n.groupReportsByIntent(pendingReportsCopy)
+		n.logger.Infof("Validator signing ValidationBundle for checkpoint epoch=%d intents=%d", headerCopy.Epoch, len(groupedReports))
+		n.signAndGossipValidationBundles(headerCopy, groupedReports)
+	}
 
 	// Broadcast signature via gossip (if enabled)
 	if n.gossipManager != nil {
@@ -1744,6 +1823,9 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 	groupedReports := n.groupReportsByIntent(pendingReports)
 	n.logger.Infof("Grouped %d execution reports into %d Intent groups for epoch %d", len(pendingReports), len(groupedReports), header.Epoch)
 
+	// STEP 1.5: All validators sign ValidationBundles and gossip signatures
+	n.signAndGossipValidationBundles(header, groupedReports)
+
 	// IMPORTANT: Wait for RootLayer state synchronization before submitting ValidationBundles
 	//
 	// RATIONALE:
@@ -1966,10 +2048,27 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		return nil
 	}
 
-	// Generate ValidationBundle signature using SDK (EIP-191 standard)
+	// Use collected ValidationBundle signatures from gossip
 	var validationSigs []*rootpb.ValidationSignature
+	intentKey := fmt.Sprintf("%s-%s", intentID, assignmentID)
 
-	if n.sdkClient != nil {
+	n.mu.RLock()
+	collectedSigs := n.validationBundleSignatures[intentKey]
+	n.mu.RUnlock()
+
+	if len(collectedSigs) > 0 {
+		// Use collected signatures from gossip
+		n.logger.Infof("Using %d collected ValidationBundle signatures for intent_id=%s", len(collectedSigs), intentID)
+		for _, vbSig := range collectedSigs {
+			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
+				Validator: vbSig.ValidatorAddress,
+				Signature: vbSig.Signature,
+			})
+		}
+	} else if n.sdkClient != nil {
+		// Fallback: Sign locally if no gossip signatures collected (shouldn't happen normally)
+		n.logger.Warn("No ValidationBundle signatures collected via gossip, signing locally as fallback")
+
 		// Prepare data for SDK ValidationBundle signing
 		intentIDHash := common.HexToHash(intentID)
 		assignmentIDHash := common.HexToHash(assignmentID)
@@ -2023,7 +2122,7 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 			}
 		}
 	} else {
-		// Fallback: Use checkpoint signatures if SDK not available
+		// Last resort fallback: Use checkpoint signatures if SDK not available
 		n.logger.Warn("SDK client not available, using checkpoint signatures as fallback (NOT EIP-191 compliant)")
 		for validatorID, sig := range signatures {
 			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
@@ -2257,4 +2356,106 @@ func (n *Node) getCheckpointInterval() time.Duration {
 		return n.config.Timeouts.CheckpointInterval
 	}
 	return 30 * time.Second
+}
+
+// signAndGossipValidationBundles makes all validators sign ValidationBundles and gossip signatures
+func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, groupedReports map[string][]*pb.ExecutionReport) {
+	if n.sdkClient == nil || n.gossipManager == nil {
+		n.logger.Warn("SDK client or gossip manager not available, skipping ValidationBundle signature gossip")
+		return
+	}
+
+	// Sign ValidationBundle for each Intent group
+	for intentKey, reports := range groupedReports {
+		if len(reports) == 0 {
+			continue
+		}
+
+		firstReport := reports[0]
+		intentID := firstReport.IntentId
+		assignmentID := firstReport.AssignmentId
+		agentID := firstReport.AgentId
+
+		n.logger.Infof("Signing ValidationBundle intent_id=%s assignment_id=%s agent_id=%s epoch=%d",
+			intentID, assignmentID, agentID, header.Epoch)
+
+		// Prepare data for SDK ValidationBundle signing
+		intentIDHash := common.HexToHash(intentID)
+		assignmentIDHash := common.HexToHash(assignmentID)
+		subnetIDHash := common.HexToHash(n.config.SubnetID)
+		agentAddr := common.HexToAddress(agentID)
+
+		// Calculate result hash from checkpoint header
+		resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
+
+		// Get execution reports root as proof hash
+		var proofHash [32]byte
+		if header.Roots != nil && len(header.Roots.EventRoot) > 0 {
+			copy(proofHash[:], header.Roots.EventRoot)
+		}
+
+		// Parse root hash from parent checkpoint hash
+		var rootHash [32]byte
+		if len(header.ParentCpHash) > 0 {
+			copy(rootHash[:], header.ParentCpHash)
+		}
+
+		// Create SDK ValidationBundle structure for signing
+		bundle := sdk.ValidationBundle{
+			IntentID:     intentIDHash,
+			AssignmentID: assignmentIDHash,
+			SubnetID:     subnetIDHash,
+			Agent:        agentAddr,
+			ResultHash:   resultHash,
+			ProofHash:    proofHash,
+			RootHeight:   header.Epoch,
+			RootHash:     rootHash,
+		}
+
+		// Compute digest using SDK
+		digest, err := n.sdkClient.Validation.ComputeDigest(bundle)
+		if err != nil {
+			n.logger.Errorf("Failed to compute ValidationBundle digest: %v", err)
+			continue
+		}
+
+		// Sign digest using SDK (EIP-191 standard)
+		signature, err := n.sdkClient.Validation.SignDigest(digest)
+		if err != nil {
+			n.logger.Errorf("Failed to sign ValidationBundle digest: %v", err)
+			continue
+		}
+
+		validatorAddr := n.sdkClient.Signer.Address()
+
+		// Create gossip message
+		vbSig := &pb.ValidationBundleSignature{
+			IntentId:         intentID,
+			AssignmentId:     assignmentID,
+			Epoch:            header.Epoch,
+			ValidatorAddress: validatorAddr.Hex(),
+			Signature:        signature,
+			Timestamp:        time.Now().Unix(),
+			BundleDigestHash: digest[:],
+		}
+
+		// Store own signature locally
+		n.mu.Lock()
+		if n.validationBundleSignatures == nil {
+			n.validationBundleSignatures = make(map[string]map[string]*pb.ValidationBundleSignature)
+		}
+		if n.validationBundleSignatures[intentKey] == nil {
+			n.validationBundleSignatures[intentKey] = make(map[string]*pb.ValidationBundleSignature)
+		}
+		n.validationBundleSignatures[intentKey][validatorAddr.Hex()] = vbSig
+		n.mu.Unlock()
+
+		// Broadcast via gossip
+		if err := n.gossipManager.BroadcastValidationBundleSignature(vbSig); err != nil {
+			n.logger.Errorf("Failed to gossip ValidationBundle signature: %v", err)
+		} else {
+			n.logger.Infof("Broadcasted ValidationBundle signature via gossip validator=%s intent_id=%s epoch=%d",
+				validatorAddr.Hex(), intentID, header.Epoch)
+		}
+	}
 }

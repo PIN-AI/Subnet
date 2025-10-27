@@ -1,24 +1,60 @@
-data
-.gocache
-CLAUDE.md
-AGENTs.md
-.env
-.env.local
-.env.*.local
-.DS_Store
-.vscode/
-.idea/
-node_modules/
-bin
+# Build artifacts
+bin/
 *.test
-*.log
 *.out
+matcher
+validator
+registry
+mock-rootlayer
+simple-agent
 
-node_modules/
-cspell.json
-package-lock.json
-package.json
+# Runtime data
+data/
+*-data/
+*-raft/
+val*-data/
+val*-raft/
+raft-data/
+*.pid
+*.sock
+
+# Logs
+*.log
 e2e-test-logs/
 validation-consensus-test-logs/
 simple-consensus-logs/
 subnet-logs/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# IDE and OS
+.gocache
+.DS_Store
+.vscode/
+.idea/
+
+# Documentation (temporary/working files)
+CLAUDE.md
+AGENTs.md
+
+# Test and development scripts (temporary)
+check-vb-status.sh
+test-*.sh
+start-validators-fixed.sh
+matcher-e2e.yaml
+new-subnet-validators.txt
+
+# Node modules (if any)
+node_modules/
+cspell.json
+package-lock.json
+package.json
+
+# Temporary validation bundle test docs
+EXECUTION_REPORT_FORWARDING_FIX.md
+GOSSIP_SEEDS_FIX.md
+VALIDATION_BUNDLE_MULTI_SIG_SUCCESS.md
+VALIDATION_BUNDLE_PROGRESS_2025-10-26.md

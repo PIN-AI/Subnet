@@ -41,10 +41,14 @@ func main() {
 		raftDataDir   = flag.String("raft-data-dir", "./data/raft", "Raft data directory")
 		raftPeers     = flag.String("raft-peers", "", "Comma-separated list of validator_id:raft_address pairs (e.g. 'v1:127.0.0.1:7000,v2:127.0.0.1:7001')")
 
+		// Validator endpoints for execution report forwarding
+		validatorEndpoints = flag.String("validator-endpoints", "", "Comma-separated list of validator_id:grpc_address pairs (e.g. 'v1:127.0.0.1:9201,v2:127.0.0.1:9202')")
+
 		// Gossip configuration
 		gossipEnable = flag.Bool("gossip-enable", false, "Enable Gossip for signature propagation")
 		gossipBind   = flag.String("gossip-bind", "127.0.0.1", "Gossip bind address")
 		gossipPort   = flag.Int("gossip-port", 7946, "Gossip port")
+	gossipSeeds  = flag.String("gossip-seeds", "", "Comma-separated list of seed nodes (e.g. '127.0.0.1:6001,127.0.0.1:6002')")
 
 		// Validator set configuration
 		validatorCount  = flag.Int("validators", 4, "Total number of validators")
@@ -166,9 +170,13 @@ func main() {
 			Enable:         *gossipEnable,
 			BindAddress:    *gossipBind,
 			BindPort:       *gossipPort,
+			Seeds:          parseGossipSeeds(*gossipSeeds),
 			GossipInterval: 200 * time.Millisecond,
 			ProbeInterval:  1 * time.Second,
 		},
+
+		// Validator endpoints mapping for execution report forwarding
+		ValidatorEndpoints: parseValidatorEndpoints(*validatorEndpoints),
 	}
 
 	var chainVerifier *blockchain.ParticipantVerifier
@@ -359,6 +367,39 @@ func parseRaftPeers(peerStr string) []validator.RaftPeerConfig {
 		}
 	}
 	return peers
+}
+
+// parseValidatorEndpoints parses comma-separated validator endpoint config: "id1:addr1:port1,id2:addr2:port2,..."
+func parseValidatorEndpoints(endpointStr string) map[string]string {
+	endpoints := make(map[string]string)
+	if endpointStr == "" {
+		return endpoints
+	}
+
+	for _, pair := range splitAndTrim(endpointStr, ",") {
+		parts := splitAndTrim(pair, ":")
+		if len(parts) >= 2 {
+			// First part is ID, rest is address (which may contain colons for host:port)
+			id := parts[0]
+			// Rejoin remaining parts with ":" to reconstruct address
+			address := parts[1]
+			for i := 2; i < len(parts); i++ {
+				address += ":" + parts[i]
+			}
+			endpoints[id] = address
+		} else {
+			log.Printf("Warning: invalid validator endpoint format '%s', expected 'id:address:port'", pair)
+		}
+	}
+	return endpoints
+}
+
+// parseGossipSeeds parses comma-separated gossip seed nodes: "host1:port1,host2:port2,..."
+func parseGossipSeeds(seedsStr string) []string {
+	if seedsStr == "" {
+		return []string{}
+	}
+	return splitAndTrim(seedsStr, ",")
 }
 
 // splitAndTrim splits a string by delimiter and trims whitespace from each part

@@ -14,11 +14,15 @@ type Broadcaster interface {
 	// Execution report broadcast
 	BroadcastExecutionReport(report *pb.ExecutionReport) error
 
+	// ValidationBundle signature broadcasts
+	BroadcastValidationBundleSignature(sig *pb.ValidationBundleSignature) error
+
 	// Subscriptions
 	SubscribeToProposals(handler func(*pb.CheckpointHeader)) error
 	SubscribeToSignatures(handler func(*pb.Signature)) error
 	SubscribeToFinalized(handler func(*pb.CheckpointHeader)) error // Subscribe to finalized checkpoints
 	SubscribeToExecutionReports(handler func(*pb.ExecutionReport)) error
+	SubscribeToValidationBundleSignatures(handler func(*pb.ValidationBundleSignature)) error
 	SubscribeToReadiness(handler func(string)) error
 	BroadcastReadiness(validatorID string) error
 

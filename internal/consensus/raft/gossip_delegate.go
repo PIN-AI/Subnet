@@ -1,4 +1,4 @@
-package consensus
+package raft
 
 import (
 	"fmt"
@@ -13,13 +13,17 @@ import (
 // SignatureHandler is called when a signature is received via gossip
 type SignatureHandler func(*pb.Signature, []byte)
 
+// ValidationBundleSignatureHandler is called when a ValidationBundle signature is received via gossip
+type ValidationBundleSignatureHandler func(*pb.ValidationBundleSignature)
+
 // SignatureGossipDelegate implements memberlist.Delegate for signature propagation
 type SignatureGossipDelegate struct {
-	mu               sync.RWMutex
-	broadcasts       [][]byte         // Queue of messages to broadcast
-	signatureHandler SignatureHandler // Callback when signature received
-	nodeID           string
-	logger           logging.Logger
+	mu                           sync.RWMutex
+	broadcasts                   [][]byte                         // Queue of messages to broadcast
+	signatureHandler             SignatureHandler                 // Callback when signature received
+	validationBundleSigHandler   ValidationBundleSignatureHandler // Callback when ValidationBundle signature received
+	nodeID                       string
+	logger                       logging.Logger
 }
 
 // NewSignatureGossipDelegate creates a new gossip delegate
@@ -65,6 +69,22 @@ func (d *SignatureGossipDelegate) NotifyMsg(data []byte) {
 		d.logger.Debug("Received signature via gossip",
 			"validator", sig.ValidatorId,
 			"epoch", sig.Epoch)
+	}
+
+	if vbSig := msg.GetValidationBundleSignature(); vbSig != nil {
+		// Skip our own signature (already handled locally)
+		// Compare with validator address instead of nodeID
+		// since ValidationBundleSignature uses validator address
+
+		// Call handler with ValidationBundle signature
+		if d.validationBundleSigHandler != nil {
+			d.validationBundleSigHandler(vbSig)
+		}
+
+		d.logger.Debug("Received ValidationBundle signature via gossip",
+			"validator", vbSig.ValidatorAddress,
+			"intent_id", vbSig.IntentId,
+			"epoch", vbSig.Epoch)
 	}
 }
 
@@ -144,6 +164,39 @@ func (d *SignatureGossipDelegate) BroadcastSignature(sig *pb.Signature, epoch ui
 		"queue_size", len(d.broadcasts))
 
 	return nil
+}
+
+// BroadcastValidationBundleSignature queues a ValidationBundle signature for gossip propagation
+func (d *SignatureGossipDelegate) BroadcastValidationBundleSignature(vbSig *pb.ValidationBundleSignature) error {
+	msg := &pb.GossipMessage{
+		Payload: &pb.GossipMessage_ValidationBundleSignature{
+			ValidationBundleSignature: vbSig,
+		},
+	}
+
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("marshal ValidationBundle gossip message: %w", err)
+	}
+
+	d.mu.Lock()
+	d.broadcasts = append(d.broadcasts, data)
+	d.mu.Unlock()
+
+	d.logger.Debug("Queued ValidationBundle signature for gossip broadcast",
+		"validator", vbSig.ValidatorAddress,
+		"intent_id", vbSig.IntentId,
+		"epoch", vbSig.Epoch,
+		"queue_size", len(d.broadcasts))
+
+	return nil
+}
+
+// SetValidationBundleSignatureHandler sets the handler for ValidationBundle signatures
+func (d *SignatureGossipDelegate) SetValidationBundleSignatureHandler(handler ValidationBundleSignatureHandler) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.validationBundleSigHandler = handler
 }
 
 // NotifyJoin is called when a node joins the cluster

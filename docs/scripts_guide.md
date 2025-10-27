@@ -523,6 +523,171 @@ Contains older intent submission and testing utilities. Most functionality has b
 
 ---
 
+### 9. register-validators.sh
+
+**Purpose**: Batch register multiple validators to a subnet
+
+**Location**: `scripts/register-validators.sh`
+
+**Description**:
+Automates the process of registering multiple validators from a JSON file. This script reads validator information (addresses and private keys) and registers each one to the specified subnet contract with stake and endpoint configuration.
+
+**Usage**:
+```bash
+# Set required environment variables
+export RPC_URL="https://sepolia.base.org"
+export PIN_NETWORK="base_sepolia"
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000009"
+export SUBNET_CONTRACT="0x5697DFA452a8cA1598a9CA736b3E9E75dA1a43A6"
+export PIN_BASE_SEPOLIA_STAKING_MANAGER="0xAc11AE66c7831A70Bea940b0AE16c967f940cB65"
+
+# Optional configuration
+export VALIDATOR_STAKE="0.001"  # Default stake amount in ETH
+export BASE_PORT="9090"          # Base port (validator 1 = 9090, validator 2 = 9091, etc.)
+export DOMAIN_SUFFIX="test.pinai.xyz"  # Domain suffix for validator endpoints
+
+# Run registration
+./scripts/register-validators.sh validators.json
+```
+
+**Validators JSON Format**:
+```json
+[
+  {
+    "id": "validator-1",
+    "address": "0x3d5f11B94f1B83fC3dbB9f37dE33CEb978186FED",
+    "private_key": "0xabc123..."
+  },
+  {
+    "id": "validator-2",
+    "address": "0x4d3A18617613baC4767accC5350Ff6E57c3a3efc",
+    "private_key": "0xdef456..."
+  }
+]
+```
+
+**Required Environment Variables**:
+- `RPC_URL` - Blockchain RPC endpoint
+- `PIN_NETWORK` - Network name (base_sepolia, base, etc.)
+- `SUBNET_ID` - Target subnet ID
+- `SUBNET_CONTRACT` - Subnet contract address
+- `PIN_BASE_SEPOLIA_STAKING_MANAGER` - StakingManager contract address
+
+**Optional Environment Variables**:
+- `VALIDATOR_STAKE` - Stake amount in ETH (default: 0.001)
+- `BASE_PORT` - Base port for validator endpoints (default: 9090)
+- `DOMAIN_SUFFIX` - Domain suffix for endpoints (default: test.pinai.xyz)
+
+**Features**:
+- Automatic validator count detection
+- Sequential registration with confirmation
+- Error handling for each validator
+- Configurable stake and port assignments
+- Progress tracking and status display
+
+**Example Output**:
+```
+🚀 Registering validators to Subnet:
+   Network: base_sepolia
+   RPC: https://sepolia.base.org
+   Subnet ID: 0x0000...0009
+   Subnet Contract: 0x5697...
+   Stake: 0.001 ETH
+
+📋 Found 3 validators in file
+
+Validators to register:
+  1. 0x3d5f11B94f1B83fC3dbB9f37dE33CEb978186FED
+  2. 0x4d3A18617613baC4767accC5350Ff6E57c3a3efc
+  3. 0x734e8FaeF1E5d07E9357718748aC7cdBcfdE9561
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📝 Registering validator 1/3...
+   Address: 0x3d5f11B94f1B83fC3dbB9f37dE33CEb978186FED
+   ✅ Validator 1 registered successfully!
+
+[... continues for each validator ...]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ All 3 validators registered successfully!
+```
+
+---
+
+### 10. fund-validators.py
+
+**Purpose**: Fund validator accounts with ETH for gas fees
+
+**Location**: `scripts/fund-validators.py`
+
+**Description**:
+Python utility to batch transfer ETH to multiple validator addresses. Useful for setting up test validators on testnets like Base Sepolia.
+
+**Usage**:
+```bash
+# Set environment variables
+export PRIVATE_KEY="0xYOUR_FUNDING_ACCOUNT_PRIVATE_KEY"  # Account with ETH
+export RPC_URL="https://sepolia.base.org"  # Optional, defaults to Base Sepolia
+
+# Run funding script
+./scripts/fund-validators.py validators.json 0.01
+
+# Or use default amount (0.01 ETH)
+./scripts/fund-validators.py validators.json
+```
+
+**Arguments**:
+1. `validators_json_file` - Path to JSON file with validator addresses (required)
+2. `amount_eth` - Amount of ETH to send to each validator (optional, default: 0.01)
+
+**Required Environment Variables**:
+- `PRIVATE_KEY` or `TEST_PRIVATE_KEY` - Private key of funding account
+
+**Optional Environment Variables**:
+- `RPC_URL` - RPC endpoint (default: https://sepolia.base.org)
+
+**Features**:
+- Batch ETH transfers to multiple addresses
+- Automatic nonce management
+- Transaction confirmation tracking
+- Balance verification before and after
+- Support for both web3.py v5 and v6
+
+**Example Output**:
+```
+✅ Connected to https://sepolia.base.org
+📊 Main account: 0xfc5A111b714547fc2D1D796EAAbb68264ed4A132
+💰 Balance: 0.5 ETH
+⛽ Gas price: 0.5 gwei
+
+🚀 Sending 0.01 ETH to each validator...
+  ✅ validator-1: 0x3d5f11B94f1B83fC3dbB9f37dE33CEb978186FED
+     TX: 0xabc123...
+  ✅ validator-2: 0x4d3A18617613baC4767accC5350Ff6E57c3a3efc
+     TX: 0xdef456...
+
+⏳ Waiting for confirmations...
+  ✅ validator-1: Confirmed (block 12345678)
+  ✅ validator-2: Confirmed (block 12345679)
+
+✅ Funding complete!
+
+📊 Final validator balances:
+  validator-1: 0.01 ETH
+  validator-2: 0.01 ETH
+```
+
+**Dependencies**:
+- `web3` - Ethereum Python library
+- `eth-account` - Ethereum account utilities
+
+**Install**:
+```bash
+pip install web3 eth-account
+```
+
+---
+
 ## Common Workflows
 
 ### Initial Subnet Setup

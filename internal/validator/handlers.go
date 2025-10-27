@@ -97,11 +97,12 @@ func (n *Node) processExecutionReportRaft(report *pb.ExecutionReport) (*pb.Recei
 			return nil, fmt.Errorf("apply execution report via raft: %w", err)
 		}
 	} else {
-		leaderAddr := n.raftConsensus.LeaderAddress()
-		if leaderAddr == "" {
-			return nil, fmt.Errorf("no raft leader available")
+		// Follower: forward to leader via validator service endpoint
+		leaderID, err := n.getLeaderIDFromRaft()
+		if err != nil {
+			return nil, fmt.Errorf("get leader ID: %w", err)
 		}
-		return n.forwardReportToLeader(leaderAddr, report)
+		return n.forwardReportToLeader(leaderID, report)
 	}
 
 	receipt := &pb.Receipt{
@@ -114,10 +115,19 @@ func (n *Node) processExecutionReportRaft(report *pb.ExecutionReport) (*pb.Recei
 	return receipt, nil
 }
 
-func (n *Node) forwardReportToLeader(addr string, report *pb.ExecutionReport) (*pb.Receipt, error) {
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+func (n *Node) forwardReportToLeader(leaderID string, report *pb.ExecutionReport) (*pb.Receipt, error) {
+	// Look up validator service endpoint for the leader
+	n.mu.RLock()
+	endpoint, ok := n.validatorEndpoints[leaderID]
+	n.mu.RUnlock()
+
+	if !ok || endpoint == "" {
+		return nil, fmt.Errorf("no validator endpoint configured for leader %s", leaderID)
+	}
+
+	conn, err := grpc.Dial(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return nil, fmt.Errorf("dial leader %s: %w", addr, err)
+		return nil, fmt.Errorf("dial leader %s at %s: %w", leaderID, endpoint, err)
 	}
 	defer conn.Close()
 
@@ -126,7 +136,7 @@ func (n *Node) forwardReportToLeader(addr string, report *pb.ExecutionReport) (*
 	defer cancel()
 	resp, err := client.SubmitExecutionReport(ctx, report)
 	if err != nil {
-		return nil, fmt.Errorf("forward execution report to leader: %w", err)
+		return nil, fmt.Errorf("forward execution report to leader %s: %w", leaderID, err)
 	}
 	return resp, nil
 }
@@ -737,4 +747,23 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 
 	n.mu.Unlock()
 	return nil
+}
+
+// getLeaderIDFromRaft maps the Raft leader address to the validator ID
+func (n *Node) getLeaderIDFromRaft() (string, error) {
+	leaderAddr := n.raftConsensus.LeaderAddress()
+	if leaderAddr == "" {
+		return "", fmt.Errorf("no raft leader available")
+	}
+
+	// Look up the validator ID from Raft peers configuration
+	if n.config.Raft != nil && n.config.Raft.Peers != nil {
+		for _, peer := range n.config.Raft.Peers {
+			if peer.Address == leaderAddr {
+				return peer.ID, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("could not map Raft leader address %s to validator ID", leaderAddr)
 }
