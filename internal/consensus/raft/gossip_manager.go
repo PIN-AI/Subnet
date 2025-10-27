@@ -1,4 +1,4 @@
-package consensus
+package raft
 
 import (
 	"fmt"
@@ -136,6 +136,16 @@ func (g *GossipManager) NumMembers() int {
 // BroadcastSignature broadcasts a signature via gossip
 func (g *GossipManager) BroadcastSignature(sig *pb.Signature, epoch uint64, checkpointHash []byte) error {
 	return g.delegate.BroadcastSignature(sig, epoch, checkpointHash)
+}
+
+// BroadcastValidationBundleSignature broadcasts a ValidationBundle signature via gossip
+func (g *GossipManager) BroadcastValidationBundleSignature(vbSig *pb.ValidationBundleSignature) error {
+	return g.delegate.BroadcastValidationBundleSignature(vbSig)
+}
+
+// SetValidationBundleSignatureHandler sets the handler for ValidationBundle signatures
+func (g *GossipManager) SetValidationBundleSignatureHandler(handler ValidationBundleSignatureHandler) {
+	g.delegate.SetValidationBundleSignatureHandler(handler)
 }
 
 // Shutdown gracefully shuts down the gossip layer
