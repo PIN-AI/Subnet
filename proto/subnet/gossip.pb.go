@@ -27,6 +27,7 @@ type GossipMessage struct {
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*GossipMessage_Signature
+	//	*GossipMessage_ValidationBundleSignature
 	Payload       isGossipMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -78,6 +79,15 @@ func (x *GossipMessage) GetSignature() *CheckpointSignature {
 	return nil
 }
 
+func (x *GossipMessage) GetValidationBundleSignature() *ValidationBundleSignature {
+	if x != nil {
+		if x, ok := x.Payload.(*GossipMessage_ValidationBundleSignature); ok {
+			return x.ValidationBundleSignature
+		}
+	}
+	return nil
+}
+
 type isGossipMessage_Payload interface {
 	isGossipMessage_Payload()
 }
@@ -86,7 +96,13 @@ type GossipMessage_Signature struct {
 	Signature *CheckpointSignature `protobuf:"bytes,1,opt,name=signature,proto3,oneof"`
 }
 
+type GossipMessage_ValidationBundleSignature struct {
+	ValidationBundleSignature *ValidationBundleSignature `protobuf:"bytes,2,opt,name=validation_bundle_signature,json=validationBundleSignature,proto3,oneof"`
+}
+
 func (*GossipMessage_Signature) isGossipMessage_Payload() {}
+
+func (*GossipMessage_ValidationBundleSignature) isGossipMessage_Payload() {}
 
 // CheckpointSignature contains a validator's signature on a checkpoint
 type CheckpointSignature struct {
@@ -170,20 +186,129 @@ func (x *CheckpointSignature) GetCheckpointHash() []byte {
 	return nil
 }
 
+// ValidationBundleSignature contains a validator's signature on a ValidationBundle
+type ValidationBundleSignature struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Intent ID being validated
+	IntentId string `protobuf:"bytes,1,opt,name=intent_id,json=intentId,proto3" json:"intent_id,omitempty"`
+	// Assignment ID
+	AssignmentId string `protobuf:"bytes,2,opt,name=assignment_id,json=assignmentId,proto3" json:"assignment_id,omitempty"`
+	// Epoch of the checkpoint
+	Epoch uint64 `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	// Validator address (0x-prefixed hex string)
+	ValidatorAddress string `protobuf:"bytes,4,opt,name=validator_address,json=validatorAddress,proto3" json:"validator_address,omitempty"`
+	// EIP-191 signature bytes
+	Signature []byte `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
+	// Unix timestamp when signature was created
+	Timestamp int64 `protobuf:"varint,6,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// Hash of the ValidationBundle digest to prevent signing wrong data
+	BundleDigestHash []byte `protobuf:"bytes,7,opt,name=bundle_digest_hash,json=bundleDigestHash,proto3" json:"bundle_digest_hash,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ValidationBundleSignature) Reset() {
+	*x = ValidationBundleSignature{}
+	mi := &file_proto_subnet_gossip_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValidationBundleSignature) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValidationBundleSignature) ProtoMessage() {}
+
+func (x *ValidationBundleSignature) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_subnet_gossip_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValidationBundleSignature.ProtoReflect.Descriptor instead.
+func (*ValidationBundleSignature) Descriptor() ([]byte, []int) {
+	return file_proto_subnet_gossip_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ValidationBundleSignature) GetIntentId() string {
+	if x != nil {
+		return x.IntentId
+	}
+	return ""
+}
+
+func (x *ValidationBundleSignature) GetAssignmentId() string {
+	if x != nil {
+		return x.AssignmentId
+	}
+	return ""
+}
+
+func (x *ValidationBundleSignature) GetEpoch() uint64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+func (x *ValidationBundleSignature) GetValidatorAddress() string {
+	if x != nil {
+		return x.ValidatorAddress
+	}
+	return ""
+}
+
+func (x *ValidationBundleSignature) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+func (x *ValidationBundleSignature) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *ValidationBundleSignature) GetBundleDigestHash() []byte {
+	if x != nil {
+		return x.BundleDigestHash
+	}
+	return nil
+}
+
 var File_proto_subnet_gossip_proto protoreflect.FileDescriptor
 
 const file_proto_subnet_gossip_proto_rawDesc = "" +
 	"\n" +
-	"\x19proto/subnet/gossip.proto\x12\tsubnet.v1\"Z\n" +
+	"\x19proto/subnet/gossip.proto\x12\tsubnet.v1\"\xc2\x01\n" +
 	"\rGossipMessage\x12>\n" +
-	"\tsignature\x18\x01 \x01(\v2\x1e.subnet.v1.CheckpointSignatureH\x00R\tsignatureB\t\n" +
+	"\tsignature\x18\x01 \x01(\v2\x1e.subnet.v1.CheckpointSignatureH\x00R\tsignature\x12f\n" +
+	"\x1bvalidation_bundle_signature\x18\x02 \x01(\v2$.subnet.v1.ValidationBundleSignatureH\x00R\x19validationBundleSignatureB\t\n" +
 	"\apayload\"\xba\x01\n" +
 	"\x13CheckpointSignature\x12\x14\n" +
 	"\x05epoch\x18\x01 \x01(\x04R\x05epoch\x12!\n" +
 	"\fvalidator_id\x18\x02 \x01(\tR\vvalidatorId\x12#\n" +
 	"\rsignature_der\x18\x03 \x01(\fR\fsignatureDer\x12\x1c\n" +
 	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\x12'\n" +
-	"\x0fcheckpoint_hash\x18\x05 \x01(\fR\x0echeckpointHashB\x18Z\x16subnet/proto/subnet;pbb\x06proto3"
+	"\x0fcheckpoint_hash\x18\x05 \x01(\fR\x0echeckpointHash\"\x8a\x02\n" +
+	"\x19ValidationBundleSignature\x12\x1b\n" +
+	"\tintent_id\x18\x01 \x01(\tR\bintentId\x12#\n" +
+	"\rassignment_id\x18\x02 \x01(\tR\fassignmentId\x12\x14\n" +
+	"\x05epoch\x18\x03 \x01(\x04R\x05epoch\x12+\n" +
+	"\x11validator_address\x18\x04 \x01(\tR\x10validatorAddress\x12\x1c\n" +
+	"\tsignature\x18\x05 \x01(\fR\tsignature\x12\x1c\n" +
+	"\ttimestamp\x18\x06 \x01(\x03R\ttimestamp\x12,\n" +
+	"\x12bundle_digest_hash\x18\a \x01(\fR\x10bundleDigestHashB\x18Z\x16subnet/proto/subnet;pbb\x06proto3"
 
 var (
 	file_proto_subnet_gossip_proto_rawDescOnce sync.Once
@@ -197,18 +322,20 @@ func file_proto_subnet_gossip_proto_rawDescGZIP() []byte {
 	return file_proto_subnet_gossip_proto_rawDescData
 }
 
-var file_proto_subnet_gossip_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_proto_subnet_gossip_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_proto_subnet_gossip_proto_goTypes = []any{
-	(*GossipMessage)(nil),       // 0: subnet.v1.GossipMessage
-	(*CheckpointSignature)(nil), // 1: subnet.v1.CheckpointSignature
+	(*GossipMessage)(nil),             // 0: subnet.v1.GossipMessage
+	(*CheckpointSignature)(nil),       // 1: subnet.v1.CheckpointSignature
+	(*ValidationBundleSignature)(nil), // 2: subnet.v1.ValidationBundleSignature
 }
 var file_proto_subnet_gossip_proto_depIdxs = []int32{
 	1, // 0: subnet.v1.GossipMessage.signature:type_name -> subnet.v1.CheckpointSignature
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	2, // 1: subnet.v1.GossipMessage.validation_bundle_signature:type_name -> subnet.v1.ValidationBundleSignature
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_proto_subnet_gossip_proto_init() }
@@ -218,6 +345,7 @@ func file_proto_subnet_gossip_proto_init() {
 	}
 	file_proto_subnet_gossip_proto_msgTypes[0].OneofWrappers = []any{
 		(*GossipMessage_Signature)(nil),
+		(*GossipMessage_ValidationBundleSignature)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -225,7 +353,7 @@ func file_proto_subnet_gossip_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_subnet_gossip_proto_rawDesc), len(file_proto_subnet_gossip_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
