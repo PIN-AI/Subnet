@@ -12,6 +12,8 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 ## ✨ Key Features
 
+- **Dual Consensus Options**: Choose between Raft+Gossip or CometBFT (Tendermint) consensus engines
+- **CometBFT Integration**: Production-grade BFT consensus with P2P validator discovery
 - **Batch Operations**: High-performance batch submission for ValidationBundles and Assignments
 - **Flexible Matching**: Pluggable matching strategies (price-based, reputation-based, geo-location, etc.)
 - **Threshold Consensus**: Byzantine fault-tolerant validator consensus with configurable thresholds
@@ -22,6 +24,7 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 ### Getting Started
 - **[Quick Start Guide](docs/quick_start.md)** - Get your Subnet running in 5 minutes
+- **[CometBFT Quick Start](docs/COMETBFT_QUICKSTART.md)** - Start validators with CometBFT consensus
 - **[E2E Test Guide](docs/e2e_test_guide.md)** - End-to-end testing workflow
 
 ### Deployment & Customization
@@ -31,6 +34,11 @@ This is a **template** for creating your own Subnet. Fork this repository to:
   - Custom validator verification logic
   - Custom agent executor development
   - Production deployment guide
+- **[CometBFT Deployment Guide](docs/cometbft_deployment_guide.md)** - CometBFT consensus deployment
+  - Static configuration for testing
+  - P2P seeds for production
+  - Performance tuning
+  - Security hardening
 
 ### Architecture & Testing
 - **[Architecture Overview](docs/architecture.md)** - Full component walkthrough and system design

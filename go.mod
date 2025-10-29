@@ -88,6 +88,8 @@ require (
 	golang.org/x/sync v0.15.0 // indirect
 )
 
+replace github.com/PIN-AI/subnet-sdk/go => ../subnet-sdk/go
+
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
