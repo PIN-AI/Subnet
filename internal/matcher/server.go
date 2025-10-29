@@ -285,9 +285,9 @@ func (s *Server) Stop() error {
 // AddIntent adds a new intent and starts its bidding window
 func (s *Server) AddIntent(intent *rootpb.Intent) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, exists := s.intents[intent.IntentId]; exists {
+		s.mu.Unlock()
 		return fmt.Errorf("intent %s already exists", intent.IntentId)
 	}
 
@@ -306,6 +306,10 @@ func (s *Server) AddIntent(intent *rootpb.Intent) error {
 
 	s.logger.Infof("Added intent %s with bidding window %d seconds",
 		intent.IntentId, s.cfg.BiddingWindowSec)
+
+	// Unlock before broadcasting to avoid deadlock
+	// (broadcastIntentUpdate needs to acquire read lock)
+	s.mu.Unlock()
 
 	// Notify all streams about new intent
 	s.broadcastIntentUpdate(intent.IntentId, "NEW_INTENT")
@@ -515,20 +519,30 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 
 // broadcastIntentUpdate sends update to all listening streams
 func (s *Server) broadcastIntentUpdate(intentID, updateType string) {
+	s.logger.Infof("[MATCHER DEBUG] broadcastIntentUpdate called for intent %s, type %s", intentID, updateType)
+
 	update := &pb.MatcherIntentUpdate{
 		IntentId:   intentID,
 		UpdateType: updateType,
 		Timestamp:  time.Now().Unix(),
 	}
 
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	s.logger.Infof("[MATCHER DEBUG] Broadcasting to %d streams", len(s.intentStreams))
+
 	for streamID, ch := range s.intentStreams {
+		s.logger.Infof("[MATCHER DEBUG] Attempting to send to stream %s", streamID)
 		select {
 		case ch <- update:
-			s.logger.Debugf("Sent update to stream %s", streamID)
+			s.logger.Infof("[MATCHER DEBUG] ✓ Sent update to stream %s", streamID)
 		default:
-			s.logger.Warnf("Stream %s channel full, skipping update", streamID)
+			s.logger.Warnf("[MATCHER DEBUG] Stream %s channel full, skipping update", streamID)
 		}
 	}
+
+	s.logger.Infof("[MATCHER DEBUG] Broadcast complete")
 }
 
 // computeResultHash computes a hash of the matching result
@@ -778,10 +792,14 @@ func (s *Server) GetIntentSnapshot(ctx context.Context, req *pb.GetIntentSnapsho
 
 // StreamIntents implements MatcherServiceServer
 func (s *Server) StreamIntents(req *pb.StreamIntentsRequest, stream pb.MatcherService_StreamIntentsServer) error {
+	s.logger.Infof("[MATCHER DEBUG] StreamIntents called! Request: %+v", req)
+
 	if req == nil {
+		s.logger.Errorf("[MATCHER DEBUG] Request is nil, returning error")
 		return fmt.Errorf("request is nil")
 	}
 
+	s.logger.Infof("[MATCHER DEBUG] Request valid, acquiring lock...")
 	s.mu.Lock()
 	streamID := fmt.Sprintf("stream-%d", s.nextStreamID)
 	s.nextStreamID++
@@ -1462,19 +1480,55 @@ func (s *Server) flushAssignmentBatch() {
 	}
 }
 
-// submitIndividualAssignments submits assignments one by one (fallback method)
+// submitIndividualAssignments submits assignments one by one with retry for intent confirmation (fallback method)
 func (s *Server) submitIndividualAssignments(assignments []*rootpb.Assignment) {
 	for _, assignment := range assignments {
+		go s.submitAssignmentWithRetry(assignment)
+	}
+}
+
+// submitAssignmentWithRetry submits an assignment with retry logic for intent confirmation
+func (s *Server) submitAssignmentWithRetry(assignment *rootpb.Assignment) {
+	const maxRetries = 3
+	const baseDelay = 15 * time.Second // Wait 15s between retries for blockchain confirmation
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
 		timeout := s.getRootLayerSubmitTimeout()
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 
-		if err := s.rootlayerClient.SubmitAssignment(ctx, assignment); err != nil {
-			s.logger.Errorf("Failed to submit assignment %s individually: %v", assignment.AssignmentId, err)
-		} else {
-			s.logger.Infof("Successfully submitted assignment %s individually", assignment.AssignmentId)
+		err := s.rootlayerClient.SubmitAssignment(ctx, assignment)
+		cancel()
+
+		if err == nil {
+			s.logger.Infof("Successfully submitted assignment %s to RootLayer (attempt %d)",
+				assignment.AssignmentId, attempt+1)
+			return
 		}
 
-		cancel()
+		// Check if error is due to intent not confirmed on blockchain
+		errMsg := err.Error()
+		isIntentNotConfirmed := strings.Contains(errMsg, "intent pending not confirmed") ||
+			strings.Contains(errMsg, "intent not confirmed") ||
+			strings.Contains(errMsg, "Invalid intent status")
+
+		if !isIntentNotConfirmed {
+			// Other error, don't retry
+			s.logger.Errorf("Failed to submit assignment %s: %v (non-retryable error)",
+				assignment.AssignmentId, err)
+			return
+		}
+
+		// Intent not confirmed yet, wait and retry
+		if attempt < maxRetries-1 {
+			delay := baseDelay * time.Duration(attempt+1) // Exponential backoff: 15s, 30s, 45s
+			s.logger.Warnf("Assignment %s submission failed (intent not confirmed yet), retrying in %v (attempt %d/%d)",
+				assignment.AssignmentId, delay, attempt+1, maxRetries)
+			time.Sleep(delay)
+		} else {
+			// Final attempt failed
+			s.logger.Errorf("Failed to submit assignment %s after %d attempts: intent still not confirmed on blockchain",
+				assignment.AssignmentId, maxRetries)
+		}
 	}
 }
 

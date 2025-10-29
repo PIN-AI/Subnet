@@ -89,8 +89,16 @@ func (c *Consensus) Start(ctx context.Context) error {
 	// Initialize CometBFT config
 	cmtConfig := c.buildCometBFTConfig()
 
-	// Create ABCI application
-	c.app = NewSubnetABCIApp(c.handlers, c.config.GenesisValidators, c.logger)
+	// Create ABCI application with full configuration
+	appConfig := SubnetABCIAppConfig{
+		Handlers:           c.handlers,
+		ValidatorSet:       c.config.GenesisValidators,
+		ECDSASigner:        c.config.ECDSASigner,
+		RootLayerClient:    c.config.RootLayerClient,
+		MempoolBroadcaster: nil, // Will be set after node is created
+		Logger:             c.logger,
+	}
+	c.app = NewSubnetABCIAppWithConfig(appConfig)
 
 	// Create node key (for P2P)
 	nodeKeyFile := filepath.Join(c.config.HomeDir, "config", "node_key.json")
@@ -108,14 +116,16 @@ func (c *Consensus) Start(ctx context.Context) error {
 	privValKeyFile := filepath.Join(c.config.HomeDir, "config", "priv_validator_key.json")
 	privValStateFile := filepath.Join(c.config.HomeDir, "data", "priv_validator_state.json")
 
+	// Ensure both config and data directories exist
+	if err := os.MkdirAll(filepath.Dir(privValKeyFile), 0755); err != nil {
+		return fmt.Errorf("create config dir for priv validator: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(privValStateFile), 0755); err != nil {
 		return fmt.Errorf("create data dir: %w", err)
 	}
 
-	if _, err := os.Stat(privValKeyFile); os.IsNotExist(err) {
-		privval.GenFilePV(privValKeyFile, privValStateFile)
-	}
-	pv := privval.LoadFilePV(privValKeyFile, privValStateFile)
+	// LoadOrGenFilePV will generate the files if they don't exist
+	pv := privval.LoadOrGenFilePV(privValKeyFile, privValStateFile)
 
 	// Create genesis file if not exists
 	genesisFile := filepath.Join(c.config.HomeDir, "config", "genesis.json")
@@ -147,6 +157,12 @@ func (c *Consensus) Start(ctx context.Context) error {
 	}
 
 	c.node = node
+
+	// Set mempool broadcaster in ABCI app (now that node is created)
+	c.app.mempoolBroadcaster = &mempoolBroadcasterAdapter{
+		mempool: c.node.Mempool(),
+		logger:  c.logger,
+	}
 
 	// Start node
 	if err := c.node.Start(); err != nil {
@@ -426,6 +442,8 @@ func (c *Consensus) buildCometBFTConfig() *cmtcfg.Config {
 	cfg.P2P.ListenAddress = c.config.P2PListenAddress
 	cfg.P2P.Seeds = strings.Join(c.config.Seeds, ",")
 	cfg.P2P.PersistentPeers = strings.Join(c.config.PersistentPeers, ",")
+	cfg.P2P.AllowDuplicateIP = true // Allow localhost connections for testing
+	cfg.P2P.AddrBookStrict = false  // Allow non-routable addresses (127.0.0.1)
 
 	// RPC config
 	cfg.RPC.ListenAddress = c.config.RPCListenAddress
@@ -482,5 +500,28 @@ func (c *Consensus) generateGenesis(genesisFile string, pv *privval.FilePV) erro
 	}
 
 	c.logger.Info("Generated genesis file", "file", genesisFile, "validators", len(validators))
+	return nil
+}
+
+// mempoolBroadcasterAdapter adapts CometBFT mempool to MempoolBroadcaster interface
+type mempoolBroadcasterAdapter struct {
+	mempool cmtmempool.Mempool
+	logger  logging.Logger
+}
+
+// BroadcastTxSync broadcasts a transaction to the mempool synchronously
+func (m *mempoolBroadcasterAdapter) BroadcastTxSync(tx []byte) error {
+	if m.mempool == nil {
+		return fmt.Errorf("mempool not available")
+	}
+
+	// CheckTx adds the transaction to the mempool and broadcasts to peers
+	err := m.mempool.CheckTx(tx, nil, cmtmempool.TxInfo{})
+	if err != nil {
+		m.logger.Error("Failed to broadcast transaction to mempool", "error", err)
+		return fmt.Errorf("broadcast tx: %w", err)
+	}
+
+	m.logger.Debug("Successfully broadcast transaction to mempool", "tx_size", len(tx))
 	return nil
 }

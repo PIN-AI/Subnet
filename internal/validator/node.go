@@ -21,6 +21,7 @@ import (
 	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/config"
 	"subnet/internal/consensus"
+	"subnet/internal/consensus/cometbft"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/metrics"
@@ -42,12 +43,13 @@ type Node struct {
 	logger       logging.Logger
 
 	// Consensus components
-	raftConsensus  *consensus.RaftConsensus
-	gossipManager  *consensus.GossipManager
-	gossipDelegate *consensus.SignatureGossipDelegate
-	fsm            *consensus.StateMachine
-	leaderTracker  *consensus.LeaderTracker
-	chain          *consensus.Chain
+	raftConsensus   *consensus.RaftConsensus
+	cometbftConsensus *cometbft.Consensus
+	gossipManager   *consensus.GossipManager
+	gossipDelegate  *consensus.SignatureGossipDelegate
+	fsm             *consensus.StateMachine
+	leaderTracker   *consensus.LeaderTracker
+	chain           *consensus.Chain
 
 	// Storage
 	store storage.Store
@@ -138,6 +140,12 @@ type Config struct {
 
 	// Gossip signature propagation configuration
 	Gossip *GossipConfig
+
+	// CometBFT consensus configuration
+	CometBFT *CometBFTConfig
+
+	// Consensus type selection
+	ConsensusType string // "raft-gossip" or "cometbft"
 
 	// Validator endpoints (validator_id -> grpc_address mapping for report forwarding)
 	ValidatorEndpoints map[string]string
@@ -319,6 +327,59 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 		logger.Info("Gossip initialized",
 			"bind_addr", fmt.Sprintf("%s:%d", gossipCfg.BindAddress, gossipCfg.BindPort),
 			"seeds", gossipCfg.Seeds)
+	}
+
+	// Initialise CometBFT consensus if enabled
+	if config.CometBFT != nil && config.CometBFT.Enable {
+		cometCfg, err := config.buildCometBFTConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build cometbft config: %w", err)
+		}
+
+		// Set ECDSA signer via adapter if signer is available
+		if signer != nil {
+			ecdsaAdapter, err := cometbft.NewECDSASignerAdapter(config.PrivateKey, logger)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create ECDSA signer adapter: %w", err)
+			}
+			cometCfg.ECDSASigner = ecdsaAdapter
+			logger.Info("CometBFT ECDSA signer configured", "address", ecdsaAdapter.Address())
+		} else {
+			logger.Warn("No signer available, CometBFT ValidationBundle signing disabled")
+		}
+
+		// Set RootLayer client via adapter if available
+		if rootClient != nil {
+			// Cast to CompleteClient (if not already)
+			if completeClient, ok := rootClient.(*rootlayer.CompleteClient); ok {
+				rootAdapter := cometbft.NewRootLayerClientAdapter(completeClient, config.SubnetID, logger)
+				cometCfg.RootLayerClient = rootAdapter
+				logger.Info("CometBFT RootLayer client configured")
+			} else {
+				logger.Warn("RootLayer client is not CompleteClient, CometBFT RootLayer submission disabled")
+			}
+		} else {
+			logger.Warn("No RootLayer client available, CometBFT checkpoint submission disabled")
+		}
+
+		// Create consensus handlers
+		handlers := cometbft.ConsensusHandlers{
+			OnCheckpointCommitted:      node.handleCommittedCheckpoint,
+			OnExecutionReportCommitted: node.handleExecutionReportCommitted,
+			OnCheckpointFinalized:      node.handleCheckpointFinalized,
+		}
+
+		cometConsensus, err := cometbft.NewConsensus(cometCfg, handlers, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create cometbft consensus: %w", err)
+		}
+
+		node.cometbftConsensus = cometConsensus
+		logger.Info("CometBFT consensus initialized",
+			"home_dir", cometCfg.HomeDir,
+			"chain_id", cometCfg.ChainID,
+			"p2p_listen", cometCfg.P2PListenAddress,
+			"rpc_listen", cometCfg.RPCListenAddress)
 	}
 
 	// Load latest checkpoint from storage
@@ -678,9 +739,9 @@ func (n *Node) Start(ctx context.Context) error {
 		}
 	}
 
-	// Raft consensus is required
-	if n.raftConsensus == nil {
-		return fmt.Errorf("Raft consensus is required - legacy NATS mode has been removed")
+	// Consensus engine is required (either Raft or CometBFT)
+	if n.raftConsensus == nil && n.cometbftConsensus == nil {
+		return fmt.Errorf("Consensus engine is required (either Raft+Gossip or CometBFT) - legacy NATS mode has been removed")
 	}
 
 	// Start metrics server if configured
@@ -691,10 +752,22 @@ func (n *Node) Start(ctx context.Context) error {
 	// Register validator in registry and start heartbeat
 	n.startValidatorRegistry()
 
+	// Start CometBFT consensus if configured
+	if n.cometbftConsensus != nil {
+		if err := n.cometbftConsensus.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start CometBFT consensus: %w", err)
+		}
+		n.logger.Info("CometBFT consensus started")
+	}
+
 	// Initialize leadership status
 	if n.raftConsensus != nil {
 		n.isLeader = n.raftConsensus.IsLeader()
 		n.logger.Infof("Initial Raft leadership status is_leader=%t epoch=%d", n.isLeader, n.currentEpoch)
+	} else if n.cometbftConsensus != nil {
+		// For CometBFT, check if this validator is ready to participate
+		n.isLeader = n.cometbftConsensus.IsReady()
+		n.logger.Infof("Initial CometBFT validator status is_ready=%t epoch=%d", n.isLeader, n.currentEpoch)
 	} else {
 		_, leader := n.leaderTracker.Leader(n.currentEpoch)
 		n.isLeader = leader != nil && leader.ID == n.id
@@ -789,6 +862,8 @@ func (n *Node) consensusLoop() {
 			if n.raftConsensus != nil {
 				n.checkRaftConsensusState()
 				n.checkRaftCheckpointTrigger()
+			} else if n.cometbftConsensus != nil {
+				n.checkCometBFTCheckpointTrigger()
 			} else {
 				n.checkConsensusState()
 				n.checkCheckpointTrigger() // Check if leader should create checkpoint
@@ -842,6 +917,33 @@ func (n *Node) checkRaftCheckpointTrigger() {
 
 	if shouldPropose {
 		n.proposeCheckpointRaft()
+	}
+}
+
+// checkCometBFTCheckpointTrigger checks if checkpoint should be proposed for CometBFT
+func (n *Node) checkCometBFTCheckpointTrigger() {
+	if n.cometbftConsensus == nil {
+		return
+	}
+
+	n.mu.Lock()
+	checkpointInterval := n.getCheckpointInterval()
+	now := time.Now()
+	shouldPropose := false
+
+	// CometBFT creates periodic checkpoints even without execution reports
+	// This records blockchain state for RootLayer submission
+	if n.lastCheckpointAt.IsZero() || now.Sub(n.lastCheckpointAt) >= checkpointInterval {
+		shouldPropose = true
+		n.lastCheckpointAt = now
+		n.logger.Debug("CometBFT checkpoint trigger",
+			"pending_reports", len(n.pendingReports),
+			"interval", checkpointInterval)
+	}
+	n.mu.Unlock()
+
+	if shouldPropose {
+		n.proposeCheckpointCometBFT()
 	}
 }
 
@@ -1082,6 +1184,29 @@ func (n *Node) proposeCheckpointRaft() {
 		return
 	}
 	n.logger.Infof("Replicated checkpoint via Raft epoch=%d", header.Epoch)
+}
+
+// proposeCheckpointCometBFT proposes a checkpoint to CometBFT consensus
+func (n *Node) proposeCheckpointCometBFT() {
+	if n.cometbftConsensus == nil {
+		return
+	}
+
+	// Build checkpoint header
+	header := n.buildCheckpointHeader()
+
+	n.mu.Lock()
+	n.currentCheckpoint = header
+	n.mu.Unlock()
+
+	// Submit to CometBFT - it will handle consensus, signature collection, and RootLayer submission
+	if err := n.cometbftConsensus.ProposeCheckpoint(header); err != nil {
+		n.logger.Errorf("Failed to propose checkpoint to CometBFT error=%v", err)
+		return
+	}
+
+	n.logger.Infof("Proposed checkpoint to CometBFT epoch=%d pending_reports=%d",
+		header.Epoch, len(n.pendingReports))
 }
 
 // buildCheckpointHeader creates a new checkpoint header
@@ -2340,6 +2465,77 @@ func (c *Config) buildRaftConsensusConfig() (consensus.RaftConfig, error) {
 	}, nil
 }
 
+// buildCometBFTConfig builds CometBFT consensus configuration from Config
+func (c *Config) buildCometBFTConfig() (*cometbft.Config, error) {
+	if c.CometBFT == nil || !c.CometBFT.Enable {
+		return nil, fmt.Errorf("cometbft not enabled")
+	}
+	if c.CometBFT.HomeDir == "" {
+		return nil, fmt.Errorf("cometbft home_dir is required when cometbft is enabled")
+	}
+
+	// Use Subnet ID as ChainID if not specified
+	// CometBFT requires chain_id to be max 50 characters, so use last 12 hex digits of subnet ID
+	chainID := c.CometBFT.ChainID
+	if chainID == "" {
+		// Use last 12 chars of subnet ID to create a shorter chain ID
+		subnetIDStr := c.SubnetID
+		if len(subnetIDStr) > 12 {
+			chainID = "subnet-" + subnetIDStr[len(subnetIDStr)-12:]
+		} else {
+			chainID = "subnet-" + subnetIDStr
+		}
+	}
+
+	// Set default moniker if not specified
+	moniker := c.CometBFT.Moniker
+	if moniker == "" {
+		moniker = c.ValidatorID
+	}
+
+	// Parse seeds and peers
+	var seeds []string
+	if c.CometBFT.Seeds != "" {
+		seeds = strings.Split(c.CometBFT.Seeds, ",")
+	}
+	var peers []string
+	if c.CometBFT.PersistentPeers != "" {
+		peers = strings.Split(c.CometBFT.PersistentPeers, ",")
+	}
+
+	// Build P2P and RPC listen addresses
+	p2pListenAddr := fmt.Sprintf("tcp://0.0.0.0:%d", c.CometBFT.P2PPort)
+	rpcListenAddr := fmt.Sprintf("tcp://127.0.0.1:%d", c.CometBFT.RPCPort)
+
+	return &cometbft.Config{
+		HomeDir:           c.CometBFT.HomeDir,
+		Moniker:           moniker,
+		ChainID:           chainID,
+		P2PListenAddress:  p2pListenAddr,
+		RPCListenAddress:  rpcListenAddr,
+		Seeds:             seeds,
+		PersistentPeers:   peers,
+		GenesisValidators: c.CometBFT.GenesisValidators,
+		ECDSASigner:       nil, // Will be set by Node after initialization
+		RootLayerClient:   nil, // Will be set by Node after initialization
+		LogFormat:         "plain",
+		// Use default values for other fields
+		TimeoutPropose:            3 * time.Second,
+		TimeoutPrevote:            1 * time.Second,
+		TimeoutPrecommit:          1 * time.Second,
+		TimeoutCommit:             5 * time.Second,
+		CreateEmptyBlocks:         true,
+		CreateEmptyBlocksInterval: 0,
+		MaxBlockSizeBytes:         22020096, // 21MB
+		MempoolSize:               5000,
+		MempoolRecheck:            true,
+		MempoolBroadcast:          true,
+		StateSyncEnable:           false,
+		DBBackend:                 "goleveldb",
+		LogLevel:                  "info",
+	}, nil
+}
+
 // computeCheckpointHash computes the canonical hash of a checkpoint header
 // DEPRECATED: Use crypto.NewCheckpointHasher().ComputeHash() instead
 func (n *Node) computeCheckpointHash(header *pb.CheckpointHeader) [32]byte {
@@ -2458,4 +2654,53 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 				validatorAddr.Hex(), intentID, header.Epoch)
 		}
 	}
+}
+
+// handleExecutionReportCommitted handles execution reports committed via CometBFT
+func (n *Node) handleExecutionReportCommitted(report *pb.ExecutionReport, reportKey string) {
+	if report == nil || reportKey == "" {
+		return
+	}
+	n.mu.Lock()
+	if _, exists := n.pendingReports[reportKey]; !exists {
+		n.pendingReports[reportKey] = report
+		score := n.scoreReport(report)
+		n.reportScores[reportKey] = score
+	}
+	n.mu.Unlock()
+	n.logger.Debugf("CometBFT committed execution report intent=%s assignment=%s", report.IntentId, report.AssignmentId)
+}
+
+// handleCheckpointFinalized handles checkpoints that have reached finality with threshold signatures
+func (n *Node) handleCheckpointFinalized(header *pb.CheckpointHeader, signatures []*pb.Signature) {
+	if header == nil {
+		return
+	}
+
+	n.logger.Info("Checkpoint finalized with threshold signatures",
+		"epoch", header.Epoch,
+		"signature_count", len(signatures))
+
+	// TODO: Submit to RootLayer if configured
+	// This will be implemented when we add checkpoint submission support to RootLayer client
+}
+
+// ecdsaSignerAdapter adapts crypto.Signer to cometbft.ECDSASigner interface
+// Legacy adapters removed - now using adapters from internal/consensus/cometbft/rootlayer_adapter.go
+
+// CometBFTConfig configures the CometBFT consensus engine.
+type CometBFTConfig struct {
+	Enable            bool             // Enable CometBFT consensus
+	HomeDir           string           // CometBFT home directory
+	Moniker           string           // Node moniker
+	ChainID           string           // Chain ID (default: subnet ID)
+	P2PPort           int              // P2P listen port
+	RPCPort           int              // RPC listen port
+	ProxyPort         int              // ABCI proxy app port
+	Seeds             string           // Comma-separated seed nodes (node_id@host:port)
+	PersistentPeers   string           // Comma-separated persistent peers
+	GenesisFile       string           // Path to genesis.json
+	PrivValidatorKey  string           // Path to priv_validator_key.json
+	NodeKey           string           // Path to node_key.json
+	GenesisValidators map[string]int64 // Validator set (validator_id -> voting_power)
 }

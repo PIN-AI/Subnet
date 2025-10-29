@@ -50,6 +50,21 @@ func main() {
 		gossipPort   = flag.Int("gossip-port", 7946, "Gossip port")
 	gossipSeeds  = flag.String("gossip-seeds", "", "Comma-separated list of seed nodes (e.g. '127.0.0.1:6001,127.0.0.1:6002')")
 
+		// Consensus type selection
+		consensusType = flag.String("consensus-type", "raft-gossip", "Consensus engine type: 'raft-gossip' or 'cometbft'")
+
+		// CometBFT configuration
+		cometbftHome            = flag.String("cometbft-home", "./cometbft-data", "CometBFT home directory")
+		cometbftMoniker         = flag.String("cometbft-moniker", "", "Node moniker for CometBFT (default: validator-id)")
+		cometbftP2PPort         = flag.Int("cometbft-p2p-port", 26656, "CometBFT P2P port")
+		cometbftRPCPort         = flag.Int("cometbft-rpc-port", 26657, "CometBFT RPC port")
+		cometbftProxyPort       = flag.Int("cometbft-proxy-port", 26658, "ABCI proxy app port")
+		cometbftSeeds           = flag.String("cometbft-seeds", "", "Comma-separated list of seed nodes for CometBFT (e.g. 'node_id@host:port')")
+		cometbftPersistentPeers = flag.String("cometbft-persistent-peers", "", "Comma-separated list of persistent peers (e.g. 'node_id@host:port')")
+		cometbftGenesisFile     = flag.String("cometbft-genesis-file", "", "Path to genesis.json file (required for CometBFT)")
+		cometbftPrivValidatorKey = flag.String("cometbft-priv-validator-key", "", "Path to priv_validator_key.json (required for CometBFT)")
+		cometbftNodeKey         = flag.String("cometbft-node-key", "", "Path to node_key.json (required for CometBFT)")
+
 		// Validator set configuration
 		validatorCount  = flag.Int("validators", 4, "Total number of validators")
 		thresholdNum    = flag.Int("threshold-num", 3, "Threshold numerator")
@@ -101,9 +116,31 @@ func main() {
 		fmt.Printf("Generated new private key: %s\n", *privateKey)
 	}
 
+	// Validate consensus type and required configuration
+	if *consensusType != "raft-gossip" && *consensusType != "cometbft" {
+		log.Fatalf("Invalid consensus type: %s (must be 'raft-gossip' or 'cometbft')", *consensusType)
+	}
+
+	// Set CometBFT defaults
+	if *consensusType == "cometbft" {
+		// Set default moniker to validator ID if not specified
+		if *cometbftMoniker == "" {
+			*cometbftMoniker = *validatorID
+		}
+		// Optional files: if not specified, CometBFT will auto-generate them
+		// Genesis file, node_key, and priv_validator_key are automatically created if missing
+	}
+
 	// Setup logger
 	logger := logging.NewDefaultLogger()
-	if *raftEnable {
+	if *consensusType == "cometbft" {
+		logger.Info("Starting validator node",
+			"id", *validatorID,
+			"grpc_port", *grpcPort,
+			"consensus", "CometBFT",
+			"p2p_port", *cometbftP2PPort,
+			"rpc_port", *cometbftRPCPort)
+	} else if *raftEnable {
 		logger.Info("Starting validator node",
 			"id", *validatorID,
 			"grpc_port", *grpcPort,
@@ -175,6 +212,26 @@ func main() {
 			ProbeInterval:  1 * time.Second,
 		},
 
+		// CometBFT consensus configuration
+		CometBFT: &validator.CometBFTConfig{
+			Enable:            *consensusType == "cometbft",
+			HomeDir:           *cometbftHome,
+			Moniker:           *cometbftMoniker,
+			ChainID:           "", // Will be auto-generated from subnet ID (shortened to meet 50-char limit)
+			P2PPort:           *cometbftP2PPort,
+			RPCPort:           *cometbftRPCPort,
+			ProxyPort:         *cometbftProxyPort,
+			Seeds:             *cometbftSeeds,
+			PersistentPeers:   *cometbftPersistentPeers,
+			GenesisFile:       *cometbftGenesisFile,
+			PrivValidatorKey:  *cometbftPrivValidatorKey,
+			NodeKey:           *cometbftNodeKey,
+			GenesisValidators: parseGenesisValidators(*validatorPubkey, validatorSet),
+		},
+
+		// Consensus type selection
+		ConsensusType: *consensusType,
+
 		// Validator endpoints mapping for execution report forwarding
 		ValidatorEndpoints: parseValidatorEndpoints(*validatorEndpoints),
 	}
@@ -210,20 +267,27 @@ func main() {
 	}
 
 	// Start registry service so agents can register
-	regService := registry.NewService(*registryGRPC, *registryHTTP)
-	if err := regService.Start(); err != nil {
-		log.Fatalf("Failed to start registry service: %v", err)
-	}
-	defer regService.Stop()
+	// Start registry service if configured
+	var agentRegistry *registry.Registry
+	if *registryGRPC != "" || *registryHTTP != "" {
+		regService := registry.NewService(*registryGRPC, *registryHTTP)
+		if err := regService.Start(); err != nil {
+			log.Fatalf("Failed to start registry service: %v", err)
+		}
+		defer regService.Stop()
 
-	agentRegistry := regService.GetRegistry()
-	if *registryEndpoint != "" {
-		_ = agentRegistry.RegisterValidator(&registry.ValidatorInfo{
-			ID:       *validatorID,
-			Endpoint: *registryEndpoint,
-			LastSeen: time.Now(),
-			Status:   pb.AgentStatus_AGENT_STATUS_ACTIVE,
-		})
+		agentRegistry = regService.GetRegistry()
+		if *registryEndpoint != "" {
+			_ = agentRegistry.RegisterValidator(&registry.ValidatorInfo{
+				ID:       *validatorID,
+				Endpoint: *registryEndpoint,
+				LastSeen: time.Now(),
+				Status:   pb.AgentStatus_AGENT_STATUS_ACTIVE,
+			})
+		}
+	} else {
+		// Create empty in-memory registry when registry service is disabled
+		agentRegistry = registry.New()
 	}
 
 	// Create validator node with registry
@@ -277,6 +341,8 @@ func main() {
 func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey, validatorPubkeys string) *types.ValidatorSet {
 	// Parse validator pubkeys from the comma-separated list
 	pubkeyMap := make(map[string][]byte)
+	validatorIDs := make([]string, 0, count)
+
 	if validatorPubkeys != "" {
 		pairs := splitAndTrim(validatorPubkeys, ",")
 		for _, pair := range pairs {
@@ -294,6 +360,7 @@ func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey
 					continue
 				}
 				pubkeyMap[id] = pubkeyBytes
+				validatorIDs = append(validatorIDs, id)
 			}
 		}
 	}
@@ -301,11 +368,17 @@ func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey
 	// Get my signer
 	mySigner, _ := crypto.NewECDSASignerFromHex(myPrivKey)
 
-	// Create validators in FIXED order (sorted by ID) so all validators agree on leader
-	validators := make([]types.Validator, 0, count)
-	for i := 1; i <= count; i++ {
-		id := fmt.Sprintf("validator-e2e-%d", i)
+	// If no pubkeys provided, fall back to legacy e2e format
+	if len(validatorIDs) == 0 {
+		for i := 1; i <= count; i++ {
+			validatorIDs = append(validatorIDs, fmt.Sprintf("validator-e2e-%d", i))
+		}
+	}
 
+	// Create validators using the IDs from the pubkey map
+	// Keep them in sorted order for consistent leader election
+	validators := make([]types.Validator, 0, len(validatorIDs))
+	for _, id := range validatorIDs {
 		if id == myID {
 			// Use my actual signer
 			validators = append(validators, types.Validator{
@@ -322,7 +395,7 @@ func createValidatorSet(count, thresholdNum, thresholdDenom int, myID, myPrivKey
 					Weight: 1,
 				})
 			} else {
-				log.Printf("Warning: no pubkey found for %s, using dummy key", id)
+				log.Printf("Warning: no pubkey found for %s, generating dummy key", id)
 				dummySigner, _ := crypto.GenerateECDSAKey()
 				validators = append(validators, types.Validator{
 					ID:     id,
@@ -400,6 +473,20 @@ func parseGossipSeeds(seedsStr string) []string {
 		return []string{}
 	}
 	return splitAndTrim(seedsStr, ",")
+}
+
+// parseGenesisValidators creates a genesis validator set from validatorSet
+// For CometBFT, we need a map of validator addresses to voting power
+func parseGenesisValidators(pubkeysStr string, validatorSet *types.ValidatorSet) map[string]int64 {
+	result := make(map[string]int64)
+
+	// Use the validator set to determine voting power
+	// For simplicity, give each validator equal voting power of 10
+	for _, validator := range validatorSet.Validators {
+		result[validator.ID] = 10
+	}
+
+	return result
 }
 
 // splitAndTrim splits a string by delimiter and trims whitespace from each part
