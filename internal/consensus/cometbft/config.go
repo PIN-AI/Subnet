@@ -50,6 +50,12 @@ type Config struct {
 	// Genesis validators (for initial setup)
 	// Format: map[validator_id]voting_power
 	GenesisValidators map[string]int64
+
+	// Optional: ECDSA signer for ValidationBundle signing
+	ECDSASigner ECDSASigner
+
+	// Optional: RootLayer client for ValidationBundle submission
+	RootLayerClient RootLayerClient
 }
 
 // DefaultConfig returns a default CometBFT configuration

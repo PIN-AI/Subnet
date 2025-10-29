@@ -23,6 +23,11 @@ func (n *Node) ProcessExecutionReport(report *pb.ExecutionReport) (*pb.Receipt, 
 		return n.processExecutionReportRaft(report)
 	}
 
+	// For CometBFT mode, submit to consensus layer
+	if n.cometbftConsensus != nil {
+		return n.processExecutionReportCometBFT(report)
+	}
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -104,6 +109,51 @@ func (n *Node) processExecutionReportRaft(report *pb.ExecutionReport) (*pb.Recei
 		}
 		return n.forwardReportToLeader(leaderID, report)
 	}
+
+	receipt := &pb.Receipt{
+		ReportId:    reportID,
+		ValidatorId: n.id,
+		IntentId:    report.IntentId,
+		ReceivedTs:  time.Now().Unix(),
+		Status:      "accepted",
+	}
+	return receipt, nil
+}
+
+func (n *Node) processExecutionReportCometBFT(report *pb.ExecutionReport) (*pb.Receipt, error) {
+	if report == nil {
+		return nil, fmt.Errorf("report cannot be nil")
+	}
+
+	if report.Timestamp == 0 {
+		report.Timestamp = time.Now().Unix()
+	}
+
+	reportID := n.generateReportID(report)
+
+	// Check for duplicates
+	n.mu.RLock()
+	if _, exists := n.pendingReports[reportID]; exists {
+		n.mu.RUnlock()
+		return &pb.Receipt{
+			ReportId:    reportID,
+			ValidatorId: n.id,
+			IntentId:    report.IntentId,
+			ReceivedTs:  time.Now().Unix(),
+			Status:      "duplicate",
+		}, nil
+	}
+	n.mu.RUnlock()
+
+	// Submit to CometBFT consensus
+	if err := n.cometbftConsensus.ProposeExecutionReport(report, reportID); err != nil {
+		return nil, fmt.Errorf("propose execution report to CometBFT: %w", err)
+	}
+
+	n.logger.Infof("Proposed execution report to CometBFT report_id=%s assignment=%s intent_id=%s",
+		reportID,
+		report.AssignmentId,
+		report.IntentId)
 
 	receipt := &pb.Receipt{
 		ReportId:    reportID,
