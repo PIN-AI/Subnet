@@ -510,7 +510,8 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 		s.logger.Infof("Assignment %s submitted to blockchain, tx: %s", assignmentID, chainTxHash)
 	}
 
-	// Step 2: Submit to RootLayer (async) - can be retried or synced from chain later
+	// Step 2: Submit to RootLayer (async) for tracking
+	// RootLayer needs assignment record to accept ValidationBundle later
 	go s.submitAssignmentToRootLayer(rootAssignment)
 
 	// Step 3: Send task to agent (sync) - agent can also poll for tasks
@@ -899,7 +900,7 @@ func (s *Server) RespondToTask(ctx context.Context, req *pb.RespondToTaskRequest
 		s.assignments[resp.TaskId] = pending.Assignment
 		delete(s.pendingAssignments, resp.TaskId)
 
-		// Submit to RootLayer
+		// Submit to RootLayer for tracking (needed for ValidationBundle submission later)
 		go s.submitAssignmentToRootLayer(pending.Assignment)
 
 		return &pb.RespondToTaskResponse{

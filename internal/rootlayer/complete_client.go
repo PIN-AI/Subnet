@@ -157,8 +157,8 @@ func (c *CompleteClient) SubmitValidationBundle(ctx context.Context, bundle *roo
 	return nil
 }
 
-// SubmitValidationBundleBatch submits multiple validation bundles to RootLayer in a single call
-func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, bundles []*rootpb.ValidationBundle, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error) {
+// SubmitValidationBundleBatch submits multiple validation groups to RootLayer in a single call
+func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, groups []*rootpb.ValidationBatchGroup, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error) {
 	c.mu.RLock()
 	client := c.intentPoolClient
 	c.mu.RUnlock()
@@ -167,12 +167,12 @@ func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, bundle
 		return nil, fmt.Errorf("not connected to RootLayer")
 	}
 
-	if len(bundles) == 0 {
-		return nil, fmt.Errorf("no validation bundles provided for batch submission")
+	if len(groups) == 0 {
+		return nil, fmt.Errorf("no validation groups provided for batch submission")
 	}
 
 	req := &rootpb.ValidationBundleBatchRequest{
-		Bundles:   bundles,
+		Groups:    groups,
 		BatchId:   batchID,
 		PartialOk: &partialOk,
 	}
@@ -182,15 +182,20 @@ func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, bundle
 		return nil, fmt.Errorf("failed to submit validation bundle batch: %w", err)
 	}
 
-	c.logger.Infof("Validation bundle batch submitted: batch_id=%s total=%d success=%d failed=%d",
-		batchID, len(bundles), resp.Success, resp.Failed)
+	// Count total items across all groups
+	totalItems := 0
+	for _, group := range groups {
+		totalItems += len(group.Items)
+	}
+
+	c.logger.Infof("Validation bundle batch submitted: batch_id=%s groups=%d items=%d success=%d failed=%d",
+		batchID, len(groups), totalItems, resp.Success, resp.Failed)
 
 	// Log individual failures if any
 	if resp.Failed > 0 {
 		for i, result := range resp.Results {
 			if !result.Ok {
-				c.logger.Warnf("Validation bundle %d failed: %s (intent_id=%s)",
-					i, result.Msg, bundles[i].IntentId)
+				c.logger.Warnf("Validation item %d failed: %s", i, result.Msg)
 			}
 		}
 	}

@@ -641,8 +641,8 @@ func (x *SubmitIntentBatchResponse) GetMsg() string {
 // Batch validation bundle request.
 type ValidationBundleBatchRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Validation bundles to submit.
-	Bundles []*ValidationBundle `protobuf:"bytes,1,rep,name=bundles,proto3" json:"bundles,omitempty"`
+	// Grouped validation bundles by subnet_id with shared signatures.
+	Groups []*ValidationBatchGroup `protobuf:"bytes,1,rep,name=groups,proto3" json:"groups,omitempty"`
 	// Optional client-provided batch identifier for idempotency.
 	BatchId string `protobuf:"bytes,2,opt,name=batch_id,json=batchId,proto3" json:"batch_id,omitempty"`
 	// Allow partial success.
@@ -681,9 +681,9 @@ func (*ValidationBundleBatchRequest) Descriptor() ([]byte, []int) {
 	return file_rootlayer_service_proto_rawDescGZIP(), []int{8}
 }
 
-func (x *ValidationBundleBatchRequest) GetBundles() []*ValidationBundle {
+func (x *ValidationBundleBatchRequest) GetGroups() []*ValidationBatchGroup {
 	if x != nil {
-		return x.Bundles
+		return x.Groups
 	}
 	return nil
 }
@@ -1315,9 +1315,9 @@ const file_rootlayer_service_proto_rawDesc = "" +
 	"\aresults\x18\x01 \x03(\v2\".rootlayer.v1.SubmitIntentResponseR\aresults\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\x05R\asuccess\x12\x16\n" +
 	"\x06failed\x18\x03 \x01(\x05R\x06failed\x12\x10\n" +
-	"\x03msg\x18\x04 \x01(\tR\x03msg\"\xa6\x01\n" +
-	"\x1cValidationBundleBatchRequest\x128\n" +
-	"\abundles\x18\x01 \x03(\v2\x1e.rootlayer.v1.ValidationBundleR\abundles\x12\x19\n" +
+	"\x03msg\x18\x04 \x01(\tR\x03msg\"\xa8\x01\n" +
+	"\x1cValidationBundleBatchRequest\x12:\n" +
+	"\x06groups\x18\x01 \x03(\v2\".rootlayer.v1.ValidationBatchGroupR\x06groups\x12\x19\n" +
 	"\bbatch_id\x18\x02 \x01(\tR\abatchId\x12\"\n" +
 	"\n" +
 	"partial_ok\x18\x03 \x01(\bH\x00R\tpartialOk\x88\x01\x01B\r\n" +
@@ -1424,12 +1424,13 @@ var file_rootlayer_service_proto_goTypes = []any{
 	nil,                                   // 17: rootlayer.v1.HealthCheckResponse.DetailsEntry
 	(IntentStatus)(0),                     // 18: rootlayer.v1.IntentStatus
 	(*Intent)(nil),                        // 19: rootlayer.v1.Intent
-	(*ValidationBundle)(nil),              // 20: rootlayer.v1.ValidationBundle
+	(*ValidationBatchGroup)(nil),          // 20: rootlayer.v1.ValidationBatchGroup
 	(*ValidationAck)(nil),                 // 21: rootlayer.v1.ValidationAck
 	(*IntentParams)(nil),                  // 22: rootlayer.v1.IntentParams
 	(*Assignment)(nil),                    // 23: rootlayer.v1.Assignment
 	(*AssignmentBatch)(nil),               // 24: rootlayer.v1.AssignmentBatch
-	(*emptypb.Empty)(nil),                 // 25: google.protobuf.Empty
+	(*ValidationBundle)(nil),              // 25: rootlayer.v1.ValidationBundle
+	(*emptypb.Empty)(nil),                 // 26: google.protobuf.Empty
 }
 var file_rootlayer_service_proto_depIdxs = []int32{
 	18, // 0: rootlayer.v1.SubscribeIntentsRequest.status_filter:type_name -> rootlayer.v1.IntentStatus
@@ -1441,7 +1442,7 @@ var file_rootlayer_service_proto_depIdxs = []int32{
 	16, // 6: rootlayer.v1.StatusUpdateEvent.metadata:type_name -> rootlayer.v1.StatusUpdateEvent.MetadataEntry
 	13, // 7: rootlayer.v1.SubmitIntentBatchRequest.items:type_name -> rootlayer.v1.SubmitIntentRequest
 	5,  // 8: rootlayer.v1.SubmitIntentBatchResponse.results:type_name -> rootlayer.v1.SubmitIntentResponse
-	20, // 9: rootlayer.v1.ValidationBundleBatchRequest.bundles:type_name -> rootlayer.v1.ValidationBundle
+	20, // 9: rootlayer.v1.ValidationBundleBatchRequest.groups:type_name -> rootlayer.v1.ValidationBatchGroup
 	21, // 10: rootlayer.v1.ValidationBundleBatchResponse.results:type_name -> rootlayer.v1.ValidationAck
 	19, // 11: rootlayer.v1.GetIntentsResponse.intents:type_name -> rootlayer.v1.Intent
 	22, // 12: rootlayer.v1.SubmitIntentRequest.params:type_name -> rootlayer.v1.IntentParams
@@ -1453,11 +1454,11 @@ var file_rootlayer_service_proto_depIdxs = []int32{
 	23, // 18: rootlayer.v1.IntentPoolService.PostAssignment:input_type -> rootlayer.v1.Assignment
 	24, // 19: rootlayer.v1.IntentPoolService.PostAssignmentBatch:input_type -> rootlayer.v1.AssignmentBatch
 	24, // 20: rootlayer.v1.IntentPoolService.PostAssignments:input_type -> rootlayer.v1.AssignmentBatch
-	20, // 21: rootlayer.v1.IntentPoolService.SubmitValidationBundle:input_type -> rootlayer.v1.ValidationBundle
+	25, // 21: rootlayer.v1.IntentPoolService.SubmitValidationBundle:input_type -> rootlayer.v1.ValidationBundle
 	8,  // 22: rootlayer.v1.IntentPoolService.SubmitValidationBundleBatch:input_type -> rootlayer.v1.ValidationBundleBatchRequest
 	1,  // 23: rootlayer.v1.SubscriptionService.SubscribeIntents:input_type -> rootlayer.v1.SubscribeIntentsRequest
 	3,  // 24: rootlayer.v1.SubscriptionService.SubscribeStatusUpdates:input_type -> rootlayer.v1.SubscribeStatusRequest
-	25, // 25: rootlayer.v1.HealthService.Check:input_type -> google.protobuf.Empty
+	26, // 25: rootlayer.v1.HealthService.Check:input_type -> google.protobuf.Empty
 	7,  // 26: rootlayer.v1.IntentPoolService.SubmitIntentBatch:output_type -> rootlayer.v1.SubmitIntentBatchResponse
 	5,  // 27: rootlayer.v1.IntentPoolService.SubmitIntent:output_type -> rootlayer.v1.SubmitIntentResponse
 	11, // 28: rootlayer.v1.IntentPoolService.GetIntents:output_type -> rootlayer.v1.GetIntentsResponse

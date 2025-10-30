@@ -74,3 +74,12 @@ func (v *ECDSAVerifier) Verify(pubKey []byte, msgHash []byte, derSig []byte) boo
 func HashMessage(message []byte) [32]byte {
 	return geth.Keccak256Hash(message)
 }
+
+// PubKeyBytesToAddress converts public key bytes to Ethereum address
+func PubKeyBytesToAddress(pubKeyBytes []byte) (string, error) {
+	pubKeyECDSA, err := geth.UnmarshalPubkey(pubKeyBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to unmarshal public key: %w", err)
+	}
+	return geth.PubkeyToAddress(*pubKeyECDSA).Hex(), nil
+}
