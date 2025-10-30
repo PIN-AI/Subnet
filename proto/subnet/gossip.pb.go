@@ -193,6 +193,8 @@ type ValidationBundleSignature struct {
 	IntentId string `protobuf:"bytes,1,opt,name=intent_id,json=intentId,proto3" json:"intent_id,omitempty"`
 	// Assignment ID
 	AssignmentId string `protobuf:"bytes,2,opt,name=assignment_id,json=assignmentId,proto3" json:"assignment_id,omitempty"`
+	// Agent ID who executed the task
+	AgentId string `protobuf:"bytes,8,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	// Epoch of the checkpoint
 	Epoch uint64 `protobuf:"varint,3,opt,name=epoch,proto3" json:"epoch,omitempty"`
 	// Validator address (0x-prefixed hex string)
@@ -251,6 +253,13 @@ func (x *ValidationBundleSignature) GetAssignmentId() string {
 	return ""
 }
 
+func (x *ValidationBundleSignature) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
 func (x *ValidationBundleSignature) GetEpoch() uint64 {
 	if x != nil {
 		return x.Epoch
@@ -300,10 +309,11 @@ const file_proto_subnet_gossip_proto_rawDesc = "" +
 	"\fvalidator_id\x18\x02 \x01(\tR\vvalidatorId\x12#\n" +
 	"\rsignature_der\x18\x03 \x01(\fR\fsignatureDer\x12\x1c\n" +
 	"\ttimestamp\x18\x04 \x01(\x03R\ttimestamp\x12'\n" +
-	"\x0fcheckpoint_hash\x18\x05 \x01(\fR\x0echeckpointHash\"\x8a\x02\n" +
+	"\x0fcheckpoint_hash\x18\x05 \x01(\fR\x0echeckpointHash\"\xa5\x02\n" +
 	"\x19ValidationBundleSignature\x12\x1b\n" +
 	"\tintent_id\x18\x01 \x01(\tR\bintentId\x12#\n" +
-	"\rassignment_id\x18\x02 \x01(\tR\fassignmentId\x12\x14\n" +
+	"\rassignment_id\x18\x02 \x01(\tR\fassignmentId\x12\x19\n" +
+	"\bagent_id\x18\b \x01(\tR\aagentId\x12\x14\n" +
 	"\x05epoch\x18\x03 \x01(\x04R\x05epoch\x12+\n" +
 	"\x11validator_address\x18\x04 \x01(\tR\x10validatorAddress\x12\x1c\n" +
 	"\tsignature\x18\x05 \x01(\fR\tsignature\x12\x1c\n" +

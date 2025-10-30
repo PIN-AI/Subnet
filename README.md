@@ -23,27 +23,23 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 ## 📚 Documentation
 
 ### Getting Started
-- **[Quick Start Guide](docs/quick_start.md)** - Get your Subnet running in 5 minutes
-- **[CometBFT Quick Start](docs/COMETBFT_QUICKSTART.md)** - Start validators with CometBFT consensus
+- **[Quick Start Guide](docs/quick_start.md)** ([中文](docs/quick_start.zh.md)) - Get your Subnet running in 5 minutes
+- **[Consensus Modes Guide](docs/consensus_modes.md)** ([中文](docs/consensus_modes.zh.md)) - Choose between Raft and CometBFT consensus
 - **[E2E Test Guide](docs/e2e_test_guide.md)** - End-to-end testing workflow
 
-### Deployment & Customization
-- **[Subnet Deployment Guide](docs/subnet_deployment_guide.md)** - Complete deployment and customization tutorial
+### Deployment & Configuration
+- **[Subnet Deployment Guide](docs/subnet_deployment_guide.md)** ([中文](docs/subnet_deployment_guide.zh.md)) - Complete deployment and customization tutorial
   - Quick deployment with default configuration
   - Custom matcher strategy development
   - Custom validator verification logic
   - Custom agent executor development
   - Production deployment guide
-- **[CometBFT Deployment Guide](docs/cometbft_deployment_guide.md)** - CometBFT consensus deployment
-  - Static configuration for testing
-  - P2P seeds for production
-  - Performance tuning
-  - Security hardening
+- **[Environment Setup](docs/environment_setup.md)** ([中文](docs/environment_setup.zh.md)) - Environment configuration
+- **[Scripts Guide](docs/scripts_guide.md)** ([中文](docs/scripts_guide.zh.md)) - Development and deployment scripts reference
 
-### Architecture & Testing
+### Architecture & Advanced Topics
 - **[Architecture Overview](docs/architecture.md)** - Full component walkthrough and system design
-- **[Batch Operations Testing](docs/batch_test.md)** - Testing batch submission features (ValidationBundles, Assignments)
-- **[Scripts Guide](docs/scripts_guide.md)** - Development and deployment scripts reference
+- **[JetStream Evaluation](docs/jetstream_evaluation.md)** - NATS JetStream evaluation for messaging
 
 ## Layout
 
