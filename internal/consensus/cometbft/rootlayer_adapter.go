@@ -3,6 +3,7 @@ package cometbft
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	rootpb "subnet/proto/rootlayer"
@@ -35,27 +36,25 @@ func NewRootLayerClientAdapter(
 	}
 }
 
-// SubmitCheckpointSignatures converts CheckpointSignatureBundle to ValidationBundles and submits them
+// SubmitCheckpointSignatures converts CheckpointSignatureBundle to ValidationBatchGroup and submits it
 func (a *RootLayerClientAdapter) SubmitCheckpointSignatures(bundle *CheckpointSignatureBundle) error {
 	if bundle == nil {
 		return fmt.Errorf("checkpoint signature bundle is nil")
 	}
 
 	if len(bundle.IntentReports) == 0 {
-		a.logger.Warn("No intent reports in checkpoint, skipping ValidationBundle submission", "epoch", bundle.Epoch)
+		a.logger.Warn("No intent reports in checkpoint, skipping ValidationBatchGroup submission", "epoch", bundle.Epoch)
 		return nil
 	}
 
-	a.logger.Info("Submitting ValidationBundles to RootLayer",
+	a.logger.Info("Submitting ValidationBatchGroup to RootLayer",
 		"epoch", bundle.Epoch,
 		"intent_count", len(bundle.IntentReports),
 		"validators", len(bundle.ValidatorSignatures),
 		"subnet_id", a.subnetID)
 
-	// Submit one ValidationBundle per Intent
-	successCount := 0
-	var lastError error
-
+	// Prepare ValidationItem array
+	items := make([]*rootpb.ValidationItem, 0, len(bundle.IntentReports))
 	for _, report := range bundle.IntentReports {
 		// Ensure checkpoint hash is exactly 32 bytes
 		var resultHash []byte
@@ -70,63 +69,82 @@ func (a *RootLayerClientAdapter) SubmitCheckpointSignatures(bundle *CheckpointSi
 			resultHash = bundle.CheckpointHash[:32]
 		}
 
-		vb := &rootpb.ValidationBundle{
-			// Use real Intent ID from the execution report
+		items = append(items, &rootpb.ValidationItem{
 			IntentId:     report.IntentId,
-			SubnetId:     a.subnetID,
 			AssignmentId: report.AssignmentId,
 			AgentId:      report.AgentId,
-
-			// Use checkpoint hash as the result hash (validators validated the entire checkpoint)
-			ResultHash: resultHash,
-
-			// Use timestamps from execution report and checkpoint
-			ExecutedAt:  report.Timestamp,
-			CompletedAt: bundle.Timestamp,
-
-			// Convert validator signatures to ValidationSignature format
-			// All validators sign the checkpoint, which covers all intents
-			Signatures:   make([]*rootpb.ValidationSignature, 0, len(bundle.ValidatorSignatures)),
-			TotalWeight:  uint64(len(bundle.ValidatorSignatures)),
-			AggregatorId: "cometbft-consensus",
-		}
-
-		// Add each validator's signature (checkpoint signature covers all intents)
-		for validatorAddr, sig := range bundle.ValidatorSignatures {
-			vb.Signatures = append(vb.Signatures, &rootpb.ValidationSignature{
-				Validator: validatorAddr,
-				Signature: sig,
-			})
-		}
-
-		// Submit to RootLayer with timeout
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-
-		if err := a.client.SubmitValidationBundle(ctx, vb); err != nil {
-			a.logger.Error("Failed to submit ValidationBundle",
-				"intent_id", report.IntentId,
-				"assignment_id", report.AssignmentId,
-				"error", err)
-			lastError = err
-			cancel()
-			continue
-		}
-		cancel()
-
-		a.logger.Info("Successfully submitted ValidationBundle",
-			"intent_id", report.IntentId,
-			"assignment_id", report.AssignmentId)
-		successCount++
+			ExecutedAt:   report.Timestamp,
+			ResultHash:   resultHash,
+			ProofHash:    nil,
+		})
 	}
 
-	if successCount == 0 && lastError != nil {
-		return fmt.Errorf("failed to submit any ValidationBundles: %w", lastError)
+	// Prepare validator signatures
+	signatures := make([]*rootpb.ValidationSignature, 0, len(bundle.ValidatorSignatures))
+	for validatorAddr, sig := range bundle.ValidatorSignatures {
+		// Ensure validator address is valid UTF-8 and properly formatted
+		// If it's not already 0x-prefixed, format it
+		validAddr := validatorAddr
+		if !strings.HasPrefix(validAddr, "0x") {
+			// If the address is binary, convert to hex
+			validAddr = fmt.Sprintf("0x%x", []byte(validatorAddr))
+			a.logger.Warn("Validator address was not 0x-prefixed, converted",
+				"original", validatorAddr,
+				"converted", validAddr)
+		}
+
+		signatures = append(signatures, &rootpb.ValidationSignature{
+			Validator: validAddr,
+			Signature: sig,
+		})
 	}
 
-	a.logger.Info("ValidationBundle submission complete",
+	// Create ValidationBatchGroup
+	group := &rootpb.ValidationBatchGroup{
+		SubnetId:     a.subnetID,
+		RootHeight:   bundle.Epoch,
+		RootHash:     fmt.Sprintf("0x%x", bundle.CheckpointHash),
+		AggregatorId: "cometbft-consensus",
+		CompletedAt:  bundle.Timestamp,
+		Signatures:   signatures,
+		SignerBitmap: nil,
+		TotalWeight:  uint64(len(signatures)),
+		Items:        items,
+	}
+
+	// Submit to RootLayer
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	batchID := fmt.Sprintf("cometbft-epoch-%d-%d", bundle.Epoch, time.Now().Unix())
+	partialOk := true
+
+	resp, err := a.client.SubmitValidationBundleBatch(ctx, []*rootpb.ValidationBatchGroup{group}, batchID, partialOk)
+	if err != nil {
+		return fmt.Errorf("failed to submit ValidationBatchGroup: %w", err)
+	}
+
+	a.logger.Info("ValidationBatchGroup submission complete",
 		"epoch", bundle.Epoch,
-		"success", successCount,
-		"total", len(bundle.IntentReports))
+		"batch_id", batchID,
+		"items", len(items),
+		"success", resp.Success,
+		"failed", resp.Failed)
+
+	if resp.Failed > 0 {
+		for i, result := range resp.Results {
+			if !result.Ok {
+				a.logger.Warn("ValidationItem failed",
+					"index", i,
+					"intent_id", items[i].IntentId,
+					"error", result.Msg)
+			}
+		}
+	}
+
+	if resp.Success == 0 {
+		return fmt.Errorf("all ValidationItem submissions failed: %s", resp.Msg)
+	}
 
 	return nil
 }

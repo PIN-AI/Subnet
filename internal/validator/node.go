@@ -547,8 +547,8 @@ func (n *Node) onValidationBundleSignatureReceived(vbSig *pb.ValidationBundleSig
 		return
 	}
 
-	// Create intent key for grouping
-	intentKey := fmt.Sprintf("%s-%s", vbSig.IntentId, vbSig.AssignmentId)
+	// Create intent key for grouping (must match format used in signAndGossipValidationBundles)
+	intentKey := fmt.Sprintf("%s:%s:%s", vbSig.IntentId, vbSig.AssignmentId, vbSig.AgentId)
 
 	// Initialize map for this intent if needed
 	if n.validationBundleSignatures == nil {
@@ -1948,8 +1948,8 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 	groupedReports := n.groupReportsByIntent(pendingReports)
 	n.logger.Infof("Grouped %d execution reports into %d Intent groups for epoch %d", len(pendingReports), len(groupedReports), header.Epoch)
 
-	// STEP 1.5: All validators sign ValidationBundles and gossip signatures
-	n.signAndGossipValidationBundles(header, groupedReports)
+	// NOTE: We use checkpoint signatures (from Raft consensus) instead of per-Intent signatures
+	// The checkpoint signatures cover all Intents in the batch, which is what ValidationBatchGroup expects
 
 	// IMPORTANT: Wait for RootLayer state synchronization before submitting ValidationBundles
 	//
@@ -1990,7 +1990,9 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 		n.logger.Infof("Processing Intent group %s with %d reports epoch=%d", intentKey, len(reports), header.Epoch)
 
 		// Build ValidationBundle for this Intent
-		bundle := n.buildValidationBundleForIntent(header, reports, signatures)
+		// NOTE: Pass nil for signatures - we use gossip-collected ValidationBundle signatures (65-byte ETH format)
+		// instead of checkpoint signatures (DER format). Checkpoint signatures are only for Raft consensus.
+		bundle := n.buildValidationBundleForIntent(header, reports, nil)
 		if bundle == nil {
 			n.logger.Errorf("Failed to build ValidationBundle for Intent group %s epoch=%d", intentKey, header.Epoch)
 			continue
@@ -2027,20 +2029,28 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 
 	// Check if RootLayer client supports batch submission
 	type batchSubmitter interface {
-		SubmitValidationBundleBatch(ctx context.Context, bundles []*rootpb.ValidationBundle, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error)
+		SubmitValidationBundleBatch(ctx context.Context, groups []*rootpb.ValidationBatchGroup, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error)
 	}
 
 	batchClient, supportsBatch := n.rootlayerClient.(batchSubmitter)
 
 	if supportsBatch {
-		// Use batch submission API
+		// Convert ValidationBundles to ValidationBatchGroup using checkpoint signatures
+		// Note: We pass the checkpoint signatures which cover all Intents in the batch
+		group := n.convertToValidationBatchGroup(header, bundles)
+		if group == nil {
+			n.logger.Warn("Failed to convert ValidationBundles to ValidationBatchGroup")
+			return n.submitIndividualValidationBundles(header, bundles, intentKeys)
+		}
+
 		batchID := fmt.Sprintf("epoch-%d-%d", header.Epoch, time.Now().Unix())
-		n.logger.Infof("Submitting %d ValidationBundles in batch batch_id=%s epoch=%d", len(bundles), batchID, header.Epoch)
+		n.logger.Infof("Submitting ValidationBatchGroup batch_id=%s epoch=%d items=%d",
+			batchID, header.Epoch, len(group.Items))
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		resp, err := batchClient.SubmitValidationBundleBatch(ctx, bundles, batchID, true)
+		resp, err := batchClient.SubmitValidationBundleBatch(ctx, []*rootpb.ValidationBatchGroup{group}, batchID, true)
 		if err != nil {
 			// Batch submission failed - fall back to individual submission
 			n.logger.Warnf("Batch submission failed, falling back to individual submission error=%v", err)
@@ -2048,8 +2058,8 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 		}
 
 		// Process batch response
-		n.logger.Infof("Batch submission completed batch_id=%s total=%d success=%d failed=%d",
-			batchID, len(bundles), resp.Success, resp.Failed)
+		n.logger.Infof("Batch submission completed batch_id=%s items=%d success=%d failed=%d",
+			batchID, len(group.Items), resp.Success, resp.Failed)
 
 		// Collect results
 		successfulIntents = make([]string, 0, resp.Success)
@@ -2063,7 +2073,9 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 				successfulIntents = append(successfulIntents, intentKeys[i])
 			} else {
 				failedIntents = append(failedIntents, intentKeys[i])
-				n.logger.Warnf("Intent %s failed in batch: %s", bundles[i].IntentId, result.Msg)
+				if i < len(group.Items) {
+					n.logger.Warnf("Intent %s failed in batch: %s", group.Items[i].IntentId, result.Msg)
+				}
 			}
 		}
 
@@ -2173,20 +2185,24 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		return nil
 	}
 
-	// Use collected ValidationBundle signatures from gossip
+	// Use gossip-collected ValidationBundle signatures (65-byte ETH format)
+	// These are per-Intent signatures collected via gossip protocol
 	var validationSigs []*rootpb.ValidationSignature
-	intentKey := fmt.Sprintf("%s-%s", intentID, assignmentID)
 
+	// Get the intent key for looking up gossip signatures
+	intentKey := fmt.Sprintf("%s:%s:%s", intentID, assignmentID, agentID)
+
+	// Check if we have gossip-collected ValidationBundle signatures for this Intent
 	n.mu.RLock()
-	collectedSigs := n.validationBundleSignatures[intentKey]
+	vbSignatures, hasGossipSigs := n.validationBundleSignatures[intentKey]
 	n.mu.RUnlock()
 
-	if len(collectedSigs) > 0 {
-		// Use collected signatures from gossip
-		n.logger.Infof("Using %d collected ValidationBundle signatures for intent_id=%s", len(collectedSigs), intentID)
-		for _, vbSig := range collectedSigs {
+	if hasGossipSigs && len(vbSignatures) > 0 {
+		// Use gossip-collected ValidationBundle signatures (correct format for RootLayer)
+		n.logger.Infof("Using %d gossip-collected ValidationBundle signatures for intent_id=%s", len(vbSignatures), intentID)
+		for validatorAddr, vbSig := range vbSignatures {
 			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
-				Validator: vbSig.ValidatorAddress,
+				Validator: validatorAddr,
 				Signature: vbSig.Signature,
 			})
 		}
@@ -2247,14 +2263,8 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 			}
 		}
 	} else {
-		// Last resort fallback: Use checkpoint signatures if SDK not available
-		n.logger.Warn("SDK client not available, using checkpoint signatures as fallback (NOT EIP-191 compliant)")
-		for validatorID, sig := range signatures {
-			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
-				Validator: validatorID,
-				Signature: sig.Der,
-			})
-		}
+		// No signatures available - this should not happen
+		n.logger.Error("No signatures available for ValidationBundle! Neither checkpoint signatures nor SDK client available")
 	}
 
 	// Calculate result hash for ValidationBundle
@@ -2628,6 +2638,7 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 		vbSig := &pb.ValidationBundleSignature{
 			IntentId:         intentID,
 			AssignmentId:     assignmentID,
+			AgentId:          agentID,
 			Epoch:            header.Epoch,
 			ValidatorAddress: validatorAddr.Hex(),
 			Signature:        signature,
@@ -2687,6 +2698,45 @@ func (n *Node) handleCheckpointFinalized(header *pb.CheckpointHeader, signatures
 
 // ecdsaSignerAdapter adapts crypto.Signer to cometbft.ECDSASigner interface
 // Legacy adapters removed - now using adapters from internal/consensus/cometbft/rootlayer_adapter.go
+
+// convertToValidationBatchGroup converts ValidationBundles to ValidationBatchGroup
+func (n *Node) convertToValidationBatchGroup(
+	header *pb.CheckpointHeader,
+	bundles []*rootpb.ValidationBundle,
+) *rootpb.ValidationBatchGroup {
+	if len(bundles) == 0 {
+		return nil
+	}
+
+	// Use first bundle for shared metadata
+	firstBundle := bundles[0]
+
+	// Convert each ValidationBundle to ValidationItem
+	items := make([]*rootpb.ValidationItem, 0, len(bundles))
+	for _, bundle := range bundles {
+		items = append(items, &rootpb.ValidationItem{
+			IntentId:     bundle.IntentId,
+			AssignmentId: bundle.AssignmentId,
+			AgentId:      bundle.AgentId,
+			ExecutedAt:   bundle.ExecutedAt,
+			ResultHash:   bundle.ResultHash,
+			ProofHash:    bundle.ProofHash,
+		})
+	}
+
+	// All bundles should have the same signatures (from checkpoint)
+	return &rootpb.ValidationBatchGroup{
+		SubnetId:     firstBundle.SubnetId,
+		RootHeight:   firstBundle.RootHeight,
+		RootHash:     firstBundle.RootHash,
+		AggregatorId: firstBundle.AggregatorId,
+		CompletedAt:  firstBundle.CompletedAt,
+		Signatures:   firstBundle.Signatures,
+		SignerBitmap: firstBundle.SignerBitmap,
+		TotalWeight:  firstBundle.TotalWeight,
+		Items:        items,
+	}
+}
 
 // CometBFTConfig configures the CometBFT consensus engine.
 type CometBFTConfig struct {
