@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
 	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
@@ -2047,6 +2049,9 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 		n.logger.Infof("Submitting ValidationBatchGroup batch_id=%s epoch=%d items=%d",
 			batchID, header.Epoch, len(group.Items))
 
+		// Print and save complete ValidationBatchGroup structure to file
+		n.printAndSaveValidationBatchGroup(group, batchID)
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
@@ -2276,15 +2281,25 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		proofHash = header.Roots.EventRoot
 	}
 
-	// Format RootHash with proper handling for epoch 0 (genesis)
-	// Use hex.EncodeToString to safely convert []byte to hex string
+	// Format RootHash with consensus-aware handling
+	// See docs/consensus_data_format_compatibility.md for details
 	var rootHashStr string
+	n.logger.Infof("buildValidationBundleForIntent: ParentCpHash length = %d bytes", len(header.ParentCpHash))
+
 	if len(header.ParentCpHash) == 0 {
 		// Epoch 0 has no parent - use zero hash
 		rootHashStr = "0x0000000000000000000000000000000000000000000000000000000000000000"
+		n.logger.Infof("Using zero hash for epoch 0")
+	} else if len(header.ParentCpHash) > 32 {
+		// CometBFT mode: ParentCpHash contains serialized CheckpointHeader (protobuf)
+		// Hash it to get a standard 32-byte value for RootLayer
+		hashBytes := sha256.Sum256(header.ParentCpHash)
+		rootHashStr = "0x" + hex.EncodeToString(hashBytes[:])
+		n.logger.Infof("CometBFT mode: hashed ParentCpHash (%d bytes) to 32-byte root_hash: %s", len(header.ParentCpHash), rootHashStr)
 	} else {
-		// Safely encode bytes to hex string
+		// Raft mode: ParentCpHash is already a 32-byte hash, use directly
 		rootHashStr = "0x" + hex.EncodeToString(header.ParentCpHash)
+		n.logger.Infof("Raft mode: using ParentCpHash directly (%d bytes): %s", len(header.ParentCpHash), rootHashStr)
 	}
 
 	bundle := &rootpb.ValidationBundle{
@@ -2571,7 +2586,12 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 		return
 	}
 
-	// Sign ValidationBundle for each Intent group
+	n.logger.Infof("Validator signing ValidationBundle for checkpoint epoch=%d intents=%d", header.Epoch, len(groupedReports))
+
+	// Prepare ValidationItems for batch signing (v2.3+)
+	items := make([]sdk.ValidationItem, 0, len(groupedReports))
+	intentKeys := make([]string, 0, len(groupedReports))
+
 	for intentKey, reports := range groupedReports {
 		if len(reports) == 0 {
 			continue
@@ -2582,13 +2602,9 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 		assignmentID := firstReport.AssignmentId
 		agentID := firstReport.AgentId
 
-		n.logger.Infof("Signing ValidationBundle intent_id=%s assignment_id=%s agent_id=%s epoch=%d",
-			intentID, assignmentID, agentID, header.Epoch)
-
-		// Prepare data for SDK ValidationBundle signing
+		// Prepare data for SDK ValidationItem
 		intentIDHash := common.HexToHash(intentID)
 		assignmentIDHash := common.HexToHash(assignmentID)
-		subnetIDHash := common.HexToHash(n.config.SubnetID)
 		agentAddr := common.HexToAddress(agentID)
 
 		// Calculate result hash from checkpoint header
@@ -2600,39 +2616,72 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 			copy(proofHash[:], header.Roots.EventRoot)
 		}
 
-		// Parse root hash from parent checkpoint hash
-		var rootHash [32]byte
-		if len(header.ParentCpHash) > 0 {
-			copy(rootHash[:], header.ParentCpHash)
-		}
-
-		// Create SDK ValidationBundle structure for signing
-		bundle := sdk.ValidationBundle{
+		items = append(items, sdk.ValidationItem{
 			IntentID:     intentIDHash,
 			AssignmentID: assignmentIDHash,
-			SubnetID:     subnetIDHash,
 			Agent:        agentAddr,
 			ResultHash:   resultHash,
 			ProofHash:    proofHash,
-			RootHeight:   header.Epoch,
-			RootHash:     rootHash,
-		}
+		})
+		intentKeys = append(intentKeys, intentKey)
 
-		// Compute digest using SDK
-		digest, err := n.sdkClient.Validation.ComputeDigest(bundle)
-		if err != nil {
-			n.logger.Errorf("Failed to compute ValidationBundle digest: %v", err)
-			continue
-		}
+		n.logger.Infof("Signing ValidationBundle intent_id=%s assignment_id=%s agent_id=%s epoch=%d",
+			intentID, assignmentID, agentID, header.Epoch)
+	}
 
-		// Sign digest using SDK (EIP-191 standard)
-		signature, err := n.sdkClient.Validation.SignDigest(digest)
-		if err != nil {
-			n.logger.Errorf("Failed to sign ValidationBundle digest: %v", err)
-			continue
-		}
+	if len(items) == 0 {
+		n.logger.Warn("No items to sign for ValidationBatch")
+		return
+	}
 
-		validatorAddr := n.sdkClient.Signer.Address()
+	// Compute items_hash using SDK
+	itemsHash, err := n.sdkClient.Validation.ComputeItemsHash(items)
+	if err != nil {
+		n.logger.Errorf("Failed to compute items_hash: %v", err)
+		return
+	}
+
+	// Parse root hash from parent checkpoint hash
+	var rootHash [32]byte
+	if len(header.ParentCpHash) > 0 {
+		copy(rootHash[:], header.ParentCpHash)
+	}
+
+	// Create SDK ValidationBatch structure for signing (v2.3+)
+	batch := sdk.ValidationBatch{
+		SubnetID:   common.HexToHash(n.config.SubnetID),
+		ItemsHash:  itemsHash,
+		RootHeight: header.Epoch,
+		RootHash:   rootHash,
+		Items:      items,
+	}
+
+	// Compute batch digest using SDK
+	digest, err := n.sdkClient.Validation.ComputeBatchDigest(batch)
+	if err != nil {
+		n.logger.Errorf("Failed to compute ValidationBatch digest: %v", err)
+		return
+	}
+
+	// Sign digest using SDK (EIP-191 standard)
+	signature, err := n.sdkClient.Validation.SignDigest(digest)
+	if err != nil {
+		n.logger.Errorf("Failed to sign ValidationBatch digest: %v", err)
+		return
+	}
+
+	validatorAddr := n.sdkClient.Signer.Address()
+
+	n.logger.Infof("Signed ValidationBatch with %d items, items_hash=0x%x, digest=0x%x",
+		len(items), itemsHash, digest)
+
+	// Broadcast signature for each intent via gossip (for compatibility with existing gossip protocol)
+	for i, intentKey := range intentKeys {
+		reports := groupedReports[intentKey]
+		firstReport := reports[0]
+		intentID := firstReport.IntentId
+		assignmentID := firstReport.AssignmentId
+		agentID := firstReport.AgentId
 
 		// Create gossip message
 		vbSig := &pb.ValidationBundleSignature{
@@ -2664,6 +2713,8 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 			n.logger.Infof("Broadcasted ValidationBundle signature via gossip validator=%s intent_id=%s epoch=%d",
 				validatorAddr.Hex(), intentID, header.Epoch)
 		}
+
+		_ = i // unused, but kept for clarity
 	}
 }
 
@@ -2711,9 +2762,38 @@ func (n *Node) convertToValidationBatchGroup(
 	// Use first bundle for shared metadata
 	firstBundle := bundles[0]
 
+	// Validate all string fields for UTF-8 validity BEFORE creating ValidationBatchGroup
+	n.logger.Info("=== UTF-8 Validation: Checking ValidationBatchGroup fields ===")
+	n.logger.Infof("SubnetId: %s (len=%d, utf8_valid=%v)", firstBundle.SubnetId, len(firstBundle.SubnetId), utf8.ValidString(firstBundle.SubnetId))
+	n.logger.Infof("RootHash: %s (len=%d, utf8_valid=%v)", firstBundle.RootHash, len(firstBundle.RootHash), utf8.ValidString(firstBundle.RootHash))
+	n.logger.Infof("AggregatorId: %s (len=%d, utf8_valid=%v)", firstBundle.AggregatorId, len(firstBundle.AggregatorId), utf8.ValidString(firstBundle.AggregatorId))
+
+	for i, sig := range firstBundle.Signatures {
+		n.logger.Infof("Signature[%d]: Validator=%s (len=%d, utf8_valid=%v), Signature_len=%d",
+			i, sig.Validator, len(sig.Validator), utf8.ValidString(sig.Validator), len(sig.Signature))
+		if !utf8.ValidString(sig.Validator) {
+			n.logger.Errorf(">>> FOUND UTF-8 ISSUE: Validator address is not valid UTF-8! validator_hex=%x", []byte(sig.Validator))
+		}
+	}
+
 	// Convert each ValidationBundle to ValidationItem
 	items := make([]*rootpb.ValidationItem, 0, len(bundles))
-	for _, bundle := range bundles {
+	for bundleIdx, bundle := range bundles {
+		n.logger.Infof("ValidationItem[%d]: IntentId=%s (utf8_valid=%v), AssignmentId=%s (utf8_valid=%v), AgentId=%s (utf8_valid=%v)",
+			bundleIdx, bundle.IntentId, utf8.ValidString(bundle.IntentId),
+			bundle.AssignmentId, utf8.ValidString(bundle.AssignmentId),
+			bundle.AgentId, utf8.ValidString(bundle.AgentId))
+
+		if !utf8.ValidString(bundle.IntentId) {
+			n.logger.Errorf(">>> FOUND UTF-8 ISSUE: IntentId is not valid UTF-8! intent_id_hex=%x", []byte(bundle.IntentId))
+		}
+		if !utf8.ValidString(bundle.AssignmentId) {
+			n.logger.Errorf(">>> FOUND UTF-8 ISSUE: AssignmentId is not valid UTF-8! assignment_id_hex=%x", []byte(bundle.AssignmentId))
+		}
+		if !utf8.ValidString(bundle.AgentId) {
+			n.logger.Errorf(">>> FOUND UTF-8 ISSUE: AgentId is not valid UTF-8! agent_id_hex=%x", []byte(bundle.AgentId))
+		}
+
 		items = append(items, &rootpb.ValidationItem{
 			IntentId:     bundle.IntentId,
 			AssignmentId: bundle.AssignmentId,
@@ -2722,6 +2802,47 @@ func (n *Node) convertToValidationBatchGroup(
 			ResultHash:   bundle.ResultHash,
 			ProofHash:    bundle.ProofHash,
 		})
+	}
+
+	// Compute items_hash using SDK (required for ValidationBatch v2.3+)
+	var itemsHash []byte
+	if n.sdkClient != nil && len(items) > 0 {
+		// Convert rootpb.ValidationItem to sdk.ValidationItem for hash computation
+		sdkItems := make([]sdk.ValidationItem, len(items))
+		for i, item := range items {
+			intentID := common.HexToHash(item.IntentId)
+			assignmentID := common.HexToHash(item.AssignmentId)
+			agentAddr := common.HexToAddress(item.AgentId)
+
+			var resultHash [32]byte
+			if len(item.ResultHash) >= 32 {
+				copy(resultHash[:], item.ResultHash[:32])
+			}
+
+			var proofHash [32]byte
+			if len(item.ProofHash) >= 32 {
+				copy(proofHash[:], item.ProofHash[:32])
+			}
+
+			sdkItems[i] = sdk.ValidationItem{
+				IntentID:     intentID,
+				AssignmentID: assignmentID,
+				Agent:        agentAddr,
+				ResultHash:   resultHash,
+				ProofHash:    proofHash,
+			}
+		}
+
+		// Compute items_hash
+		computedHash, err := n.sdkClient.Validation.ComputeItemsHash(sdkItems)
+		if err != nil {
+			n.logger.Errorf("Failed to compute items_hash: %v", err)
+		} else {
+			itemsHash = computedHash[:]
+			n.logger.Infof("Computed items_hash for ValidationBatchGroup: 0x%x (items_count=%d)", itemsHash, len(items))
+		}
+	} else {
+		n.logger.Warn("SDK client not available or no items, cannot compute items_hash")
 	}
 
 	// All bundles should have the same signatures (from checkpoint)
@@ -2735,6 +2856,7 @@ func (n *Node) convertToValidationBatchGroup(
 		SignerBitmap: firstBundle.SignerBitmap,
 		TotalWeight:  firstBundle.TotalWeight,
 		Items:        items,
+		ItemsHash:    itemsHash, // Add computed items_hash
 	}
 }
 
@@ -2753,4 +2875,160 @@ type CometBFTConfig struct {
 	PrivValidatorKey  string           // Path to priv_validator_key.json
 	NodeKey           string           // Path to node_key.json
 	GenesisValidators map[string]int64 // Validator set (validator_id -> voting_power)
+}
+
+// printAndSaveValidationBatchGroup prints complete ValidationBatchGroup structure to log and saves to file
+func (n *Node) printAndSaveValidationBatchGroup(group *rootpb.ValidationBatchGroup, batchID string) {
+	var output strings.Builder
+
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+
+	output.WriteString(fmt.Sprintf("=== ValidationBatchGroup Complete Structure ===\n"))
+	output.WriteString(fmt.Sprintf("Batch ID: %s\n", batchID))
+	output.WriteString(fmt.Sprintf("Timestamp: %s\n\n", timestamp))
+
+	// Basic fields
+	output.WriteString(fmt.Sprintf("SubnetId: %s\n", group.SubnetId))
+	output.WriteString(fmt.Sprintf("  Length: %d, UTF-8 Valid: %v\n\n", len(group.SubnetId), utf8.ValidString(group.SubnetId)))
+
+	output.WriteString(fmt.Sprintf("RootHeight: %d\n\n", group.RootHeight))
+
+	output.WriteString(fmt.Sprintf("RootHash: %s\n", group.RootHash))
+	output.WriteString(fmt.Sprintf("  Length: %d, UTF-8 Valid: %v\n\n", len(group.RootHash), utf8.ValidString(group.RootHash)))
+
+	output.WriteString(fmt.Sprintf("AggregatorId: %s\n", group.AggregatorId))
+	output.WriteString(fmt.Sprintf("  Length: %d, UTF-8 Valid: %v\n\n", len(group.AggregatorId), utf8.ValidString(group.AggregatorId)))
+
+	output.WriteString(fmt.Sprintf("CompletedAt: %d\n\n", group.CompletedAt))
+
+	output.WriteString(fmt.Sprintf("TotalWeight: %d\n\n", group.TotalWeight))
+
+	// Signatures
+	output.WriteString(fmt.Sprintf("Signatures: (%d total)\n", len(group.Signatures)))
+	for i, sig := range group.Signatures {
+		output.WriteString(fmt.Sprintf("  [%d] Validator: %s\n", i, sig.Validator))
+		output.WriteString(fmt.Sprintf("      Length: %d, UTF-8 Valid: %v\n", len(sig.Validator), utf8.ValidString(sig.Validator)))
+		output.WriteString(fmt.Sprintf("      Signature: %d bytes (hex: %s...)\n", len(sig.Signature), hex.EncodeToString(sig.Signature[:min(20, len(sig.Signature))])))
+		output.WriteString(fmt.Sprintf("      Signature (base64): %s\n\n", base64.StdEncoding.EncodeToString(sig.Signature)))
+	}
+
+	output.WriteString(fmt.Sprintf("SignerBitmap: %v\n\n", group.SignerBitmap))
+
+	// ItemsHash (CRITICAL field for v2.3+)
+	if len(group.ItemsHash) > 0 {
+		output.WriteString(fmt.Sprintf("ItemsHash: 0x%x\n", group.ItemsHash))
+		output.WriteString(fmt.Sprintf("  Length: %d bytes\n", len(group.ItemsHash)))
+		output.WriteString(fmt.Sprintf("  Base64: %s\n\n", base64.StdEncoding.EncodeToString(group.ItemsHash)))
+	} else {
+		output.WriteString("ItemsHash: ❌ NOT SET (MISSING - WILL CAUSE VALIDATION FAILURE!)\n\n")
+	}
+
+	// ValidationItems
+	output.WriteString(fmt.Sprintf("Items: (%d total)\n", len(group.Items)))
+	for i, item := range group.Items {
+		output.WriteString(fmt.Sprintf("  [%d] IntentId: %s\n", i, item.IntentId))
+		output.WriteString(fmt.Sprintf("      Length: %d, UTF-8 Valid: %v\n", len(item.IntentId), utf8.ValidString(item.IntentId)))
+
+		output.WriteString(fmt.Sprintf("      AssignmentId: %s\n", item.AssignmentId))
+		output.WriteString(fmt.Sprintf("      Length: %d, UTF-8 Valid: %v\n", len(item.AssignmentId), utf8.ValidString(item.AssignmentId)))
+
+		output.WriteString(fmt.Sprintf("      AgentId: %s\n", item.AgentId))
+		output.WriteString(fmt.Sprintf("      Length: %d, UTF-8 Valid: %v\n", len(item.AgentId), utf8.ValidString(item.AgentId)))
+
+		output.WriteString(fmt.Sprintf("      ExecutedAt: %d\n", item.ExecutedAt))
+		output.WriteString(fmt.Sprintf("      ResultHash: %d bytes (hex: %s...)\n", len(item.ResultHash), hex.EncodeToString(item.ResultHash[:min(16, len(item.ResultHash))])))
+		output.WriteString(fmt.Sprintf("      ResultHash (base64): %s\n", base64.StdEncoding.EncodeToString(item.ResultHash)))
+		output.WriteString(fmt.Sprintf("      ProofHash: %v\n\n", item.ProofHash))
+	}
+
+	// JSON representation
+	output.WriteString("\n=== JSON Representation (bytes fields auto-converted to base64) ===\n\n")
+	jsonBytes, err := json.MarshalIndent(group, "", "  ")
+	if err != nil {
+		output.WriteString(fmt.Sprintf("JSON serialization error: %v\n", err))
+	} else {
+		output.WriteString(string(jsonBytes))
+		output.WriteString("\n\n")
+	}
+
+	// UTF-8 validation summary
+	output.WriteString("=== UTF-8 Validation Summary ===\n\n")
+	allValid := true
+
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"SubnetId", group.SubnetId},
+		{"RootHash", group.RootHash},
+		{"AggregatorId", group.AggregatorId},
+	}
+
+	for _, field := range fields {
+		valid := utf8.ValidString(field.value)
+		status := "✅"
+		if !valid {
+			status = "❌"
+			allValid = false
+		}
+		output.WriteString(fmt.Sprintf("%s %s: %v (length: %d)\n", status, field.name, valid, len(field.value)))
+	}
+
+	for i, sig := range group.Signatures {
+		valid := utf8.ValidString(sig.Validator)
+		status := "✅"
+		if !valid {
+			status = "❌"
+			allValid = false
+		}
+		output.WriteString(fmt.Sprintf("%s Validator[%d]: %v (length: %d)\n", status, i, valid, len(sig.Validator)))
+	}
+
+	for i, item := range group.Items {
+		itemFields := []struct {
+			name  string
+			value string
+		}{
+			{"IntentId", item.IntentId},
+			{"AssignmentId", item.AssignmentId},
+			{"AgentId", item.AgentId},
+		}
+		for _, field := range itemFields {
+			valid := utf8.ValidString(field.value)
+			status := "✅"
+			if !valid {
+				status = "❌"
+				allValid = false
+			}
+			output.WriteString(fmt.Sprintf("%s Item[%d].%s: %v (length: %d)\n", status, i, field.name, valid, len(field.value)))
+		}
+	}
+
+	output.WriteString("\n")
+	if allValid {
+		output.WriteString("✅ All string fields are valid UTF-8!\n")
+	} else {
+		output.WriteString("❌ Found invalid UTF-8 fields!\n")
+	}
+
+	// Log to console
+	n.logger.Info("=== ValidationBatchGroup Structure Dump START ===")
+	n.logger.Info(output.String())
+	n.logger.Info("=== ValidationBatchGroup Structure Dump END ===")
+
+	// Save to file in subnet-logs directory
+	filename := fmt.Sprintf("subnet-logs/validation_batch_group_%s.txt", timestamp)
+	if err := os.WriteFile(filename, []byte(output.String()), 0644); err != nil {
+		n.logger.Errorf("Failed to write ValidationBatchGroup structure to file: %v", err)
+	} else {
+		n.logger.Infof("ValidationBatchGroup structure saved to file: %s", filename)
+	}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

@@ -6,6 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
+	sdkCrypto "github.com/PIN-AI/intent-protocol-contract-sdk/sdk/crypto"
+
 	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
@@ -99,7 +102,43 @@ func (a *RootLayerClientAdapter) SubmitCheckpointSignatures(bundle *CheckpointSi
 		})
 	}
 
-	// Create ValidationBatchGroup
+	// Compute items_hash using SDK crypto library (keccak256(abi.encode(items)))
+	// This is required for ValidationBatch signature verification
+	sdkItems := make([]sdkCrypto.ValidationItem, len(items))
+	for i, item := range items {
+		// Parse IDs from hex strings
+		intentID := common.HexToHash(item.IntentId)
+		assignmentID := common.HexToHash(item.AssignmentId)
+		agentAddr := common.HexToAddress(item.AgentId)
+
+		// Convert resultHash to [32]byte
+		var resultHash [32]byte
+		copy(resultHash[:], item.ResultHash)
+
+		// Convert proofHash to [32]byte (or zero if nil)
+		var proofHash [32]byte
+		if len(item.ProofHash) >= 32 {
+			copy(proofHash[:], item.ProofHash)
+		}
+
+		sdkItems[i] = sdkCrypto.ValidationItem{
+			IntentID:     intentID,
+			AssignmentID: assignmentID,
+			Agent:        agentAddr,
+			ResultHash:   resultHash,
+			ProofHash:    proofHash,
+		}
+	}
+
+	itemsHash, err := sdkCrypto.ComputeItemsHash(sdkItems)
+	if err != nil {
+		return fmt.Errorf("failed to compute items_hash: %w", err)
+	}
+	a.logger.Info("Computed items_hash for ValidationBatch",
+		"items_count", len(sdkItems),
+		"items_hash", fmt.Sprintf("0x%x", itemsHash))
+
+	// Create ValidationBatchGroup with items_hash
 	group := &rootpb.ValidationBatchGroup{
 		SubnetId:     a.subnetID,
 		RootHeight:   bundle.Epoch,
@@ -110,6 +149,7 @@ func (a *RootLayerClientAdapter) SubmitCheckpointSignatures(bundle *CheckpointSi
 		SignerBitmap: nil,
 		TotalWeight:  uint64(len(signatures)),
 		Items:        items,
+		ItemsHash:    itemsHash[:], // Set the computed items_hash
 	}
 
 	// Submit to RootLayer
