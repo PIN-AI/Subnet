@@ -138,7 +138,7 @@ func TestSingleValidatorSignatureFlow(t *testing.T) {
 
 		// Verify threshold (for single validator, need 1 signature)
 		if app.hasThresholdSignatures(epoch) {
-			logger.Info("✓ Threshold reached")
+			logger.Info("Threshold reached")
 		} else {
 			logger.Info("Note: Threshold check timing - signature collection is async")
 		}
@@ -566,7 +566,7 @@ func TestThreeValidatorSignatureFlow(t *testing.T) {
 
 		// Each validator runs its own single-node consensus, so each bundle
 		// will only have the signature from that validator
-		logger.Info("✓ Independent validator signature collection verified")
+		logger.Info("Independent validator signature collection verified")
 	} else {
 		logger.Info("Note: ValidationBundle submission is async and may not complete within test timeout")
 	}

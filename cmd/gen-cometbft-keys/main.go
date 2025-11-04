@@ -73,5 +73,5 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("✓ Generated CometBFT keys")
+	fmt.Println("Generated CometBFT keys")
 }

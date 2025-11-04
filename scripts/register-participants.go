@@ -52,9 +52,9 @@ func main() {
 
 		// Staking options
 		useERC20        = flag.Bool("erc20", false, "Use ERC20 staking instead of ETH")
-		validatorStake  = flag.String("validator-stake", "0.1", "Validator stake amount in ETH")
-		matcherStake    = flag.String("matcher-stake", "0.05", "Matcher stake amount in ETH")
-		agentStake      = flag.String("agent-stake", "0.05", "Agent stake amount in ETH")
+		validatorStake  = flag.String("validator-stake", "0.01", "Validator stake amount in ETH")
+		matcherStake    = flag.String("matcher-stake", "0.01", "Matcher stake amount in ETH")
+		agentStake      = flag.String("agent-stake", "0.01", "Agent stake amount in ETH")
 
 		// Registration options
 		skipValidator   = flag.Bool("skip-validator", false, "Skip validator registration")

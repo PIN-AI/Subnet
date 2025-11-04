@@ -54,8 +54,5 @@ package-lock.json
 package.json
 
 # Temporary validation bundle test docs
-EXECUTION_REPORT_FORWARDING_FIX.md
-GOSSIP_SEEDS_FIX.md
-VALIDATION_BUNDLE_MULTI_SIG_SUCCESS.md
-VALIDATION_BUNDLE_PROGRESS_2025-10-26.md
+analysis-reports/
 cometbft-validators/

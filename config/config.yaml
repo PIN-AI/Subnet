@@ -223,7 +223,7 @@ rootlayer:
 blockchain:
   enabled: true
   rpc_url: "https://sepolia.base.org"
-  subnet_contract: "0x6538D64e4eeE64641f6c66aB2c7703edfC3e2aB6"  # TY Test Subnet
+  subnet_contract: "0xE8c2E0Da5a7B9495953FBCC74067c08d11b66f8A"  # TY Test Subnet
   cache_ttl: 5m
   cache_size: 1024
   enable_fallback: true

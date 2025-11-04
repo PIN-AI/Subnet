@@ -418,7 +418,12 @@ type ValidationBatchGroup struct {
 	TotalWeight uint64 `protobuf:"varint,8,opt,name=total_weight,json=totalWeight,proto3" json:"total_weight,omitempty"`
 	// === Independent validation items ===
 	// Array of validation items (different intents, shared signatures).
-	Items         []*ValidationItem `protobuf:"bytes,9,rep,name=items,proto3" json:"items,omitempty"`
+	Items []*ValidationItem `protobuf:"bytes,9,rep,name=items,proto3" json:"items,omitempty"`
+	// === Items hash (keccak256(abi.encode(items))) ===
+	// Pre-computed hash of items array used in signature generation.
+	// This field is REQUIRED and must match on-chain calculation.
+	// Added in SDK update to ensure signature verification consistency.
+	ItemsHash     []byte `protobuf:"bytes,10,opt,name=items_hash,json=itemsHash,proto3" json:"items_hash,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -516,6 +521,13 @@ func (x *ValidationBatchGroup) GetItems() []*ValidationItem {
 	return nil
 }
 
+func (x *ValidationBatchGroup) GetItemsHash() []byte {
+	if x != nil {
+		return x.ItemsHash
+	}
+	return nil
+}
+
 var File_rootlayer_validation_proto protoreflect.FileDescriptor
 
 const file_rootlayer_validation_proto_rawDesc = "" +
@@ -560,7 +572,7 @@ const file_rootlayer_validation_proto_rawDesc = "" +
 	"\vresult_hash\x18\x05 \x01(\fR\n" +
 	"resultHash\x12\x1d\n" +
 	"\n" +
-	"proof_hash\x18\x06 \x01(\fR\tproofHash\"\xf8\x02\n" +
+	"proof_hash\x18\x06 \x01(\fR\tproofHash\"\x97\x03\n" +
 	"\x14ValidationBatchGroup\x12\x1b\n" +
 	"\tsubnet_id\x18\x01 \x01(\tR\bsubnetId\x12\x1f\n" +
 	"\vroot_height\x18\x02 \x01(\x04R\n" +
@@ -573,7 +585,10 @@ const file_rootlayer_validation_proto_rawDesc = "" +
 	"signatures\x12#\n" +
 	"\rsigner_bitmap\x18\a \x01(\fR\fsignerBitmap\x12!\n" +
 	"\ftotal_weight\x18\b \x01(\x04R\vtotalWeight\x122\n" +
-	"\x05items\x18\t \x03(\v2\x1c.rootlayer.v1.ValidationItemR\x05itemsBDZBgithub.com/pin-protocol/rootlayer/api/gen/go/rootlayer;rootlayerv1b\x06proto3"
+	"\x05items\x18\t \x03(\v2\x1c.rootlayer.v1.ValidationItemR\x05items\x12\x1d\n" +
+	"\n" +
+	"items_hash\x18\n" +
+	" \x01(\fR\titemsHashBDZBgithub.com/pin-protocol/rootlayer/api/gen/go/rootlayer;rootlayerv1b\x06proto3"
 
 var (
 	file_rootlayer_validation_proto_rawDescOnce sync.Once

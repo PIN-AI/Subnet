@@ -5,8 +5,8 @@ go 1.24.0
 toolchain go1.24.7
 
 require (
-	github.com/PIN-AI/intent-protocol-contract-sdk v0.0.0-20251010094614-8603557e2545
-	github.com/PIN-AI/subnet-sdk/go v0.0.0-20251014134723-b4d4e4bc1282
+	github.com/PIN-AI/intent-protocol-contract-sdk v0.0.0-20251031092220-cccd92548586
+	github.com/PIN-AI/subnet-sdk/go v0.0.0-20251029122116-979dc517f0cb
 	github.com/cometbft/cometbft v0.38.5
 	github.com/ethereum/go-ethereum v1.16.4
 	github.com/hashicorp/golang-lru/v2 v2.0.7
@@ -18,8 +18,8 @@ require (
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.11.1
 	github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
-	google.golang.org/genproto/googleapis/api v0.0.0-20251007200510-49b9836ed3ff
-	google.golang.org/grpc v1.75.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20250929231259-57b25ae835d4
+	google.golang.org/grpc v1.75.1
 	google.golang.org/protobuf v1.36.10
 )
 
@@ -85,10 +85,8 @@ require (
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	go.etcd.io/bbolt v1.3.6 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
-	golang.org/x/sync v0.15.0 // indirect
+	golang.org/x/sync v0.17.0 // indirect
 )
-
-replace github.com/PIN-AI/subnet-sdk/go => ../subnet-sdk/go
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -115,7 +113,7 @@ require (
 	golang.org/x/crypto v0.39.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/sys v0.36.0 // indirect
-	golang.org/x/text v0.26.0 // indirect
+	golang.org/x/text v0.29.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251002232023-7c0ddcbb5797 // indirect
 	gopkg.in/yaml.v3 v3.0.1
 )

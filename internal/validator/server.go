@@ -105,48 +105,12 @@ func (s *Server) SubmitExecutionReport(ctx context.Context, report *pb.Execution
 	if report == nil {
 		return nil, status.Error(codes.InvalidArgument, "execution report is required")
 	}
-	// Validate report
-	if err := s.validateExecutionReport(report); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "invalid report: %v", err)
-	}
 
-	if s.verifier != nil {
-		addr := extractChainAddressFromReport(report)
-		verified, err := s.verifier.VerifyAgent(ctx, addr)
-		if err != nil {
-			s.logger.Warnf("On-chain agent verification failed for %s: %v", report.AgentId, err)
-			if !s.allowUnverified {
-				return nil, status.Error(codes.PermissionDenied, "agent verification failed")
-			}
-		} else if !verified {
-			s.logger.Warnf("Agent %s not active on-chain (addr=%s)", report.AgentId, addr)
-			if !s.allowUnverified {
-				return nil, status.Error(codes.PermissionDenied, "agent not registered on-chain")
-			}
-		}
-	}
+	s.logger.Infof("Received execution report: agent=%s assignment=%s",
+		report.AgentId, report.AssignmentId)
 
-	// Check rate limiting
-	if !s.checkRateLimit(report.AgentId) {
-		return nil, status.Error(codes.ResourceExhausted, "rate limit exceeded")
-	}
-
-	// Process report
-	receipt, err := s.node.ProcessExecutionReport(report)
-	if err != nil {
-		s.logger.Error("Failed to process execution report",
-			"agent", report.AgentId,
-			"assignment", report.AssignmentId,
-			"error", err)
-		return nil, status.Errorf(codes.Internal, "failed to process report: %v", err)
-	}
-
-	s.logger.Info("Processed execution report",
-		"agent", report.AgentId,
-		"assignment", report.AssignmentId,
-		"receipt", receipt.ReportId)
-
-	return receipt, nil
+	// Delegate to processSingleReport to avoid code duplication
+	return s.processSingleReport(ctx, report)
 }
 
 // SubmitExecutionReportBatch handles batch execution report submission from agents

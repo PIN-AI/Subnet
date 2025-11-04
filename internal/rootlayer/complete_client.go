@@ -191,12 +191,16 @@ func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, groups
 	c.logger.Infof("Validation bundle batch submitted: batch_id=%s groups=%d items=%d success=%d failed=%d",
 		batchID, len(groups), totalItems, resp.Success, resp.Failed)
 
-	// Log individual failures if any
+	// Log failures summary if any
 	if resp.Failed > 0 {
+		failedIndices := []int{}
 		for i, result := range resp.Results {
 			if !result.Ok {
-				c.logger.Warnf("Validation item %d failed: %s", i, result.Msg)
+				failedIndices = append(failedIndices, i)
 			}
+		}
+		if len(failedIndices) > 0 {
+			c.logger.Warnf("Validation bundle batch had %d failures at indices: %v", len(failedIndices), failedIndices)
 		}
 	}
 
@@ -260,12 +264,9 @@ func (c *CompleteClient) groupReportsByIntent(reports []*pb.ExecutionReport) map
 		// Create composite key from Intent+Assignment+Agent
 		key := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
 		grouped[key] = append(grouped[key], report)
-
-		c.logger.Debugf("Grouping execution report: intent_id=%s assignment_id=%s agent_id=%s group_key=%s",
-			report.IntentId, report.AssignmentId, report.AgentId, key)
 	}
 
-	c.logger.Infof("Grouped execution reports into %d Intent groups", len(grouped))
+	c.logger.Infof("Grouped %d execution reports into %d Intent groups", len(reports), len(grouped))
 	return grouped
 }
 
