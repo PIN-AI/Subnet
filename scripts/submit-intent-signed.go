@@ -163,18 +163,19 @@ func main() {
 
 	// Step 1: Submit to blockchain FIRST (dual submission requirement)
 	log.Printf("\n⛓️  Submitting Intent to blockchain (IntentManager)...")
-	submitParams := sdk.SubmitIntentParams{
-		IntentID:     intentID,
-		SubnetID:     subnetID,
-		IntentType:   *intentType,
-		ParamsHash:   paramsHash,
-		Deadline:     deadline,
-		PaymentToken: common.Address{}, // Zero address = native token
-		Amount:       amount,
-		Value:        amount, // For ETH payment
+
+	// Use batch submission API (SDK v0.0.0-20251031092220)
+	batchParams := sdk.SubmitIntentBatchParams{
+		Items: []sdk.SignedIntent{
+			{
+				Data:      input,
+				Signature: signature,
+			},
+		},
+		TotalEthValue: amount, // Total ETH value for this batch
 	}
 
-	tx, err := client.Intent.SubmitIntent(ctx, submitParams)
+	tx, err := client.Intent.SubmitIntentsBySignatures(ctx, batchParams)
 	if err != nil {
 		log.Fatalf("Failed to submit intent to blockchain: %v", err)
 	}

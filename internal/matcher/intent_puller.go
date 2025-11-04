@@ -176,15 +176,22 @@ func (p *IntentPuller) BroadcastIntent(intent *types.Intent) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
+	sent := 0
+	skipped := 0
 	for agentID, sub := range p.subscriptions {
 		if p.matchesCapabilities(intent, sub.Capabilities) {
 			select {
 			case sub.updates <- intent:
-				p.logger.Debugf("Sent intent %s to agent %s", intent.IntentID, agentID)
+				sent++
 			default:
+				skipped++
 				p.logger.Warnf("Agent %s channel full, skipping intent %s", agentID, intent.IntentID)
 			}
 		}
+	}
+
+	if sent > 0 || skipped > 0 {
+		p.logger.Debugf("Broadcast intent %s: sent=%d skipped=%d", intent.IntentID, sent, skipped)
 	}
 }
 
@@ -199,14 +206,21 @@ func (p *IntentPuller) sendPendingIntents(sub *IntentSubscription) {
 	}
 	p.mu.RUnlock()
 
+	sent := 0
+	timedOut := 0
 	for _, intent := range intents {
 		select {
 		case sub.updates <- intent:
-			p.logger.Debugf("Sent pending intent %s to agent %s", intent.IntentID, sub.AgentID)
+			sent++
 		case <-time.After(1 * time.Second):
-			p.logger.Warnf("Timeout sending pending intent %s to agent %s", intent.IntentID, sub.AgentID)
+			timedOut++
+			p.logger.Warnf("Timeout sending pending intents to agent %s after %d sent", sub.AgentID, sent)
 			return
 		}
+	}
+
+	if sent > 0 {
+		p.logger.Debugf("Sent %d pending intents to agent %s", sent, sub.AgentID)
 	}
 }
 
