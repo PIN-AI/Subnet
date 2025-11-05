@@ -44,7 +44,6 @@ timeouts:
 
 # Network configuration (new unified config)
 network:
-  nats_url: "nats://127.0.0.1:4222"
   validator_grpc_port: ":9090"
   matcher_grpc_port: ":8090"
   metrics_port: ":9095"

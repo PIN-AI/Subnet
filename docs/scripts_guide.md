@@ -293,7 +293,7 @@ Comprehensive E2E test script that simulates the complete intent lifecycle:
 9. Leader Validator constructs ValidationBundle
 10. ValidationBundle submitted to RootLayer (both HTTP API and blockchain)
 
-The script starts all required services (NATS, Matcher, Validators, Test Agent), monitors logs for progress, and provides detailed status updates.
+The script starts all required services (Matcher, Validators, Test Agent), monitors logs for progress, and provides detailed status updates.
 
 **Usage**:
 ```bash
@@ -333,7 +333,6 @@ export ENABLE_CHAIN_SUBMIT=true
 - `MATCHER_PRIVATE_KEY` - Private key for matcher (DO NOT use in production!)
 
 **Services Started**:
-- NATS message broker (port 4222)
 - Matcher (port 8090)
 - Validator 1 (port 9200) - Single validator mode for faster testing
 - Test Agent (connects to matcher and validator)
@@ -371,7 +370,6 @@ export ENABLE_CHAIN_SUBMIT=true
 
 **Prerequisites**:
 - All binaries built (`make build`)
-- NATS running on port 4222 (script will try to start with Docker if not running)
 - RootLayer accessible at configured endpoints
 
 **Exit Codes**:
@@ -838,7 +836,6 @@ go build -o bin/X scripts/X.go
 **Solution**:
 ```bash
 # Check what's using the ports
-lsof -i :4222  # NATS
 lsof -i :8090  # Matcher
 lsof -i :9200  # Validator
 

@@ -39,7 +39,7 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 ### Architecture & Advanced Topics
 - **[Architecture Overview](docs/architecture.md)** - Full component walkthrough and system design
-- **[JetStream Evaluation](docs/jetstream_evaluation.md)** - NATS JetStream evaluation for messaging
+- **[JetStream Evaluation](docs/jetstream_evaluation.md)** - ⚠️ DEPRECATED: Historical NATS JetStream evaluation (system now uses Raft+Gossip)
 
 ## Layout
 
@@ -74,7 +74,7 @@ go build -o bin/simple-agent   ./cmd/simple-agent
 
 ## Running the Services
 
-Typical local loop (requires a running NATS server if you enable validator consensus broadcasting):
+Typical local loop:
 
 ```bash
 # Terminal 1 – Registry
@@ -116,4 +116,4 @@ Regenerate `proto/rootlayer` and `proto/common` targets as needed; commit genera
 
 - Demo keys or mock credentials in this repo are for local testing only.
 - Enable TLS/mTLS for gRPC services before exposing them publicly.
-- Validators rely on threshold attestation; monitor NATS connectivity and persisted LevelDB state to avoid data loss.
+- Validators rely on threshold attestation; monitor Raft consensus health and persisted LevelDB state to avoid data loss.

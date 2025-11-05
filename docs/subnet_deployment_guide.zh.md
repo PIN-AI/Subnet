@@ -61,7 +61,7 @@
 ```bash
 # 1. 安装依赖
 go version  # 需要 >= 1.21
-docker --version  # 可选，用于NATS
+docker --version  # 可选
 
 # 2. Clone代码
 git clone https://github.com/PIN-AI/Subnet
@@ -73,14 +73,7 @@ make build
 
 ### 步骤1：启动基础设施
 
-```bash
-# 启动NATS（validators共识需要）
-docker run -d --name nats -p 4222:4222 nats:latest
-
-# 或使用本地NATS
-brew install nats-server  # macOS
-nats-server &
-```
+**注意**：系统使用 Raft+Gossip 共识。不需要外部消息代理（如 NATS）。
 
 ### 步骤2：在区块链上创建Subnet
 
@@ -169,10 +162,6 @@ validator_set:
   min_validators: 3
   threshold_num: 2      # 2/3阈值
   threshold_denom: 3
-
-# NATS消息总线
-nats:
-  url: "nats://localhost:4222"
 
 # 存储
 storage:
@@ -594,11 +583,6 @@ CMD ["matcher", "--config", "/etc/subnet/matcher-config.yaml"]
 version: '3.8'
 
 services:
-  nats:
-    image: nats:latest
-    ports:
-      - "4222:4222"
-
   matcher:
     build:
       context: .
@@ -606,8 +590,6 @@ services:
     environment:
       - SUBNET_ID=${SUBNET_ID}
       - PRIVATE_KEY=${MATCHER_KEY}
-    depends_on:
-      - nats
 
   validator-1:
     build:
@@ -617,8 +599,6 @@ services:
       - SUBNET_ID=${SUBNET_ID}
       - VALIDATOR_ID=validator-1
       - PRIVATE_KEY=${VALIDATOR_1_KEY}
-    depends_on:
-      - nats
 
   validator-2:
     build:
@@ -628,8 +608,6 @@ services:
       - SUBNET_ID=${SUBNET_ID}
       - VALIDATOR_ID=validator-2
       - PRIVATE_KEY=${VALIDATOR_2_KEY}
-    depends_on:
-      - nats
 
   validator-3:
     build:
@@ -639,8 +617,6 @@ services:
       - SUBNET_ID=${SUBNET_ID}
       - VALIDATOR_ID=validator-3
       - PRIVATE_KEY=${VALIDATOR_3_KEY}
-    depends_on:
-      - nats
 ```
 
 启动：
