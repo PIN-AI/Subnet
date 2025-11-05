@@ -135,13 +135,9 @@ func (c *Consensus) Start(ctx context.Context) error {
 		}
 	}
 
-	// Create CometBFT logger
-	cmtLogger := cmtlog.NewTMLogger(cmtlog.NewSyncWriter(os.Stdout))
-	if c.config.LogFormat == "json" {
-		cmtLogger = cmtlog.NewTMJSONLogger(cmtlog.NewSyncWriter(os.Stdout))
-	}
-	// Filter out debug logs to reduce noise
-	cmtLogger = cmtlog.NewFilter(cmtLogger, cmtlog.AllowError())
+	// Create CometBFT logger - use NopLogger to disable verbose consensus logs
+	// Only show our application logs (through c.logger)
+	cmtLogger := cmtlog.NewNopLogger()
 
 	// Create node
 	node, err := cmtnode.NewNode(

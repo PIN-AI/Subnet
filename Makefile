@@ -58,15 +58,24 @@ test:
 	@go test ./...
 
 # Protobuf codegen
+# NOTE: Proto files are already generated and included in the repository.
+# The 'make proto' target is only needed for developers who have access to
+# the pin_protocol source repository and want to regenerate the proto files.
 # GOOGLEAPIS path for google/api/annotations.proto
 GOOGLEAPIS := $(shell find $(HOME)/go/pkg/mod -path "*/grpc-gateway*/third_party/googleapis" -type d 2>/dev/null | head -1)
 
 proto: proto-from-pin proto-rootlayer proto-common
 
 # Generate from canonical definitions under pin_protocol/proto (authoritative)
+# NOTE: Requires ../pin_protocol directory with proto source files
 .PHONY: proto-from-pin proto-rootlayer
 proto-from-pin:
 	@echo "[INFO] Generating Subnet protobuf code from ../pin_protocol/proto/subnet into ./proto/subnet ..."
+	@if [ ! -d "../pin_protocol/proto" ]; then \
+		echo "[WARN] ../pin_protocol/proto not found. Proto files are already generated in ./proto/"; \
+		echo "[WARN] This target is only for developers with access to pin_protocol source."; \
+		exit 0; \
+	fi
 	@mkdir -p ./proto/subnet
 	@find ./proto/subnet -type f -name '*.pb.go' -delete
 	@protoc -I ../pin_protocol \
@@ -77,6 +86,10 @@ proto-from-pin:
 
 proto-rootlayer:
 	@echo "[INFO] Generating RootLayer protobuf code into ./proto/rootlayer ..."
+	@if [ ! -d "../pin_protocol/proto" ]; then \
+		echo "[WARN] ../pin_protocol/proto not found. Proto files are already generated in ./proto/"; \
+		exit 0; \
+	fi
 	@if [ -z "$(GOOGLEAPIS)" ]; then \
 		echo "ERROR: googleapis not found. Install: go get github.com/grpc-ecosystem/grpc-gateway"; \
 		exit 1; \
@@ -111,6 +124,10 @@ proto-rootlayer:
 
 proto-common:
 	@echo "[INFO] Generating common protobuf code into ./proto/common ..."
+	@if [ ! -d "../pin_protocol/proto" ]; then \
+		echo "[WARN] ../pin_protocol/proto not found. Proto files are already generated in ./proto/"; \
+		exit 0; \
+	fi
 	@mkdir -p ./proto/common
 	@find ./proto/common -type f -name '*.pb.go' -delete
 	@protoc -I ../pin_protocol \

@@ -1,0 +1,46 @@
+# Git files
+.git
+.gitignore
+
+# Environment files (security)
+.env
+.env.*
+
+# Build artifacts
+bin/
+dist/
+
+# Data and logs
+data/
+subnet-logs/
+*.log
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files
+*_test.go
+test/
+tests/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Analysis reports
+analysis-reports/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+

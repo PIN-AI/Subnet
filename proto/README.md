@@ -1,14 +1,10 @@
 # Subnet Protocol Buffers
 
-This directory contains Protocol Buffer definitions for the Subnet components of the Pin Protocol.
+This directory contains generated Protocol Buffer code for the Subnet components of the Pin Protocol.
 
-## Source of Truth
+## Generated Code
 
-Do not edit or add .proto files here. All protobuf definitions are centralized under the canonical repository path:
-
-- `../pin_protocol/proto/subnet/*.proto`
-
-This directory only contains generated Go bindings (`*.pb.go`).
+This directory contains only generated Go bindings (`*.pb.go`). Do not edit these files manually.
 
 ## Architecture Separation
 
@@ -33,10 +29,10 @@ Subnet and RootLayer interact through well-defined boundaries:
 
 ## Regenerating Bindings
 
-Use the Makefile target to regenerate from the canonical sources:
+Use the Makefile target to regenerate the protobuf code:
 
 ```bash
-make proto       # runs protoc against ../pin_protocol/proto/subnet/*.proto
+make proto
 ```
 
-This writes updated `*.pb.go` files into this directory.
+This regenerates all `*.pb.go` files in this directory.

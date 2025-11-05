@@ -1,0 +1,278 @@
+# PinAI Subnet - 3 Validators Raft Cluster
+# Docker Compose configuration for 3-node deployment
+
+services:
+  # ============================================
+  # Registry Service
+  # ============================================
+  registry:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pinai-registry
+    hostname: registry
+    command: /app/bin/registry -grpc :8091 -http :8101
+    ports:
+      - "8091:8091"  # gRPC
+      - "8101:8101"  # HTTP
+    volumes:
+      - ../data/registry:/app/data
+      - ../subnet-logs:/app/logs
+    networks:
+      - subnet-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8101/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Matcher Service
+  # ============================================
+  matcher:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pinai-matcher
+    hostname: matcher
+    command: /app/bin/matcher -config /app/config/matcher.yaml
+    ports:
+      - "8090:8090"  # gRPC
+      - "8092:8091"  # HTTP (mapped to 8092 to avoid conflict)
+    volumes:
+      - ../data/matcher:/app/data
+      - ../subnet-logs:/app/logs
+      - ../config/matcher-docker.yaml:/app/config/matcher.yaml:ro
+    environment:
+      - SUBNET_ID=${SUBNET_ID}
+      - ROOTLAYER_GRPC=${ROOTLAYER_GRPC}
+      - ROOTLAYER_HTTP=${ROOTLAYER_HTTP}
+      - TEST_PRIVATE_KEY=${TEST_PRIVATE_KEY}
+      - ENABLE_CHAIN_SUBMIT=${ENABLE_CHAIN_SUBMIT:-true}
+      - CHAIN_RPC_URL=${CHAIN_RPC_URL:-https://sepolia.base.org}
+      - CHAIN_NETWORK=${CHAIN_NETWORK:-base_sepolia}
+      - INTENT_MANAGER_ADDR=${INTENT_MANAGER_ADDR}
+    networks:
+      - subnet-network
+    depends_on:
+      registry:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8091/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ============================================
+  # Validator 1
+  # ============================================
+  validator-1:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pinai-validator-1
+    hostname: validator-1
+    command: >
+      /app/bin/validator
+      -id validator-1
+      -grpc 9090
+      -subnet-id ${SUBNET_ID}
+      -key ${VALIDATOR_KEY_1}
+      -storage /app/data/storage
+      -rootlayer-endpoint ${ROOTLAYER_GRPC}
+      -chain-rpc-url ${CHAIN_RPC_URL:-https://sepolia.base.org}
+      -chain-network ${CHAIN_NETWORK:-base_sepolia}
+      -intent-manager-addr ${INTENT_MANAGER_ADDR}
+      -enable-chain-submit
+      -enable-rootlayer
+      -validators 3
+      -threshold-num 2
+      -threshold-denom 3
+      -validator-pubkeys validator-1:${VALIDATOR_PUBKEY_1},validator-2:${VALIDATOR_PUBKEY_2},validator-3:${VALIDATOR_PUBKEY_3}
+      -raft-enable
+      -raft-bootstrap
+      -raft-bind 0.0.0.0:7400
+      -raft-data-dir /app/data/raft
+      -raft-peers validator-1:validator-1:7400,validator-2:validator-2:7401,validator-3:validator-3:7402
+      -gossip-enable
+      -gossip-bind 0.0.0.0
+      -gossip-port 7950
+      -gossip-seeds validator-1:7950,validator-2:7951,validator-3:7952
+      -validator-endpoints validator-1:validator-1:9090,validator-2:validator-2:9091,validator-3:validator-3:9092
+    ports:
+      - "9090:9090"  # gRPC
+      - "7400:7400"  # Raft
+      - "7950:7950"  # Gossip
+    volumes:
+      - ../data/validator-1:/app/data
+      - ../subnet-logs:/app/logs
+    environment:
+      - SUBNET_ID=${SUBNET_ID}
+      - ROOTLAYER_GRPC=${ROOTLAYER_GRPC}
+      - ROOTLAYER_HTTP=${ROOTLAYER_HTTP}
+    networks:
+      - subnet-network
+    depends_on:
+      registry:
+        condition: service_healthy
+      matcher:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================
+  # Validator 2
+  # ============================================
+  validator-2:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pinai-validator-2
+    hostname: validator-2
+    command: >
+      /app/bin/validator
+      -id validator-2
+      -grpc 9091
+      -subnet-id ${SUBNET_ID}
+      -key ${VALIDATOR_KEY_2}
+      -storage /app/data/storage
+      -rootlayer-endpoint ${ROOTLAYER_GRPC}
+      -chain-rpc-url ${CHAIN_RPC_URL:-https://sepolia.base.org}
+      -chain-network ${CHAIN_NETWORK:-base_sepolia}
+      -intent-manager-addr ${INTENT_MANAGER_ADDR}
+      -enable-chain-submit
+      -enable-rootlayer
+      -validators 3
+      -threshold-num 2
+      -threshold-denom 3
+      -validator-pubkeys validator-1:${VALIDATOR_PUBKEY_1},validator-2:${VALIDATOR_PUBKEY_2},validator-3:${VALIDATOR_PUBKEY_3}
+      -raft-enable
+      -raft-bootstrap
+      -raft-bind 0.0.0.0:7401
+      -raft-data-dir /app/data/raft
+      -raft-peers validator-1:validator-1:7400,validator-2:validator-2:7401,validator-3:validator-3:7402
+      -gossip-enable
+      -gossip-bind 0.0.0.0
+      -gossip-port 7951
+      -gossip-seeds validator-1:7950,validator-2:7951,validator-3:7952
+      -validator-endpoints validator-1:validator-1:9090,validator-2:validator-2:9091,validator-3:validator-3:9092
+    ports:
+      - "9091:9091"  # gRPC
+      - "7401:7401"  # Raft
+      - "7951:7951"  # Gossip
+    volumes:
+      - ../data/validator-2:/app/data
+      - ../subnet-logs:/app/logs
+    environment:
+      - SUBNET_ID=${SUBNET_ID}
+      - ROOTLAYER_GRPC=${ROOTLAYER_GRPC}
+      - ROOTLAYER_HTTP=${ROOTLAYER_HTTP}
+    networks:
+      - subnet-network
+    depends_on:
+      registry:
+        condition: service_healthy
+      matcher:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================
+  # Validator 3
+  # ============================================
+  validator-3:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pinai-validator-3
+    hostname: validator-3
+    command: >
+      /app/bin/validator
+      -id validator-3
+      -grpc 9092
+      -subnet-id ${SUBNET_ID}
+      -key ${VALIDATOR_KEY_3}
+      -storage /app/data/storage
+      -rootlayer-endpoint ${ROOTLAYER_GRPC}
+      -chain-rpc-url ${CHAIN_RPC_URL:-https://sepolia.base.org}
+      -chain-network ${CHAIN_NETWORK:-base_sepolia}
+      -intent-manager-addr ${INTENT_MANAGER_ADDR}
+      -enable-chain-submit
+      -enable-rootlayer
+      -validators 3
+      -threshold-num 2
+      -threshold-denom 3
+      -validator-pubkeys validator-1:${VALIDATOR_PUBKEY_1},validator-2:${VALIDATOR_PUBKEY_2},validator-3:${VALIDATOR_PUBKEY_3}
+      -raft-enable
+      -raft-bootstrap
+      -raft-bind 0.0.0.0:7402
+      -raft-data-dir /app/data/raft
+      -raft-peers validator-1:validator-1:7400,validator-2:validator-2:7401,validator-3:validator-3:7402
+      -gossip-enable
+      -gossip-bind 0.0.0.0
+      -gossip-port 7952
+      -gossip-seeds validator-1:7950,validator-2:7951,validator-3:7952
+      -validator-endpoints validator-1:validator-1:9090,validator-2:validator-2:9091,validator-3:validator-3:9092
+    ports:
+      - "9092:9092"  # gRPC
+      - "7402:7402"  # Raft
+      - "7952:7952"  # Gossip
+    volumes:
+      - ../data/validator-3:/app/data
+      - ../subnet-logs:/app/logs
+    environment:
+      - SUBNET_ID=${SUBNET_ID}
+      - ROOTLAYER_GRPC=${ROOTLAYER_GRPC}
+      - ROOTLAYER_HTTP=${ROOTLAYER_HTTP}
+    networks:
+      - subnet-network
+    depends_on:
+      registry:
+        condition: service_healthy
+      matcher:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ============================================
+  # Simple Agent (Optional)
+  # ============================================
+  agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pinai-agent
+    hostname: agent
+    command: >
+      /app/bin/simple-agent
+      -matcher matcher:8090
+      -validator validator-1:9090
+      -subnet-id ${SUBNET_ID}
+      -id test-agent-1
+      -name TestAgent1
+    volumes:
+      - ../subnet-logs:/app/logs
+    environment:
+      - SUBNET_ID=${SUBNET_ID}
+    networks:
+      - subnet-network
+    depends_on:
+      - matcher
+      - validator-1
+      - validator-2
+      - validator-3
+    restart: unless-stopped
+    profiles:
+      - with-agent
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  subnet-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
