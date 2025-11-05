@@ -140,6 +140,8 @@ func (c *Consensus) Start(ctx context.Context) error {
 	if c.config.LogFormat == "json" {
 		cmtLogger = cmtlog.NewTMJSONLogger(cmtlog.NewSyncWriter(os.Stdout))
 	}
+	// Filter out debug logs to reduce noise
+	cmtLogger = cmtlog.NewFilter(cmtLogger, cmtlog.AllowError())
 
 	// Create node
 	node, err := cmtnode.NewNode(
