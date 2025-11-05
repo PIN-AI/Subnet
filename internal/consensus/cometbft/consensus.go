@@ -352,6 +352,35 @@ func (c *Consensus) ProposeExecutionReport(report *pb.ExecutionReport, reportKey
 	return nil
 }
 
+// BroadcastValidationBundleSignature broadcasts a ValidationBundle signature via CometBFT transaction
+func (c *Consensus) BroadcastValidationBundleSignature(vbSig *pb.ValidationBundleSignature) error {
+	if !c.IsReady() {
+		return fmt.Errorf("consensus engine not ready")
+	}
+
+	if c.node == nil {
+		return fmt.Errorf("CometBFT node not initialized")
+	}
+
+	payload, err := proto.Marshal(vbSig)
+	if err != nil {
+		return fmt.Errorf("marshal ValidationBundleSignature: %w", err)
+	}
+
+	tx := append([]byte{byte(TxTypeValidationBundleSignature)}, payload...)
+
+	// Use CheckTx to add transaction to mempool
+	if err := c.node.Mempool().CheckTx(tx, nil, cmtmempool.TxInfo{}); err != nil {
+		return fmt.Errorf("submit ValidationBundleSignature tx: %w", err)
+	}
+
+	c.logger.Debug("Broadcasted ValidationBundleSignature via CometBFT",
+		"epoch", vbSig.Epoch,
+		"validator", vbSig.ValidatorAddress)
+
+	return nil
+}
+
 // GetPendingReports returns all pending execution reports
 func (c *Consensus) GetPendingReports() map[string]*pb.ExecutionReport {
 	c.mu.RLock()

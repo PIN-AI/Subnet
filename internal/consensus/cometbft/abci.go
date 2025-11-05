@@ -10,9 +10,6 @@ import (
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/ethereum/go-ethereum/common"
-	sdkCrypto "github.com/PIN-AI/intent-protocol-contract-sdk/sdk/crypto"
-
 	pb "subnet/proto/subnet"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
@@ -45,9 +42,10 @@ type VoteExtension struct {
 
 // ConsensusHandlers defines callbacks for consensus events
 type ConsensusHandlers struct {
-	OnCheckpointCommitted      func(header *pb.CheckpointHeader)
-	OnExecutionReportCommitted func(report *pb.ExecutionReport, reportKey string)
-	OnCheckpointFinalized      func(header *pb.CheckpointHeader, signatures []*pb.Signature)
+	OnCheckpointCommitted           func(header *pb.CheckpointHeader)
+	OnExecutionReportCommitted      func(report *pb.ExecutionReport, reportKey string)
+	OnCheckpointFinalized           func(header *pb.CheckpointHeader, signatures []*pb.Signature)
+	OnValidationSignatureCollected  func(vbSig *pb.ValidationBundleSignature) // New: for CometBFT epoch signature collection
 }
 
 // SubnetABCIApp implements the ABCI Application interface for Subnet consensus
@@ -220,15 +218,19 @@ func (app *SubnetABCIApp) CheckTx(ctx context.Context, req *abci.RequestCheckTx)
 		return &abci.ResponseCheckTx{Code: 0}, nil
 
 	case TxTypeValidationBundleSignature:
-		var sigTx ValidationBundleSignatureTx
-		if err := json.Unmarshal(payload, &sigTx); err != nil {
-			return &abci.ResponseCheckTx{Code: 1, Log: fmt.Sprintf("invalid signature tx: %v", err)}, nil
+		// Changed to protobuf to match BroadcastValidationBundleSignature
+		var vbSig pb.ValidationBundleSignature
+		if err := proto.Unmarshal(payload, &vbSig); err != nil {
+			return &abci.ResponseCheckTx{Code: 1, Log: fmt.Sprintf("invalid validation bundle signature: %v", err)}, nil
 		}
-		if sigTx.Epoch == 0 {
+		if vbSig.Epoch == 0 {
 			return &abci.ResponseCheckTx{Code: 1, Log: "invalid epoch"}, nil
 		}
-		if len(sigTx.Signature) == 0 {
+		if len(vbSig.Signature) == 0 {
 			return &abci.ResponseCheckTx{Code: 1, Log: "empty signature"}, nil
+		}
+		if vbSig.ValidatorAddress == "" {
+			return &abci.ResponseCheckTx{Code: 1, Log: "empty validator address"}, nil
 		}
 		return &abci.ResponseCheckTx{Code: 0}, nil
 
@@ -242,6 +244,7 @@ func (app *SubnetABCIApp) FinalizeBlock(ctx context.Context, req *abci.RequestFi
 	app.mu.Lock()
 	defer app.mu.Unlock()
 
+	app.logger.Info("FinalizeBlock called", "height", req.Height, "num_txs", len(req.Txs))
 	app.latestBlockHeight = req.Height
 
 	txResults := make([]*abci.ExecTxResult, len(req.Txs))
@@ -254,6 +257,8 @@ func (app *SubnetABCIApp) FinalizeBlock(ctx context.Context, req *abci.RequestFi
 
 		txType := TxType(tx[0])
 		payload := tx[1:]
+
+		app.logger.Debug("Processing transaction", "height", req.Height, "tx_index", i, "tx_type", txType)
 
 		switch txType {
 		case TxTypeCheckpoint:
@@ -270,6 +275,7 @@ func (app *SubnetABCIApp) FinalizeBlock(ctx context.Context, req *abci.RequestFi
 
 		default:
 			txResults[i] = &abci.ExecTxResult{Code: 1, Log: "unknown transaction type"}
+			app.logger.Warn("Unknown transaction type", "type", txType)
 		}
 	}
 
@@ -278,7 +284,9 @@ func (app *SubnetABCIApp) FinalizeBlock(ctx context.Context, req *abci.RequestFi
 	}, nil
 }
 
+// OLD VoteExtension approach - commented out because signatures now collected via CometBFT transactions
 // processVoteExtensions extracts ECDSA signatures from vote extensions and submits ValidationBundle when threshold is reached
+/*
 func (app *SubnetABCIApp) processVoteExtensions(commit abci.ExtendedCommitInfo) {
 	if len(commit.Votes) == 0 {
 		return
@@ -320,6 +328,7 @@ func (app *SubnetABCIApp) processVoteExtensions(commit abci.ExtendedCommitInfo) 
 		go app.checkAndSubmitValidationBundle(epoch)
 	}
 }
+*/
 
 // deliverCheckpoint processes a checkpoint transaction
 func (app *SubnetABCIApp) deliverCheckpoint(payload []byte) abci.ExecTxResult {
@@ -348,8 +357,9 @@ func (app *SubnetABCIApp) deliverExecutionReport(payload []byte) abci.ExecTxResu
 		return abci.ExecTxResult{Code: 1, Log: err.Error()}
 	}
 
-	// Store report
-	reportKey := fmt.Sprintf("%s-%s", report.IntentId, report.AssignmentId)
+	// Store report - IMPORTANT: Use same format as generateReportID in handlers.go
+	// Format: intentId:assignmentId:agentId:timestamp
+	reportKey := fmt.Sprintf("%s:%s:%s:%d", report.IntentId, report.AssignmentId, report.AgentId, report.Timestamp)
 	app.pendingReports[reportKey] = report
 
 	// Notify handler (non-blocking)
@@ -357,32 +367,30 @@ func (app *SubnetABCIApp) deliverExecutionReport(payload []byte) abci.ExecTxResu
 		go app.handlers.OnExecutionReportCommitted(report, reportKey)
 	}
 
-	app.logger.Debug("Delivered execution report", "intent_id", report.IntentId)
+	app.logger.Info("Delivered execution report", "intent_id", report.IntentId, "assignment_id", report.AssignmentId)
 	return abci.ExecTxResult{Code: 0}
 }
 
 // deliverValidationBundleSignature processes a ValidationBundle signature transaction
 func (app *SubnetABCIApp) deliverValidationBundleSignature(payload []byte) abci.ExecTxResult {
-	var sigTx ValidationBundleSignatureTx
-	if err := json.Unmarshal(payload, &sigTx); err != nil {
+	// Unmarshal the full ValidationBundleSignature protobuf message
+	var vbSig pb.ValidationBundleSignature
+	if err := proto.Unmarshal(payload, &vbSig); err != nil {
+		app.logger.Warn("Failed to unmarshal ValidationBundleSignature", "error", err)
 		return abci.ExecTxResult{Code: 1, Log: err.Error()}
 	}
 
-	// Initialize epoch map if needed
-	if app.validationBundleSignatures[sigTx.Epoch] == nil {
-		app.validationBundleSignatures[sigTx.Epoch] = make(map[string][]byte)
+	app.logger.Info("Received ValidationBundle signature via CometBFT",
+		"epoch", vbSig.Epoch,
+		"validator", vbSig.ValidatorAddress)
+
+	// Trigger callback to validator node for signature collection
+	if app.handlers.OnValidationSignatureCollected != nil {
+		// Call asynchronously to avoid blocking consensus
+		go app.handlers.OnValidationSignatureCollected(&vbSig)
+	} else {
+		app.logger.Warn("OnValidationSignatureCollected handler not set")
 	}
-
-	// Store signature
-	app.validationBundleSignatures[sigTx.Epoch][sigTx.ValidatorAddr] = sigTx.Signature
-
-	app.logger.Info("Received ValidationBundle signature",
-		"epoch", sigTx.Epoch,
-		"validator", sigTx.ValidatorAddr,
-		"sig_count", len(app.validationBundleSignatures[sigTx.Epoch]))
-
-	// Check if we reached threshold after receiving this signature
-	go app.checkAndSubmitValidationBundle(sigTx.Epoch)
 
 	return abci.ExecTxResult{Code: 0}
 }
@@ -414,6 +422,8 @@ func (app *SubnetABCIApp) Commit(ctx context.Context, req *abci.RequestCommit) (
 	}, nil
 }
 
+// OLD VoteExtension approach - commented out (used JSON format which is incompatible with new protobuf CheckTx)
+/*
 // processValidationBundleSignature handles the signing and submission of ValidationBundle
 func (app *SubnetABCIApp) processValidationBundleSignature(epoch uint64) {
 	// Check if ECDSA signer is configured
@@ -499,16 +509,7 @@ func (app *SubnetABCIApp) checkAndSubmitValidationBundle(epoch uint64) {
 	app.logger.Info("Successfully submitted ValidationBundle to RootLayer", "epoch", epoch)
 }
 
-// computeCheckpointHash computes the hash of a checkpoint header
-func (app *SubnetABCIApp) computeCheckpointHash(checkpoint *pb.CheckpointHeader) []byte {
-	// Use crypto.CheckpointHasher to compute canonical 32-byte hash
-	// This ensures consistency with Raft mode
-	hasher := crypto.NewCheckpointHasher()
-	hash := hasher.ComputeHash(checkpoint)
-	return hash[:]
-}
-
-// broadcastSignature broadcasts a signature transaction to the mempool
+// broadcastSignature broadcasts a signature transaction to the mempool (using JSON - incompatible with new protobuf CheckTx)
 func (app *SubnetABCIApp) broadcastSignature(sigTx ValidationBundleSignatureTx) error {
 	if app.mempoolBroadcaster == nil {
 		app.logger.Warn("Mempool broadcaster not configured, cannot broadcast signature")
@@ -530,6 +531,16 @@ func (app *SubnetABCIApp) broadcastSignature(sigTx ValidationBundleSignatureTx) 
 	}
 
 	return nil
+}
+*/
+
+// computeCheckpointHash computes the hash of a checkpoint header
+func (app *SubnetABCIApp) computeCheckpointHash(checkpoint *pb.CheckpointHeader) []byte {
+	// Use crypto.CheckpointHasher to compute canonical 32-byte hash
+	// This ensures consistency with Raft mode
+	hasher := crypto.NewCheckpointHasher()
+	hash := hasher.ComputeHash(checkpoint)
+	return hash[:]
 }
 
 // hasThresholdSignatures checks if we have enough signatures (2/3 threshold)
@@ -661,11 +672,9 @@ func (app *SubnetABCIApp) ApplySnapshotChunk(ctx context.Context, req *abci.Requ
 }
 
 func (app *SubnetABCIApp) PrepareProposal(ctx context.Context, req *abci.RequestPrepareProposal) (*abci.ResponsePrepareProposal, error) {
-	// Process vote extensions from LocalLastCommit to collect ECDSA signatures
-	app.mu.Lock()
-	app.processVoteExtensions(req.LocalLastCommit)
-	app.mu.Unlock()
-
+	// OLD VoteExtension approach - no longer used
+	// Signature collection now happens via CometBFT transactions after checkpoint consensus
+	// See: analysis-reports/cometbft_epoch_signature_final_solution.md
 	return &abci.ResponsePrepareProposal{Txs: req.Txs}, nil
 }
 
@@ -674,87 +683,23 @@ func (app *SubnetABCIApp) ProcessProposal(ctx context.Context, req *abci.Request
 }
 
 func (app *SubnetABCIApp) ExtendVote(ctx context.Context, req *abci.RequestExtendVote) (*abci.ResponseExtendVote, error) {
-	// If ECDSA signer not configured, return empty extension
-	if app.ecdsaSigner == nil {
-		return &abci.ResponseExtendVote{}, nil
-	}
-
-	app.mu.RLock()
-	epoch := app.currentEpoch
-	checkpoint, exists := app.checkpoints[epoch]
-	app.mu.RUnlock()
-
-	// If no checkpoint for current epoch, return empty extension
-	if !exists {
-		return &abci.ResponseExtendVote{}, nil
-	}
-
-	// Compute checkpoint hash first (we need it for ResultHash and ProofHash)
-	checkpointHash := app.computeCheckpointHash(checkpoint)
-
-	// Convert pending execution reports to SDK ValidationItems
-	// Note: We use checkpoint hash for both ResultHash and ProofHash (same as rootlayer_adapter.go)
-	sdkItems := make([]sdkCrypto.ValidationItem, 0, len(app.pendingReports))
-	for _, report := range app.pendingReports {
-		intentID := common.HexToHash(report.IntentId)
-		assignmentID := common.HexToHash(report.AssignmentId)
-		agentAddr := common.HexToAddress(report.AgentId)
-
-		// Use checkpoint hash as resultHash and proofHash (32 bytes)
-		var resultHash [32]byte
-		var proofHash [32]byte
-		if len(checkpointHash) >= 32 {
-			copy(resultHash[:], checkpointHash[:32])
-			copy(proofHash[:], checkpointHash[:32])
-		}
-
-		sdkItems = append(sdkItems, sdkCrypto.ValidationItem{
-			IntentID:     intentID,
-			AssignmentID: assignmentID,
-			Agent:        agentAddr,
-			ResultHash:   resultHash,
-			ProofHash:    proofHash,
-		})
-	}
-
-	// Compute items_hash (this is what RootLayer will verify!)
-	itemsHash, err := sdkCrypto.ComputeItemsHash(sdkItems)
-	if err != nil {
-		app.logger.Error("Failed to compute items_hash in ExtendVote", "error", err, "epoch", epoch)
-		return &abci.ResponseExtendVote{}, nil
-	}
-
-	// Sign items_hash instead of checkpointHash
-	signature, err := app.ecdsaSigner.Sign(itemsHash[:])
-	if err != nil {
-		app.logger.Error("Failed to sign items_hash in ExtendVote", "error", err, "epoch", epoch)
-		return &abci.ResponseExtendVote{}, nil
-	}
-
-	// Create vote extension with ECDSA signature
-	voteExt := VoteExtension{
-		Epoch:         epoch,
-		ItemsHash:     itemsHash[:],
-		ValidatorAddr: app.ecdsaSigner.Address(),
-		Signature:     signature,
-	}
-
-	// Serialize vote extension
-	extBytes, err := json.Marshal(voteExt)
-	if err != nil {
-		app.logger.Error("Failed to marshal vote extension", "error", err)
-		return &abci.ResponseExtendVote{}, nil
-	}
-
-	app.logger.Info("Extended vote with ECDSA signature over items_hash",
-		"epoch", epoch,
-		"validator", app.ecdsaSigner.Address(),
-		"items_hash", fmt.Sprintf("0x%x", itemsHash),
-		"height", req.Height)
-
-	return &abci.ResponseExtendVote{
-		VoteExtension: extBytes,
-	}, nil
+	// CometBFT epoch signature solution: Do NOT sign in ExtendVote
+	// Signing happens AFTER checkpoint consensus in handleCommittedCheckpoint()
+	// This ensures all validators sign the same digest with consistent FIFO ordering
+	//
+	// See: analysis-reports/cometbft_epoch_signature_final_solution.md
+	//
+	// Why ExtendVote is wrong:
+	// - Called on every block, not at epoch boundaries
+	// - Different validators see different pending reports
+	// - FIFO sorting and MaxIntentsPerEpoch haven't been applied yet
+	// - Results in inconsistent digests across validators
+	//
+	// Correct approach:
+	// - Sign in handleCommittedCheckpoint() after consensus confirms epoch data
+	// - Broadcast signatures via CometBFT transactions
+	// - Collect signatures via OnValidationSignatureCollected callback
+	return &abci.ResponseExtendVote{}, nil
 }
 
 func (app *SubnetABCIApp) VerifyVoteExtension(ctx context.Context, req *abci.RequestVerifyVoteExtension) (*abci.ResponseVerifyVoteExtension, error) {

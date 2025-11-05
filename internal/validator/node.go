@@ -394,9 +394,10 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 
 		// Create consensus handlers
 		handlers := cometbft.ConsensusHandlers{
-			OnCheckpointCommitted:      node.handleCommittedCheckpoint,
-			OnExecutionReportCommitted: node.handleExecutionReportCommitted,
-			OnCheckpointFinalized:      node.handleCheckpointFinalized,
+			OnCheckpointCommitted:          node.handleCommittedCheckpoint,
+			OnExecutionReportCommitted:     node.handleExecutionReportCommitted,
+			OnCheckpointFinalized:          node.handleCheckpointFinalized,
+			OnValidationSignatureCollected: node.handleValidationSignatureFromCometBFT,
 		}
 
 		cometConsensus, err := cometbft.NewConsensus(cometCfg, handlers, logger)
@@ -1974,11 +1975,14 @@ func (n *Node) clearReportsForIntent(intentKey string) {
 		}
 	}
 
+	// Clean up reportReceivedAt timestamp for this intent (prevent memory leak)
+	delete(n.reportReceivedAt, intentKey)
+
 	if n.raftConsensus != nil && len(removedKeys) > 0 {
 		n.raftConsensus.ClearPending(removedKeys)
 	}
 
-	n.logger.Infof("Cleared %d execution reports for Intent group %s", removed, intentKey)
+	n.logger.Infof("Cleared %d execution reports for Intent group %s (including timestamp)", removed, intentKey)
 }
 
 // submitToRootLayer submits the finalized checkpoint to RootLayer
@@ -2691,14 +2695,29 @@ func (n *Node) getCheckpointInterval() time.Duration {
 // signAndGossipValidationBundles makes all validators sign ValidationBundles and gossip signatures.
 // In epoch-based mode we sign once per epoch (max MaxIntentsPerEpoch intents, FIFO order).
 func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, groupedReports map[string][]*pb.ExecutionReport) {
-	if n.sdkClient == nil || n.gossipManager == nil {
-		n.logger.Warn("SDK client or gossip manager not available, skipping ValidationBundle signature gossip")
+	// Determine consensus mode
+	isCometBFT := n.cometbftConsensus != nil
+	isRaft := n.raftConsensus != nil
+
+	// SDK client is always required for signing
+	if n.sdkClient == nil {
+		n.logger.Warn("SDK client not available, skipping ValidationBundle signing")
 		return
 	}
+
+	// Gossip manager is only required for Raft mode
+	if isRaft && n.gossipManager == nil {
+		n.logger.Warn("Gossip manager not available (Raft mode), skipping ValidationBundle signature gossip")
+		return
+	}
+
 	if header == nil {
 		n.logger.Warn("Checkpoint header is nil, skipping ValidationBundle signing")
 		return
 	}
+
+	n.logger.Infof("signAndGossipValidationBundles: mode=CometBFT:%v Raft:%v epoch=%d",
+		isCometBFT, isRaft, header.Epoch)
 
 	epoch := header.Epoch
 	totalIntents := len(groupedReports)
@@ -2709,6 +2728,9 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 	}
 
 	intents := make([]intentMeta, 0, totalIntents)
+
+	// Lock to safely read reportReceivedAt map
+	n.mu.RLock()
 	for intentKey := range groupedReports {
 		// Use validator reception time instead of agent-provided timestamp for FIFO
 		// This prevents malicious agents from manipulating order by setting fake timestamps
@@ -2723,6 +2745,7 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 			timestamp: receivedAt,
 		})
 	}
+	n.mu.RUnlock()
 
 	if len(intents) == 0 {
 		n.logger.Warnf("Epoch %d has no grouped execution reports to sign", epoch)
@@ -2857,10 +2880,21 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 		// Check if submission has already been triggered for this epoch
 		n.mu.Lock()
 		alreadyTriggered := n.epochSubmissionTriggered[epoch]
-		if !alreadyTriggered && n.raftConsensus != nil && n.raftConsensus.IsLeader() {
+		shouldTrigger := false
+
+		if isRaft {
+			// Raft mode: only leader submits (原逻辑完全不变)
+			shouldTrigger = !alreadyTriggered && n.raftConsensus != nil && n.raftConsensus.IsLeader()
+		} else if isCometBFT {
+			// CometBFT mode: any node can submit (RootLayer will handle deduplication)
+			shouldTrigger = !alreadyTriggered
+		}
+
+		if shouldTrigger {
 			n.epochSubmissionTriggered[epoch] = true
 			n.mu.Unlock()
-			n.logger.Infof("Epoch %d signature threshold satisfied locally, triggering submission", epoch)
+			n.logger.Infof("Epoch %d signature threshold satisfied locally, triggering submission (mode: CometBFT=%v Raft=%v)",
+				epoch, isCometBFT, isRaft)
 			go n.submitValidationBundlesForEpoch(epoch)
 		} else {
 			n.mu.Unlock()
@@ -2870,14 +2904,109 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 		}
 	}
 
-	if err := n.gossipManager.BroadcastValidationBundleSignature(vbSig); err != nil {
-		n.logger.Errorf("Failed to gossip epoch-level ValidationBundle signature epoch=%d validator=%s: %v",
-			epoch, validatorAddr, err)
+	// Broadcast signature based on consensus mode
+	if isCometBFT {
+		// CometBFT mode: broadcast via CometBFT transaction
+		if err := n.broadcastValidationSignatureToCometBFT(vbSig); err != nil {
+			n.logger.Errorf("Failed to broadcast ValidationBundle signature to CometBFT epoch=%d validator=%s: %v",
+				epoch, validatorAddr, err)
+			return
+		}
+		n.logger.Infof("Broadcasted ValidationBundle signature via CometBFT epoch=%d validator=%s intents=%d",
+			epoch, validatorAddr, len(intentKeys))
+	} else if isRaft {
+		// Raft mode: broadcast via Gossip (原逻辑完全不变)
+		if err := n.gossipManager.BroadcastValidationBundleSignature(vbSig); err != nil {
+			n.logger.Errorf("Failed to gossip epoch-level ValidationBundle signature epoch=%d validator=%s: %v",
+				epoch, validatorAddr, err)
+			return
+		}
+		n.logger.Infof("Broadcasted epoch-level ValidationBundle signature epoch=%d validator=%s intents=%d",
+			epoch, validatorAddr, len(intentKeys))
+	}
+}
+
+// handleValidationSignatureFromCometBFT handles ValidationBundle signatures received via CometBFT
+func (n *Node) handleValidationSignatureFromCometBFT(vbSig *pb.ValidationBundleSignature) {
+	if vbSig == nil {
+		n.logger.Warn("Received nil ValidationBundleSignature from CometBFT")
 		return
 	}
 
-	n.logger.Infof("Broadcasted epoch-level ValidationBundle signature epoch=%d validator=%s intents=%d",
-		epoch, validatorAddr, len(intentKeys))
+	if vbSig.ValidatorAddress == "" || len(vbSig.Signature) == 0 {
+		n.logger.Warn("Invalid ValidationBundle signature from CometBFT: missing validator or signature",
+			"epoch", vbSig.Epoch)
+		return
+	}
+
+	// CometBFT mode only uses epoch-level signatures (IntentId, AssignmentId, AgentId are empty)
+	isEpochFormat := vbSig.IntentId == "" && vbSig.AssignmentId == "" && vbSig.AgentId == ""
+	if !isEpochFormat {
+		n.logger.Warn("Received non-epoch-level signature in CometBFT mode (unexpected)",
+			"epoch", vbSig.Epoch,
+			"validator", vbSig.ValidatorAddress)
+		return
+	}
+
+	n.logger.Infof("Received epoch-level ValidationBundle signature via CometBFT epoch=%d validator=%s",
+		vbSig.Epoch, vbSig.ValidatorAddress)
+
+	// Store signature and check if threshold is reached
+	thresholdReached, signatureCount := n.storeEpochValidationSignature(vbSig)
+
+	if thresholdReached {
+		n.logger.Infof("Epoch-level ValidationBundle signatures reached threshold epoch=%d collected=%d required=%d (CometBFT)",
+			vbSig.Epoch,
+			signatureCount,
+			n.validatorSet.RequiredSignatures())
+
+		// Check if submission has already been triggered for this epoch
+		n.mu.Lock()
+		alreadyTriggered := n.epochSubmissionTriggered[vbSig.Epoch]
+		shouldTrigger := !alreadyTriggered // In CometBFT mode, any node can submit
+
+		if shouldTrigger {
+			n.epochSubmissionTriggered[vbSig.Epoch] = true
+			n.mu.Unlock()
+			n.logger.Infof("Triggering ValidationBundle batch submission for epoch=%d (CometBFT mode)", vbSig.Epoch)
+			go n.submitValidationBundlesForEpoch(vbSig.Epoch)
+		} else {
+			n.mu.Unlock()
+			n.logger.Debugf("Submission already triggered for epoch=%d, skipping duplicate trigger", vbSig.Epoch)
+		}
+	}
+}
+
+// broadcastValidationSignatureToCometBFT broadcasts ValidationBundle signature via CometBFT with retry logic
+func (n *Node) broadcastValidationSignatureToCometBFT(vbSig *pb.ValidationBundleSignature) error {
+	if n.cometbftConsensus == nil {
+		return fmt.Errorf("CometBFT consensus not initialized")
+	}
+
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err := n.cometbftConsensus.BroadcastValidationBundleSignature(vbSig)
+		if err == nil {
+			n.logger.Debugf("Successfully broadcasted ValidationBundleSignature on attempt %d epoch=%d",
+				attempt, vbSig.Epoch)
+			return nil
+		}
+
+		n.logger.Warnf("Failed to broadcast ValidationBundleSignature (attempt %d/%d) epoch=%d: %v",
+			attempt, maxRetries, vbSig.Epoch, err)
+
+		if attempt < maxRetries {
+			// Exponential backoff: 1s, 2s, 4s
+			backoff := time.Second * time.Duration(1<<(attempt-1))
+			time.Sleep(backoff)
+			continue
+		}
+
+		// Final failure after all retries
+		return fmt.Errorf("failed to broadcast ValidationBundleSignature after %d attempts: %w", maxRetries, err)
+	}
+
+	return nil
 }
 
 // handleExecutionReportCommitted handles execution reports committed via CometBFT
@@ -2897,7 +3026,7 @@ func (n *Node) handleExecutionReportCommitted(report *pb.ExecutionReport, report
 		n.reportReceivedAt[intentKey] = time.Now().Unix() // Track validator reception time for FIFO
 	}
 	n.mu.Unlock()
-	n.logger.Debugf("CometBFT committed execution report intent=%s assignment=%s", report.IntentId, report.AssignmentId)
+	n.logger.Infof("Stored execution report from CometBFT callback intent=%s assignment=%s reportKey=%s", report.IntentId, report.AssignmentId, reportKey)
 }
 
 // handleCheckpointFinalized handles checkpoints that have reached finality with threshold signatures
@@ -3126,9 +3255,18 @@ func (n *Node) cleanupOldEpochData(finalizedEpoch uint64) {
 		}
 	}
 
-	if cleanedSigs > 0 || cleanedIntents > 0 {
-		n.logger.Infof("Cleaned up old epoch data finalized_epoch=%d cutoff_epoch=%d cleaned_sig_epochs=%d cleaned_intent_epochs=%d",
-			finalizedEpoch, cutoffEpoch, cleanedSigs, cleanedIntents)
+	// Clean up epoch submission triggered flags (prevent memory leak)
+	cleanedSubmissions := 0
+	for epoch := range n.epochSubmissionTriggered {
+		if epoch < cutoffEpoch {
+			delete(n.epochSubmissionTriggered, epoch)
+			cleanedSubmissions++
+		}
+	}
+
+	if cleanedSigs > 0 || cleanedIntents > 0 || cleanedSubmissions > 0 {
+		n.logger.Infof("Cleaned up old epoch data finalized_epoch=%d cutoff_epoch=%d cleaned_sig_epochs=%d cleaned_intent_epochs=%d cleaned_submission_flags=%d",
+			finalizedEpoch, cutoffEpoch, cleanedSigs, cleanedIntents, cleanedSubmissions)
 	}
 }
 
