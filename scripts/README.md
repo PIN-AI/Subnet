@@ -61,8 +61,8 @@ export TEST_MODE=true
 - `START_AGENT`: Whether to start agent (true/false, default: true)
 
 **Related Files**:
-- Root directory `stop-subnet.sh` - Stop all services
-- Root directory `send-intent.sh` - Interactive intent submission
+- `stop-subnet.sh` - Stop all services
+- `send-intent.sh` - Interactive intent submission
 
 ---
 
@@ -70,6 +70,8 @@ export TEST_MODE=true
 
 ### `send-intent.sh`
 **Purpose**: Interactive Intent submission tool
+
+**Location**: `scripts/send-intent.sh`
 
 **Features**:
 - User-friendly interactive interface
@@ -80,7 +82,7 @@ export TEST_MODE=true
 **Usage**:
 ```bash
 # Ensure .env is configured
-./send-intent.sh
+./scripts/send-intent.sh
 
 # Menu options:
 # 1) Submit custom Intent
@@ -107,9 +109,11 @@ export TEST_MODE=true
 ### `stop-subnet.sh`
 **Purpose**: Stop all subnet processes
 
+**Location**: `scripts/stop-subnet.sh`
+
 **Usage**:
 ```bash
-./stop-subnet.sh
+./scripts/stop-subnet.sh
 ```
 
 ---
@@ -429,7 +433,7 @@ See `.env.example` for details.
    lsof -i :9003  # Validator
 
    # Stop all services
-   ./stop-subnet.sh
+   ./scripts/stop-subnet.sh
    ```
 
 2. **Compilation errors**
