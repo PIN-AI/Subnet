@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,17 @@ import (
 	"subnet/internal/storage"
 	"subnet/internal/types"
 	pb "subnet/proto/subnet"
+)
+
+const (
+	// MaxIntentsPerEpoch defines the maximum number of Intents that can be included in a single epoch
+	// This limit is enforced BEFORE signing to ensure the items_hash covers exactly these Intents
+	// Remaining Intents will wait for the next epoch
+	MaxIntentsPerEpoch = 10
+
+	// keepRecentEpochs defines how many recent epochs' data to keep in memory
+	// Older epochs will be cleaned up to prevent memory leaks
+	keepRecentEpochs = 3
 )
 
 // Node represents a validator node in the subnet
@@ -71,8 +83,9 @@ type Node struct {
 	metricsServer *http.Server
 
 	// Execution reports
-	pendingReports map[string]*pb.ExecutionReport
-	reportScores   map[string]int32
+	pendingReports   map[string]*pb.ExecutionReport
+	reportScores     map[string]int32
+	reportReceivedAt map[string]int64 // Track when validator received each report (for FIFO)
 
 	// Checkpoint management
 	currentEpoch      uint64
@@ -81,7 +94,13 @@ type Node struct {
 	lastCheckpointAt  time.Time                // Track last checkpoint time
 	isLeader          bool                     // Track current leadership status
 
-	// ValidationBundle signature collection (per intent)
+	// ValidationBundle signature collection
+	// NEW: Epoch-level signature collection (replaces per-Intent model)
+	epochValidationSignatures map[uint64]map[string]*pb.ValidationBundleSignature // epoch -> (validator_address -> signature)
+	epochIntents              map[uint64][]string                                 // epoch -> [intentKeys]
+	epochSubmissionTriggered  map[uint64]bool                                     // epoch -> whether submission has been triggered
+
+	// DEPRECATED: Per-Intent signature collection (kept for backward compatibility, will be removed)
 	validationBundleSignatures map[string]map[string]*pb.ValidationBundleSignature // intent_key -> (validator_address -> signature)
 
 	// Validator endpoints mapping (validator_id -> grpc_endpoint)
@@ -264,26 +283,35 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	node := &Node{
-		id:              config.ValidatorID,
-		signer:          signer,
-		validatorSet:    config.ValidatorSet,
-		logger:          logger,
-		fsm:             fsm,
-		leaderTracker:   leaderTracker,
-		chain:           chain,
-		store:           store,
-		rootlayerClient: rootClient,
-		sdkClient:                  sdkClient,
-		agentRegistry:              agentReg,
-		metrics:                    metrics.Noop{},
-		pendingReports:             make(map[string]*pb.ExecutionReport),
-		reportScores:               make(map[string]int32),
-		signatures:                 make(map[string]*pb.Signature),
+		id:               config.ValidatorID,
+		signer:           signer,
+		validatorSet:     config.ValidatorSet,
+		logger:           logger,
+		fsm:              fsm,
+		leaderTracker:    leaderTracker,
+		chain:            chain,
+		store:            store,
+		rootlayerClient:  rootClient,
+		sdkClient:        sdkClient,
+		agentRegistry:    agentReg,
+		metrics:          metrics.Noop{},
+		pendingReports:   make(map[string]*pb.ExecutionReport),
+		reportScores:     make(map[string]int32),
+		reportReceivedAt: make(map[string]int64),
+		signatures:       make(map[string]*pb.Signature),
+
+		// NEW: Epoch-level signature collection
+		epochValidationSignatures: make(map[uint64]map[string]*pb.ValidationBundleSignature),
+		epochIntents:              make(map[uint64][]string),
+		epochSubmissionTriggered:  make(map[uint64]bool),
+
+		// DEPRECATED: Per-Intent signature collection (backward compatibility)
 		validationBundleSignatures: make(map[string]map[string]*pb.ValidationBundleSignature),
-		validatorEndpoints:         config.ValidatorEndpoints,
-		config:                     config,
-		ctx:                        ctx,
-		cancel:                     cancel,
+
+		validatorEndpoints: config.ValidatorEndpoints,
+		config:             config,
+		ctx:                ctx,
+		cancel:             cancel,
 	}
 
 	// Initialise Raft consensus if enabled (transitional; will replace legacy path).
@@ -420,6 +448,11 @@ func (n *Node) OnExecutionReportCommitted(report *pb.ExecutionReport, reportKey 
 		n.pendingReports[reportKey] = report
 		score := n.scoreReport(report)
 		n.reportScores[reportKey] = score
+
+		// Track reception time using the SAME key format as groupReportsByIntent
+		// Key format: intentID:assignmentID:agentID
+		intentKey := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
+		n.reportReceivedAt[intentKey] = time.Now().Unix() // Track validator reception time for FIFO
 	}
 	n.mu.Unlock()
 	n.logger.Debugf("Raft committed execution report intent=%s assignment=%s", report.IntentId, report.AssignmentId)
@@ -535,24 +568,61 @@ func (n *Node) onGossipSignatureReceived(sig *pb.Signature, checkpointHash []byt
 // onValidationBundleSignatureReceived handles ValidationBundle signatures received via gossip
 func (n *Node) onValidationBundleSignatureReceived(vbSig *pb.ValidationBundleSignature) {
 	if vbSig == nil {
+		n.logger.Warn("Received nil ValidationBundleSignature via gossip")
 		return
 	}
 
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	// Basic validation
-	if vbSig.IntentId == "" || vbSig.AssignmentId == "" || vbSig.ValidatorAddress == "" || len(vbSig.Signature) == 0 {
-		n.logger.Warn("Invalid ValidationBundle signature: missing fields",
-			"validator", vbSig.ValidatorAddress,
+	if vbSig.ValidatorAddress == "" || len(vbSig.Signature) == 0 {
+		n.logger.Warn("Invalid ValidationBundle signature: missing validator or signature bytes",
+			"epoch", vbSig.Epoch,
 			"intent_id", vbSig.IntentId)
 		return
 	}
 
-	// Create intent key for grouping (must match format used in signAndGossipValidationBundles)
+	isEpochFormat := vbSig.IntentId == "" && vbSig.AssignmentId == "" && vbSig.AgentId == ""
+
+	if isEpochFormat {
+		thresholdReached, signatureCount := n.storeEpochValidationSignature(vbSig)
+
+		if thresholdReached {
+			n.logger.Infof("Epoch-level ValidationBundle signatures reached threshold epoch=%d collected=%d required=%d",
+				vbSig.Epoch,
+				signatureCount,
+				n.validatorSet.RequiredSignatures())
+
+			// Check if submission has already been triggered for this epoch
+			n.mu.Lock()
+			alreadyTriggered := n.epochSubmissionTriggered[vbSig.Epoch]
+			if !alreadyTriggered && n.raftConsensus != nil && n.raftConsensus.IsLeader() {
+				n.epochSubmissionTriggered[vbSig.Epoch] = true
+				n.mu.Unlock()
+				n.logger.Infof("Leader triggering ValidationBundle batch submission for epoch=%d (epoch-level signatures)", vbSig.Epoch)
+				go n.submitValidationBundlesForEpoch(vbSig.Epoch)
+			} else {
+				n.mu.Unlock()
+				if alreadyTriggered {
+					n.logger.Debugf("Submission already triggered for epoch=%d, skipping duplicate trigger", vbSig.Epoch)
+				} else {
+					n.logger.Debugf("Non-leader received epoch-level threshold for epoch=%d; awaiting leader submission", vbSig.Epoch)
+				}
+			}
+		}
+		return
+	}
+
+	// ===== Legacy path: per-Intent signatures (backward compatibility) =====
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if vbSig.IntentId == "" || vbSig.AssignmentId == "" {
+		n.logger.Warn("Legacy ValidationBundle signature missing intent fields",
+			"validator", vbSig.ValidatorAddress,
+			"epoch", vbSig.Epoch)
+		return
+	}
+
 	intentKey := fmt.Sprintf("%s:%s:%s", vbSig.IntentId, vbSig.AssignmentId, vbSig.AgentId)
 
-	// Initialize map for this intent if needed
 	if n.validationBundleSignatures == nil {
 		n.validationBundleSignatures = make(map[string]map[string]*pb.ValidationBundleSignature)
 	}
@@ -560,33 +630,24 @@ func (n *Node) onValidationBundleSignatureReceived(vbSig *pb.ValidationBundleSig
 		n.validationBundleSignatures[intentKey] = make(map[string]*pb.ValidationBundleSignature)
 	}
 
-	// Skip if we already have this validator's signature for this intent
 	if _, exists := n.validationBundleSignatures[intentKey][vbSig.ValidatorAddress]; exists {
-		n.logger.Debug("Duplicate ValidationBundle signature ignored",
+		n.logger.Debug("Duplicate legacy ValidationBundle signature ignored",
 			"validator", vbSig.ValidatorAddress,
 			"intent_id", vbSig.IntentId)
 		return
 	}
 
-	// Add signature to map
 	n.validationBundleSignatures[intentKey][vbSig.ValidatorAddress] = vbSig
 
-	n.logger.Infof("Received ValidationBundle signature via gossip validator=%s intent_id=%s assignment_id=%s epoch=%d total_sigs=%d",
-		vbSig.ValidatorAddress, vbSig.IntentId, vbSig.AssignmentId, vbSig.Epoch, len(n.validationBundleSignatures[intentKey]))
+	n.logger.Warnf("Received legacy per-Intent ValidationBundle signature intent_key=%s epoch=%d total_sigs=%d (deprecated format)",
+		intentKey, vbSig.Epoch, len(n.validationBundleSignatures[intentKey]))
 
-	// Check if we've reached threshold
 	sigCount := len(n.validationBundleSignatures[intentKey])
-	thresholdReached := n.validatorSet.CheckThreshold(sigCount)
-
-	if thresholdReached {
-		n.logger.Infof("ValidationBundle signature threshold reached intent_id=%s sigs=%d required=%d",
+	if n.validatorSet.CheckThreshold(sigCount) {
+		n.logger.Infof("Legacy ValidationBundle signature threshold reached intent_id=%s sigs=%d required=%d",
 			vbSig.IntentId, sigCount, n.validatorSet.RequiredSignatures())
 
-		// Trigger ValidationBundle batch submission if we're the leader
 		if n.raftConsensus != nil && n.raftConsensus.IsLeader() {
-			n.logger.Infof("Leader triggering ValidationBundle batch submission for epoch=%d (triggered by intent_id=%s)", vbSig.Epoch, vbSig.IntentId)
-			// Launch goroutine to submit without holding lock
-			// Submit entire batch for this epoch (all Intents share the same signature)
 			go n.submitValidationBundlesForEpoch(vbSig.Epoch)
 		}
 	}
@@ -2046,25 +2107,72 @@ func (n *Node) submitValidationBundlesForEpoch(epoch uint64) {
 	}
 	headerCopy := proto.Clone(header).(*pb.CheckpointHeader)
 
-	// Get ALL pending reports (all Intents for this epoch)
-	if len(n.pendingReports) == 0 {
-		n.logger.Warnf("No pending reports found for epoch=%d", epoch)
+	// ===== CRITICAL: Use epochIntents instead of pendingReports =====
+	// Get Intent keys from epochIntents (these were recorded during signature collection)
+	intentKeys, exists := n.epochIntents[epoch]
+	if !exists || len(intentKeys) == 0 {
+		n.logger.Warnf("No Intent keys found in epochIntents for epoch=%d", epoch)
 		n.mu.Unlock()
 		return
 	}
 
-	// Copy all pending reports
-	pendingCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
-	for k, v := range n.pendingReports {
-		pendingCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+	n.logger.Infof("Found %d Intents in epochIntents for epoch=%d", len(intentKeys), epoch)
+
+	// Check ExecutionReport availability for each Intent
+	// Collect reports for Intents that have reports available
+	// Note: pendingReports is indexed by reportKey (intentID:assignmentID:agentID:timestamp)
+	// but epochIntents stores intentKey (intentID:assignmentID:agentID)
+	// We need to find reports that match the intentKey prefix
+	availableReports := make(map[string]*pb.ExecutionReport)
+	missingIntents := make([]string, 0)
+
+	for _, intentKey := range intentKeys {
+		found := false
+		for reportKey, report := range n.pendingReports {
+			// Check if reportKey starts with intentKey (reports have timestamp suffix)
+			if len(reportKey) > len(intentKey) && reportKey[:len(intentKey)] == intentKey && reportKey[len(intentKey)] == ':' {
+				availableReports[reportKey] = proto.Clone(report).(*pb.ExecutionReport)
+				found = true
+				break // Only need one report per intent
+			}
+		}
+		if !found {
+			missingIntents = append(missingIntents, intentKey)
+		}
 	}
 
 	n.mu.Unlock()
 
-	// Group reports by Intent
-	groupedReports := n.groupReportsByIntent(pendingCopy)
-	n.logger.Infof("Submitting ValidationBundle batch via gossip threshold epoch=%d intents=%d",
-		epoch, len(groupedReports))
+	// ===== ExecutionReport Completeness Check =====
+	totalIntents := len(intentKeys)
+	availableCount := len(availableReports)
+	missingCount := len(missingIntents)
+	completeness := float64(availableCount) / float64(totalIntents) * 100
+
+	n.logger.Infof("Epoch %d Intent completeness: %d/%d (%.1f%%) available, %d missing",
+		epoch, availableCount, totalIntents, completeness, missingCount)
+
+	if missingCount > 0 {
+		n.logger.Warnf("Missing ExecutionReports for %d Intents in epoch %d: %v", missingCount, epoch, missingIntents)
+	}
+
+	// Strategy: If <50% reports available, delay submission (too early)
+	// If ≥50%, proceed with available reports only
+	if completeness < 50.0 {
+		n.logger.Warnf("Only %.1f%% reports available for epoch %d (<50%%), delaying submission to allow more reports to arrive",
+			completeness, epoch)
+		return
+	}
+
+	if len(availableReports) == 0 {
+		n.logger.Warnf("No ExecutionReports available for epoch=%d, cannot submit", epoch)
+		return
+	}
+
+	// Group available reports by Intent
+	groupedReports := n.groupReportsByIntent(availableReports)
+	n.logger.Infof("Submitting ValidationBundle batch via gossip threshold epoch=%d intents=%d (%.1f%% complete)",
+		epoch, len(groupedReports), completeness)
 
 	// Wait for RootLayer state sync (same as checkpoint submission)
 	syncDelay := 15 * time.Second
@@ -2072,9 +2180,9 @@ func (n *Node) submitValidationBundlesForEpoch(epoch uint64) {
 		syncDelay, epoch)
 	time.Sleep(syncDelay)
 
-	// Build ValidationBundles for all Intents
+	// Build ValidationBundles for Intents with available reports
 	bundles := make([]*rootpb.ValidationBundle, 0, len(groupedReports))
-	intentKeys := make([]string, 0, len(groupedReports))
+	bundleIntentKeys := make([]string, 0, len(groupedReports))
 
 	for key, reps := range groupedReports {
 		bundle := n.buildValidationBundleForIntent(headerCopy, reps, nil)
@@ -2083,7 +2191,7 @@ func (n *Node) submitValidationBundlesForEpoch(epoch uint64) {
 			continue
 		}
 		bundles = append(bundles, bundle)
-		intentKeys = append(intentKeys, key)
+		bundleIntentKeys = append(bundleIntentKeys, key)
 	}
 
 	if len(bundles) == 0 {
@@ -2092,7 +2200,7 @@ func (n *Node) submitValidationBundlesForEpoch(epoch uint64) {
 	}
 
 	// Submit entire batch using batch logic
-	successfulIntents, failedIntents := n.submitValidationBundleBatch(headerCopy, bundles, intentKeys)
+	successfulIntents, failedIntents := n.submitValidationBundleBatch(headerCopy, bundles, bundleIntentKeys)
 
 	// Clear successfully submitted Intent reports
 	for _, key := range successfulIntents {
@@ -2118,60 +2226,60 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 
 	batchClient, supportsBatch := n.rootlayerClient.(batchSubmitter)
 
-	if supportsBatch {
-		// Convert ValidationBundles to ValidationBatchGroup using checkpoint signatures
-		// Note: We pass the checkpoint signatures which cover all Intents in the batch
-		group := n.convertToValidationBatchGroup(header, bundles)
-		if group == nil {
-			n.logger.Warn("Failed to convert ValidationBundles to ValidationBatchGroup")
-			return n.submitIndividualValidationBundles(header, bundles, intentKeys)
-		}
-
-		batchID := fmt.Sprintf("epoch-%d-%d", header.Epoch, time.Now().Unix())
-		n.logger.Infof("Submitting ValidationBatchGroup batch_id=%s epoch=%d items=%d",
-			batchID, header.Epoch, len(group.Items))
-
-		// Print and save complete ValidationBatchGroup structure to file
-		n.printAndSaveValidationBatchGroup(group, batchID)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		resp, err := batchClient.SubmitValidationBundleBatch(ctx, []*rootpb.ValidationBatchGroup{group}, batchID, true)
-		if err != nil {
-			// Batch submission failed - fall back to individual submission
-			n.logger.Warnf("Batch submission failed, falling back to individual submission error=%v", err)
-			return n.submitIndividualValidationBundles(header, bundles, intentKeys)
-		}
-
-		// Process batch response
-		n.logger.Infof("Batch submission completed batch_id=%s items=%d success=%d failed=%d",
-			batchID, len(group.Items), resp.Success, resp.Failed)
-
-		// Collect results
-		successfulIntents = make([]string, 0, resp.Success)
-		failedIntents = make([]string, 0, resp.Failed)
-
-		for i, result := range resp.Results {
-			if i >= len(intentKeys) {
-				break
-			}
-			if result.Ok {
-				successfulIntents = append(successfulIntents, intentKeys[i])
-			} else {
-				failedIntents = append(failedIntents, intentKeys[i])
-				if i < len(group.Items) {
-					n.logger.Warnf("Intent %s failed in batch: %s", group.Items[i].IntentId, result.Msg)
-				}
-			}
-		}
-
-		return successfulIntents, failedIntents
+	// ===== CRITICAL: Batch submission is MANDATORY for epoch-based model =====
+	if !supportsBatch {
+		panic("FATAL: RootLayer client MUST support batch submission for epoch-based ValidationBundle model")
 	}
 
-	// Fallback: Client doesn't support batch submission
-	n.logger.Warn("RootLayer client doesn't support batch submission, using individual submission")
-	return n.submitIndividualValidationBundles(header, bundles, intentKeys)
+	// Convert ValidationBundles to ValidationBatchGroup using epoch-level signatures
+	// Note: Signatures are injected from epochValidationSignatures[epoch]
+	group := n.convertToValidationBatchGroup(header, bundles)
+	if group == nil {
+		panic("FATAL: Failed to convert ValidationBundles to ValidationBatchGroup - epoch-level signatures missing")
+	}
+
+	batchID := fmt.Sprintf("epoch-%d-%d", header.Epoch, time.Now().Unix())
+	n.logger.Infof("Submitting ValidationBatchGroup batch_id=%s epoch=%d items=%d",
+		batchID, header.Epoch, len(group.Items))
+
+	// Print and save complete ValidationBatchGroup structure to file
+	n.printAndSaveValidationBatchGroup(group, batchID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := batchClient.SubmitValidationBundleBatch(ctx, []*rootpb.ValidationBatchGroup{group}, batchID, true)
+	if err != nil {
+		// ===== CRITICAL: No fallback for epoch-based model =====
+		// Batch submission failure is a fatal error because individual submissions
+		// cannot work with epoch-level signatures (signature covers all Intents via items_hash)
+		n.logger.Errorf("FATAL: Batch submission failed and cannot fallback to individual submission (epoch-based model) error=%v", err)
+		panic(fmt.Sprintf("FATAL: ValidationBatchGroup submission failed for epoch %d: %v", header.Epoch, err))
+	}
+
+	// Process batch response
+	n.logger.Infof("Batch submission completed batch_id=%s items=%d success=%d failed=%d",
+		batchID, len(group.Items), resp.Success, resp.Failed)
+
+	// Collect results
+	successfulIntents = make([]string, 0, resp.Success)
+	failedIntents = make([]string, 0, resp.Failed)
+
+	for i, result := range resp.Results {
+		if i >= len(intentKeys) {
+			break
+		}
+		if result.Ok {
+			successfulIntents = append(successfulIntents, intentKeys[i])
+		} else {
+			failedIntents = append(failedIntents, intentKeys[i])
+			if i < len(group.Items) {
+				n.logger.Warnf("Intent %s failed in batch: %s", group.Items[i].IntentId, result.Msg)
+			}
+		}
+	}
+
+	return successfulIntents, failedIntents
 }
 
 // submitIndividualValidationBundles submits ValidationBundles one by one (fallback method)
@@ -2272,87 +2380,9 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		return nil
 	}
 
-	// Use gossip-collected ValidationBundle signatures (65-byte ETH format)
-	// These are per-Intent signatures collected via gossip protocol
-	var validationSigs []*rootpb.ValidationSignature
-
-	// Get the intent key for looking up gossip signatures
-	intentKey := fmt.Sprintf("%s:%s:%s", intentID, assignmentID, agentID)
-
-	// Check if we have gossip-collected ValidationBundle signatures for this Intent
-	n.mu.RLock()
-	vbSignatures, hasGossipSigs := n.validationBundleSignatures[intentKey]
-	n.mu.RUnlock()
-
-	if hasGossipSigs && len(vbSignatures) > 0 {
-		// Use gossip-collected ValidationBundle signatures (correct format for RootLayer)
-		n.logger.Infof("Using %d gossip-collected ValidationBundle signatures for intent_id=%s", len(vbSignatures), intentID)
-		for validatorAddr, vbSig := range vbSignatures {
-			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
-				Validator: validatorAddr,
-				Signature: vbSig.Signature,
-			})
-		}
-	} else if n.sdkClient != nil {
-		// Fallback: Sign locally if no gossip signatures collected (shouldn't happen normally)
-		n.logger.Warn("No ValidationBundle signatures collected via gossip, signing locally as fallback")
-
-		// Prepare data for SDK ValidationBundle signing
-		intentIDHash := common.HexToHash(intentID)
-		assignmentIDHash := common.HexToHash(assignmentID)
-		subnetIDHash := common.HexToHash(n.config.SubnetID)
-		agentAddr := common.HexToAddress(agentID)
-
-		// Calculate result hash from checkpoint header
-		resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
-
-		// Get execution reports root as proof hash
-		var proofHash [32]byte
-		if header.Roots != nil && len(header.Roots.EventRoot) > 0 {
-			copy(proofHash[:], header.Roots.EventRoot)
-		}
-
-		// Parse root hash from parent checkpoint hash
-		var rootHash [32]byte
-		if len(header.ParentCpHash) > 0 {
-			copy(rootHash[:], header.ParentCpHash)
-		}
-
-		// Create SDK ValidationBundle structure for signing
-		bundle := sdk.ValidationBundle{
-			IntentID:     intentIDHash,
-			AssignmentID: assignmentIDHash,
-			SubnetID:     subnetIDHash,
-			Agent:        agentAddr,
-			ResultHash:   resultHash,
-			ProofHash:    proofHash,
-			RootHeight:   header.Epoch,
-			RootHash:     rootHash,
-		}
-
-		// Compute digest using SDK
-		digest, err := n.sdkClient.Validation.ComputeDigest(bundle)
-		if err != nil {
-			n.logger.Errorf("Failed to compute ValidationBundle digest: %v", err)
-		} else {
-			// Sign digest using SDK (EIP-191 standard)
-			signature, err := n.sdkClient.Validation.SignDigest(digest)
-			if err != nil {
-				n.logger.Errorf("Failed to sign ValidationBundle digest: %v", err)
-			} else {
-				validatorAddr := n.sdkClient.Signer.Address()
-				validationSigs = append(validationSigs, &rootpb.ValidationSignature{
-					Validator: validatorAddr.Hex(),
-					Signature: signature,
-				})
-				n.logger.Infof("Generated EIP-191 ValidationBundle signature validator=%s signature_len=%d",
-					validatorAddr.Hex(), len(signature))
-			}
-		}
-	} else {
-		// No signatures available - this should not happen
-		n.logger.Error("No signatures available for ValidationBundle! Neither checkpoint signatures nor SDK client available")
-	}
+	// NEW: Signatures will be injected by convertToValidationBatchGroup
+	// This function only builds the ValidationBundle skeleton without signatures
+	n.logger.Debugf("Building ValidationBundle skeleton (signatures will be injected later) intent_id=%s", intentID)
 
 	// Calculate result hash for ValidationBundle
 	resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
@@ -2394,15 +2424,15 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		ExecutedAt:   header.Timestamp,
 		ResultHash:   resultHash[:],
 		ProofHash:    proofHash,
-		Signatures:   validationSigs,
-		SignerBitmap: header.Signatures.SignersBitmap,
-		TotalWeight:  header.Signatures.TotalWeight,
+		Signatures:   nil, // Signatures will be injected by convertToValidationBatchGroup
+		SignerBitmap: nil, // Will be set by convertToValidationBatchGroup
+		TotalWeight:  0,   // Will be calculated by convertToValidationBatchGroup
 		AggregatorId: n.id,
 		CompletedAt:  time.Now().Unix(),
 	}
 
-	n.logger.Infof("ValidationBundle constructed for Intent group intent_id=%s assignment_id=%s agent_id=%s epoch=%d signatures=%d",
-		bundle.IntentId, bundle.AssignmentId, bundle.AgentId, header.Epoch, len(bundle.Signatures))
+	n.logger.Infof("ValidationBundle skeleton constructed for Intent group intent_id=%s assignment_id=%s agent_id=%s epoch=%d (signatures=nil, will be injected later)",
+		bundle.IntentId, bundle.AssignmentId, bundle.AgentId, header.Epoch)
 
 	return bundle
 }
@@ -2658,20 +2688,82 @@ func (n *Node) getCheckpointInterval() time.Duration {
 	return 30 * time.Second
 }
 
-// signAndGossipValidationBundles makes all validators sign ValidationBundles and gossip signatures
+// signAndGossipValidationBundles makes all validators sign ValidationBundles and gossip signatures.
+// In epoch-based mode we sign once per epoch (max MaxIntentsPerEpoch intents, FIFO order).
 func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, groupedReports map[string][]*pb.ExecutionReport) {
 	if n.sdkClient == nil || n.gossipManager == nil {
 		n.logger.Warn("SDK client or gossip manager not available, skipping ValidationBundle signature gossip")
 		return
 	}
+	if header == nil {
+		n.logger.Warn("Checkpoint header is nil, skipping ValidationBundle signing")
+		return
+	}
 
-	n.logger.Infof("Validator signing ValidationBundle for checkpoint epoch=%d intents=%d", header.Epoch, len(groupedReports))
+	epoch := header.Epoch
+	totalIntents := len(groupedReports)
 
-	// Prepare ValidationItems for batch signing (v2.3+)
-	items := make([]sdk.ValidationItem, 0, len(groupedReports))
-	intentKeys := make([]string, 0, len(groupedReports))
+	type intentMeta struct {
+		key       string
+		timestamp int64
+	}
 
-	for intentKey, reports := range groupedReports {
+	intents := make([]intentMeta, 0, totalIntents)
+	for intentKey := range groupedReports {
+		// Use validator reception time instead of agent-provided timestamp for FIFO
+		// This prevents malicious agents from manipulating order by setting fake timestamps
+		receivedAt, exists := n.reportReceivedAt[intentKey]
+		if !exists {
+			n.logger.Warnf("No reception timestamp found for intent %s, using zero", intentKey)
+			receivedAt = 0
+		}
+
+		intents = append(intents, intentMeta{
+			key:       intentKey,
+			timestamp: receivedAt,
+		})
+	}
+
+	if len(intents) == 0 {
+		n.logger.Warnf("Epoch %d has no grouped execution reports to sign", epoch)
+		return
+	}
+
+	sort.SliceStable(intents, func(i, j int) bool {
+		ti := intents[i].timestamp
+		tj := intents[j].timestamp
+
+		switch {
+		case ti == 0 && tj == 0:
+			return intents[i].key < intents[j].key
+		case ti == 0:
+			return false
+		case tj == 0:
+			return true
+		case ti == tj:
+			return intents[i].key < intents[j].key
+		default:
+			return ti < tj
+		}
+	})
+
+	if len(intents) > MaxIntentsPerEpoch {
+		n.logger.Warnf("Epoch %d has %d Intents, limiting to oldest %d (FIFO). Remaining %d will wait",
+			epoch, len(intents), MaxIntentsPerEpoch, len(intents)-MaxIntentsPerEpoch)
+		intents = intents[:MaxIntentsPerEpoch]
+	}
+
+	intentKeys := make([]string, 0, len(intents))
+	for _, meta := range intents {
+		intentKeys = append(intentKeys, meta.key)
+	}
+
+	n.logger.Infof("Validator signing ValidationBundle for epoch=%d (selected_intents=%d total_grouped=%d)",
+		epoch, len(intentKeys), totalIntents)
+
+	items := make([]sdk.ValidationItem, 0, len(intentKeys))
+	for _, intentKey := range intentKeys {
+		reports := groupedReports[intentKey]
 		if len(reports) == 0 {
 			continue
 		}
@@ -2681,120 +2773,111 @@ func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, group
 		assignmentID := firstReport.AssignmentId
 		agentID := firstReport.AgentId
 
-		// Prepare data for SDK ValidationItem
-		intentIDHash := common.HexToHash(intentID)
-		assignmentIDHash := common.HexToHash(assignmentID)
+		intentHash := common.HexToHash(intentID)
+		assignmentHash := common.HexToHash(assignmentID)
 		agentAddr := common.HexToAddress(agentID)
 
-		// Calculate result hash from checkpoint header
 		resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
 
-		// Get execution reports root as proof hash
 		var proofHash [32]byte
 		if header.Roots != nil && len(header.Roots.EventRoot) > 0 {
 			copy(proofHash[:], header.Roots.EventRoot)
 		}
 
 		items = append(items, sdk.ValidationItem{
-			IntentID:     intentIDHash,
-			AssignmentID: assignmentIDHash,
+			IntentID:     ([32]byte)(intentHash),
+			AssignmentID: ([32]byte)(assignmentHash),
 			Agent:        agentAddr,
 			ResultHash:   resultHash,
 			ProofHash:    proofHash,
 		})
-		intentKeys = append(intentKeys, intentKey)
 
-		n.logger.Infof("Signing ValidationBundle intent_id=%s assignment_id=%s agent_id=%s epoch=%d",
-			intentID, assignmentID, agentID, header.Epoch)
+		n.logger.Infof("Prepared ValidationItem epoch=%d intent_key=%s intent_id=%s assignment_id=%s agent_id=%s",
+			epoch, intentKey, intentID, assignmentID, agentID)
 	}
 
 	if len(items) == 0 {
-		n.logger.Warn("No items to sign for ValidationBatch")
+		n.logger.Warnf("Epoch %d produced no ValidationItems after filtering", epoch)
 		return
 	}
 
-	// Compute items_hash using SDK
 	itemsHash, err := n.sdkClient.Validation.ComputeItemsHash(items)
 	if err != nil {
-		n.logger.Errorf("Failed to compute items_hash: %v", err)
+		n.logger.Errorf("Failed to compute items_hash for epoch=%d: %v", epoch, err)
 		return
 	}
 
-	// Parse root hash from parent checkpoint hash
 	var rootHash [32]byte
 	if len(header.ParentCpHash) > 0 {
 		copy(rootHash[:], header.ParentCpHash)
 	}
 
-	// Create SDK ValidationBatch structure for signing (v2.3+)
 	batch := sdk.ValidationBatch{
-		SubnetID:   common.HexToHash(n.config.SubnetID),
+		SubnetID:   ([32]byte)(common.HexToHash(n.config.SubnetID)),
 		ItemsHash:  itemsHash,
-		RootHeight: header.Epoch,
+		RootHeight: epoch,
 		RootHash:   rootHash,
 		Items:      items,
 	}
 
-	// Compute batch digest using SDK
 	digest, err := n.sdkClient.Validation.ComputeBatchDigest(batch)
 	if err != nil {
-		n.logger.Errorf("Failed to compute ValidationBatch digest: %v", err)
+		n.logger.Errorf("Failed to compute ValidationBatch digest for epoch=%d: %v", epoch, err)
 		return
 	}
 
-	// Sign digest using SDK (EIP-191 standard)
 	signature, err := n.sdkClient.Validation.SignDigest(digest)
 	if err != nil {
-		n.logger.Errorf("Failed to sign ValidationBatch digest: %v", err)
+		n.logger.Errorf("Failed to sign ValidationBatch digest for epoch=%d: %v", epoch, err)
 		return
 	}
 
-	validatorAddr := n.sdkClient.Signer.Address()
+	validatorAddr := n.sdkClient.Signer.Address().Hex()
 
-	n.logger.Infof("Signed ValidationBatch with %d items, items_hash=0x%x, digest=0x%x",
-		len(items), itemsHash, digest)
+	n.logger.Infof("Signed ValidationBatch epoch=%d items=%d items_hash=0x%x digest=0x%x",
+		epoch, len(items), itemsHash, digest)
 
-	// Broadcast signature for each intent via gossip (for compatibility with existing gossip protocol)
-	for i, intentKey := range intentKeys {
-		reports := groupedReports[intentKey]
-		firstReport := reports[0]
-		intentID := firstReport.IntentId
-		assignmentID := firstReport.AssignmentId
-		agentID := firstReport.AgentId
+	n.mu.Lock()
+	n.epochIntents[epoch] = append([]string(nil), intentKeys...)
+	n.mu.Unlock()
 
-		// Create gossip message
-		vbSig := &pb.ValidationBundleSignature{
-			IntentId:         intentID,
-			AssignmentId:     assignmentID,
-			AgentId:          agentID,
-			Epoch:            header.Epoch,
-			ValidatorAddress: validatorAddr.Hex(),
-			Signature:        signature,
-			Timestamp:        time.Now().Unix(),
-			BundleDigestHash: digest[:],
-		}
-
-		// Store own signature locally
-		n.mu.Lock()
-		if n.validationBundleSignatures == nil {
-			n.validationBundleSignatures = make(map[string]map[string]*pb.ValidationBundleSignature)
-		}
-		if n.validationBundleSignatures[intentKey] == nil {
-			n.validationBundleSignatures[intentKey] = make(map[string]*pb.ValidationBundleSignature)
-		}
-		n.validationBundleSignatures[intentKey][validatorAddr.Hex()] = vbSig
-		n.mu.Unlock()
-
-		// Broadcast via gossip
-		if err := n.gossipManager.BroadcastValidationBundleSignature(vbSig); err != nil {
-			n.logger.Errorf("Failed to gossip ValidationBundle signature: %v", err)
-		} else {
-			n.logger.Infof("Broadcasted ValidationBundle signature via gossip validator=%s intent_id=%s epoch=%d",
-				validatorAddr.Hex(), intentID, header.Epoch)
-		}
-
-		_ = i // unused, but kept for clarity
+	vbSig := &pb.ValidationBundleSignature{
+		IntentId:         "",
+		AssignmentId:     "",
+		AgentId:          "",
+		Epoch:            epoch,
+		ValidatorAddress: validatorAddr,
+		Signature:        signature,
+		Timestamp:        time.Now().Unix(),
+		BundleDigestHash: digest[:],
 	}
+
+	thresholdReached, _ := n.storeEpochValidationSignature(vbSig)
+	if thresholdReached {
+		// Check if submission has already been triggered for this epoch
+		n.mu.Lock()
+		alreadyTriggered := n.epochSubmissionTriggered[epoch]
+		if !alreadyTriggered && n.raftConsensus != nil && n.raftConsensus.IsLeader() {
+			n.epochSubmissionTriggered[epoch] = true
+			n.mu.Unlock()
+			n.logger.Infof("Epoch %d signature threshold satisfied locally, triggering submission", epoch)
+			go n.submitValidationBundlesForEpoch(epoch)
+		} else {
+			n.mu.Unlock()
+			if alreadyTriggered {
+				n.logger.Debugf("Submission already triggered for epoch=%d (from local signing), skipping duplicate", epoch)
+			}
+		}
+	}
+
+	if err := n.gossipManager.BroadcastValidationBundleSignature(vbSig); err != nil {
+		n.logger.Errorf("Failed to gossip epoch-level ValidationBundle signature epoch=%d validator=%s: %v",
+			epoch, validatorAddr, err)
+		return
+	}
+
+	n.logger.Infof("Broadcasted epoch-level ValidationBundle signature epoch=%d validator=%s intents=%d",
+		epoch, validatorAddr, len(intentKeys))
 }
 
 // handleExecutionReportCommitted handles execution reports committed via CometBFT
@@ -2807,6 +2890,11 @@ func (n *Node) handleExecutionReportCommitted(report *pb.ExecutionReport, report
 		n.pendingReports[reportKey] = report
 		score := n.scoreReport(report)
 		n.reportScores[reportKey] = score
+
+		// Track reception time using the SAME key format as groupReportsByIntent
+		// Key format: intentID:assignmentID:agentID
+		intentKey := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
+		n.reportReceivedAt[intentKey] = time.Now().Unix() // Track validator reception time for FIFO
 	}
 	n.mu.Unlock()
 	n.logger.Debugf("CometBFT committed execution report intent=%s assignment=%s", report.IntentId, report.AssignmentId)
@@ -2821,6 +2909,9 @@ func (n *Node) handleCheckpointFinalized(header *pb.CheckpointHeader, signatures
 	n.logger.Info("Checkpoint finalized with threshold signatures",
 		"epoch", header.Epoch,
 		"signature_count", len(signatures))
+
+	// Clean up old epoch data to prevent memory leaks
+	go n.cleanupOldEpochData(header.Epoch)
 
 	// TODO: Submit to RootLayer if configured
 	// This will be implemented when we add checkpoint submission support to RootLayer client
@@ -2840,6 +2931,61 @@ func (n *Node) convertToValidationBatchGroup(
 
 	// Use first bundle for shared metadata
 	firstBundle := bundles[0]
+	epoch := header.Epoch
+
+	// ===== DEFENSIVE CHECK: All bundles should have nil Signatures (阶段5保证) =====
+	for i, bundle := range bundles {
+		if bundle.Signatures != nil && len(bundle.Signatures) > 0 {
+			n.logger.Errorf("FATAL: ValidationBundle[%d] has non-nil Signatures (len=%d). Bundles should not contain signatures at this stage!",
+				i, len(bundle.Signatures))
+			panic(fmt.Sprintf("FATAL: ValidationBundle[%d] has non-nil Signatures. This violates epoch-based signature model.", i))
+		}
+	}
+
+	// ===== GET EPOCH-LEVEL SIGNATURES =====
+	n.mu.RLock()
+	epochSigs, exists := n.epochValidationSignatures[epoch]
+	n.mu.RUnlock()
+
+	var validationSigs []*rootpb.ValidationSignature
+	if !exists || len(epochSigs) == 0 {
+		n.logger.Warnf("No epoch-level signatures found for epoch %d, checking fallback (per-Intent signatures)", epoch)
+
+		// Fallback: Try to aggregate from per-Intent signatures (backward compatibility)
+		n.mu.RLock()
+		aggregated := make(map[string]*pb.ValidationBundleSignature)
+		for _, intentSigs := range n.validationBundleSignatures {
+			for validator, sig := range intentSigs {
+				if sig.Epoch == epoch {
+					aggregated[validator] = sig
+					break // Only need one signature per validator per epoch
+				}
+			}
+		}
+		n.mu.RUnlock()
+
+		if len(aggregated) > 0 {
+			n.logger.Warnf("Found %d signatures via fallback (per-Intent map) for epoch %d", len(aggregated), epoch)
+			for validatorAddr, vbSig := range aggregated {
+				validationSigs = append(validationSigs, &rootpb.ValidationSignature{
+					Validator: validatorAddr,
+					Signature: vbSig.Signature,
+				})
+			}
+		} else {
+			n.logger.Errorf("No signatures found for epoch %d (neither epoch-level nor per-Intent fallback)", epoch)
+			return nil
+		}
+	} else {
+		// Convert epoch-level signatures to ValidationSignature list
+		n.logger.Infof("Converting %d epoch-level signatures to ValidationSignature list for epoch %d", len(epochSigs), epoch)
+		for validatorAddr, vbSig := range epochSigs {
+			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
+				Validator: validatorAddr,
+				Signature: vbSig.Signature,
+			})
+		}
+	}
 
 	// Validate all string fields for UTF-8 validity BEFORE creating ValidationBatchGroup
 	n.logger.Info("=== UTF-8 Validation: Checking ValidationBatchGroup fields ===")
@@ -2847,7 +2993,7 @@ func (n *Node) convertToValidationBatchGroup(
 	n.logger.Infof("RootHash: %s (len=%d, utf8_valid=%v)", firstBundle.RootHash, len(firstBundle.RootHash), utf8.ValidString(firstBundle.RootHash))
 	n.logger.Infof("AggregatorId: %s (len=%d, utf8_valid=%v)", firstBundle.AggregatorId, len(firstBundle.AggregatorId), utf8.ValidString(firstBundle.AggregatorId))
 
-	for i, sig := range firstBundle.Signatures {
+	for i, sig := range validationSigs {
 		n.logger.Infof("Signature[%d]: Validator=%s (len=%d, utf8_valid=%v), Signature_len=%d",
 			i, sig.Validator, len(sig.Validator), utf8.ValidString(sig.Validator), len(sig.Signature))
 		if !utf8.ValidString(sig.Validator) {
@@ -2924,18 +3070,65 @@ func (n *Node) convertToValidationBatchGroup(
 		n.logger.Warn("SDK client not available or no items, cannot compute items_hash")
 	}
 
-	// All bundles should have the same signatures (from checkpoint)
-	return &rootpb.ValidationBatchGroup{
+	// Create ValidationBatchGroup with epoch-level signatures (injected from epochValidationSignatures)
+	// Note: SignerBitmap and TotalWeight are computed by RootLayer client during submission
+	group := &rootpb.ValidationBatchGroup{
 		SubnetId:     firstBundle.SubnetId,
 		RootHeight:   firstBundle.RootHeight,
 		RootHash:     firstBundle.RootHash,
 		AggregatorId: firstBundle.AggregatorId,
 		CompletedAt:  firstBundle.CompletedAt,
-		Signatures:   firstBundle.Signatures,
-		SignerBitmap: firstBundle.SignerBitmap,
-		TotalWeight:  firstBundle.TotalWeight,
+		Signatures:   validationSigs, // Injected epoch-level signatures
+		SignerBitmap: nil,            // Will be computed during submission
+		TotalWeight:  0,               // Will be computed during submission
 		Items:        items,
-		ItemsHash:    itemsHash, // Add computed items_hash
+		ItemsHash:    itemsHash, // Computed items_hash for batch validation
+	}
+
+	n.logger.Infof("✅ Created ValidationBatchGroup with epoch-level signatures epoch=%d intents=%d signatures=%d items_hash=0x%x",
+		epoch, len(items), len(validationSigs), itemsHash)
+
+	return group
+}
+
+// cleanupOldEpochData removes epoch-level signature and intent data for epochs older than keepRecentEpochs
+// This prevents memory leaks by cleaning up data that is no longer needed
+// Should be called after a checkpoint is finalized
+func (n *Node) cleanupOldEpochData(finalizedEpoch uint64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// Calculate cutoff epoch (keep only recent epochs)
+	var cutoffEpoch uint64
+	if finalizedEpoch > keepRecentEpochs {
+		cutoffEpoch = finalizedEpoch - keepRecentEpochs
+	} else {
+		// If finalizedEpoch <= keepRecentEpochs, keep all epochs
+		n.logger.Debugf("Finalized epoch %d <= keepRecentEpochs %d, skipping cleanup", finalizedEpoch, keepRecentEpochs)
+		return
+	}
+
+	// Clean up epoch-level validation signatures
+	cleanedSigs := 0
+	for epoch := range n.epochValidationSignatures {
+		if epoch < cutoffEpoch {
+			delete(n.epochValidationSignatures, epoch)
+			cleanedSigs++
+		}
+	}
+
+	// Clean up epoch intents
+	cleanedIntents := 0
+	for epoch := range n.epochIntents {
+		if epoch < cutoffEpoch {
+			delete(n.epochIntents, epoch)
+			cleanedIntents++
+		}
+	}
+
+	if cleanedSigs > 0 || cleanedIntents > 0 {
+		n.logger.Infof("Cleaned up old epoch data finalized_epoch=%d cutoff_epoch=%d cleaned_sig_epochs=%d cleaned_intent_epochs=%d",
+			finalizedEpoch, cutoffEpoch, cleanedSigs, cleanedIntents)
 	}
 }
 
@@ -3110,4 +3303,46 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+// storeEpochValidationSignature records an epoch-level ValidationBundle signature and returns true when the threshold is met.
+func (n *Node) storeEpochValidationSignature(vbSig *pb.ValidationBundleSignature) (bool, int) {
+	if vbSig == nil {
+		return false, 0
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.epochValidationSignatures == nil {
+		n.epochValidationSignatures = make(map[uint64]map[string]*pb.ValidationBundleSignature)
+	}
+
+	if n.epochIntents[vbSig.Epoch] == nil {
+		n.logger.Debugf("Epoch %d signature received before intents recorded", vbSig.Epoch)
+	}
+
+	signatures := n.epochValidationSignatures[vbSig.Epoch]
+	if signatures == nil {
+		signatures = make(map[string]*pb.ValidationBundleSignature)
+		n.epochValidationSignatures[vbSig.Epoch] = signatures
+	}
+
+	if existing, exists := signatures[vbSig.ValidatorAddress]; exists {
+		if !bytesEqual(existing.Signature, vbSig.Signature) {
+			n.logger.Warnf("Validator %s submitted conflicting epoch signature for epoch=%d; keeping existing signature",
+				vbSig.ValidatorAddress, vbSig.Epoch)
+		}
+		sigCount := len(signatures)
+		return n.validatorSet.CheckThreshold(sigCount), sigCount
+	}
+
+	signatures[vbSig.ValidatorAddress] = vbSig
+
+	sigCount := len(signatures)
+	required := n.validatorSet.RequiredSignatures()
+
+	n.logger.Infof("Stored epoch-level ValidationBundle signature epoch=%d validator=%s collected=%d required=%d",
+		vbSig.Epoch, vbSig.ValidatorAddress, sigCount, required)
+
+	return n.validatorSet.CheckThreshold(sigCount), sigCount
 }
