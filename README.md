@@ -22,10 +22,9 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 ## 📚 Documentation
 
-### Getting Started
-- **[Quick Start Guide](docs/quick_start.md)** ([中文](docs/quick_start.zh.md)) - Get your Subnet running in 5 minutes
-- **[Consensus Modes Guide](docs/consensus_modes.md)** ([中文](docs/consensus_modes.zh.md)) - Choose between Raft and CometBFT consensus
-- **[E2E Test Guide](docs/e2e_test_guide.md)** - End-to-end testing workflow
+### Quick Start
+- **[Quick Start Guide](docs/quick_start.md)** - Choose your deployment method in 3 steps (Docker recommended!)
+- **[Docker Deployment](docker/README.md)** - Production-ready 3-node cluster with Docker
 
 ### Deployment & Configuration
 - **[Subnet Deployment Guide](docs/subnet_deployment_guide.md)** ([中文](docs/subnet_deployment_guide.zh.md)) - Complete deployment and customization tutorial
@@ -36,8 +35,10 @@ This is a **template** for creating your own Subnet. Fork this repository to:
   - Production deployment guide
 - **[Environment Setup](docs/environment_setup.md)** ([中文](docs/environment_setup.zh.md)) - Environment configuration
 - **[Scripts Guide](docs/scripts_guide.md)** ([中文](docs/scripts_guide.zh.md)) - Development and deployment scripts reference
+- **[Consensus Modes Guide](docs/consensus_modes.md)** ([中文](docs/consensus_modes.zh.md)) - Choose between Raft and CometBFT consensus
 
-### Architecture & Advanced Topics
+### Testing & Advanced Topics
+- **[E2E Test Guide](docs/e2e_test_guide.md)** - End-to-end testing workflow
 - **[Architecture Overview](docs/architecture.md)** - Full component walkthrough and system design
 - **[JetStream Evaluation](docs/jetstream_evaluation.md)** - ⚠️ DEPRECATED: Historical NATS JetStream evaluation (system now uses Raft+Gossip)
 
@@ -49,9 +50,9 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 - `cmd/mock-rootlayer` – mock RootLayer for local intent generation
 - `cmd/simple-agent` – demo agent built on the Go SDK (production agents should live in `../subnet-sdk`)
 - `internal/` – shared packages (matcher, validator, consensus FSM, rootlayer client, storage, grpc interceptors, logging, metrics, messaging, types, crypto)
-- `proto/` – generated protobufs for subnet and rootlayer APIs (authoritative definitions in `../pin_protocol/proto`)
+- `proto/` – generated protobufs for subnet and rootlayer APIs
 - `config/` – sample validator configuration (`config.yaml`)
-- `docs/` – curated documentation (`ARCHITECTURE_OVERVIEW.md`, `jetstream_evaluation.md`)
+- `docs/` – curated documentation (`architecture.md`, `jetstream_evaluation.md`)
 
 ## Build & Test
 
@@ -103,14 +104,9 @@ The matcher and validator can optionally verify participants against the Subnet 
 
 ```bash
 make proto
-# or
-protoc -I ../pin_protocol \
-  --go_out=paths=source_relative:. \
-  --go-grpc_out=paths=source_relative:. \
-  ../pin_protocol/proto/subnet/*.proto
 ```
 
-Regenerate `proto/rootlayer` and `proto/common` targets as needed; commit generated files alongside protocol changes.
+This regenerates Go protobuf code from the proto definitions. The generated files are already included in the repository.
 
 ## Security Notes
 
