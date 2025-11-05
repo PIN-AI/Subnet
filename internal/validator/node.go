@@ -2670,7 +2670,7 @@ func (c *Config) buildCometBFTConfig() (*cometbft.Config, error) {
 		MempoolBroadcast:          true,
 		StateSyncEnable:           false,
 		DBBackend:                 "goleveldb",
-		LogLevel:                  "info",
+		LogLevel:                  "error", // Reduce CometBFT consensus logs
 	}, nil
 }
 
