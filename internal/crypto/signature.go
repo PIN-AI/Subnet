@@ -2,7 +2,6 @@ package crypto
 
 import (
 	"crypto/ecdsa"
-	"crypto/rand"
 	"fmt"
 
 	geth "github.com/ethereum/go-ethereum/crypto"
@@ -41,8 +40,17 @@ func NewECDSASignerFromHex(hexkey string) (*ECDSASigner, error) {
 func (s *ECDSASigner) Scheme() Scheme    { return ECDSA_SECP256K1 }
 func (s *ECDSASigner) PublicKey() []byte { return geth.FromECDSAPub(&s.priv.PublicKey) }
 func (s *ECDSASigner) Sign(msgHash []byte) ([]byte, error) {
-	// DER ASN.1 signature over provided hash
-	return ecdsa.SignASN1(rand.Reader, s.priv, msgHash)
+	// Use go-ethereum's crypto.Sign to produce 65-byte signature (R+S+V format)
+	// This matches RootLayer's expected signature format
+	sig, err := geth.Sign(msgHash, s.priv)
+	if err != nil {
+		return nil, err
+	}
+	// Ensure V value is in 27/28 format (not 0/1)
+	if sig[64] < 27 {
+		sig[64] += 27
+	}
+	return sig, nil
 }
 
 // GetPrivateKeyHex returns the private key as hex string

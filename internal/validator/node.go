@@ -102,7 +102,6 @@ type Config struct {
 	PrivateKey                string
 	ValidatorSet              *types.ValidatorSet
 	StoragePath               string
-	NATSUrl                   string
 	GRPCPort                  int
 	MetricsPort               int
 	RegistryEndpoint          string
@@ -354,9 +353,10 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 		if rootClient != nil {
 			// Cast to CompleteClient (if not already)
 			if completeClient, ok := rootClient.(*rootlayer.CompleteClient); ok {
-				rootAdapter := cometbft.NewRootLayerClientAdapter(completeClient, config.SubnetID, logger)
+				// Pass private key for SDK-based ValidationBundle signing
+				rootAdapter := cometbft.NewRootLayerClientAdapter(completeClient, config.SubnetID, logger, config.PrivateKey)
 				cometCfg.RootLayerClient = rootAdapter
-				logger.Info("CometBFT RootLayer client configured")
+				logger.Info("CometBFT RootLayer client configured with SDK signer")
 			} else {
 				logger.Warn("RootLayer client is not CompleteClient, CometBFT RootLayer submission disabled")
 			}
@@ -581,6 +581,14 @@ func (n *Node) onValidationBundleSignatureReceived(vbSig *pb.ValidationBundleSig
 	if thresholdReached {
 		n.logger.Infof("ValidationBundle signature threshold reached intent_id=%s sigs=%d required=%d",
 			vbSig.IntentId, sigCount, n.validatorSet.RequiredSignatures())
+
+		// Trigger ValidationBundle batch submission if we're the leader
+		if n.raftConsensus != nil && n.raftConsensus.IsLeader() {
+			n.logger.Infof("Leader triggering ValidationBundle batch submission for epoch=%d (triggered by intent_id=%s)", vbSig.Epoch, vbSig.IntentId)
+			// Launch goroutine to submit without holding lock
+			// Submit entire batch for this epoch (all Intents share the same signature)
+			go n.submitValidationBundlesForEpoch(vbSig.Epoch)
+		}
 	}
 }
 
@@ -2021,6 +2029,80 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 	}
 }
 
+// submitValidationBundlesForEpoch submits ValidationBundle batch for all Intents in an epoch after gossip threshold reached
+// This is called when ValidationBundle signatures reach threshold via gossip (not from checkpoint)
+//
+// IMPORTANT: Since all Intents in the same epoch share ONE batch signature (signed over items_hash),
+// we must submit ALL Intents together as a ValidationBatchGroup, not individually.
+func (n *Node) submitValidationBundlesForEpoch(epoch uint64) {
+	n.mu.Lock()
+
+	// Get current checkpoint header
+	header := n.currentCheckpoint
+	if header == nil || header.Epoch != epoch {
+		n.logger.Warnf("No matching checkpoint for epoch=%d (current epoch=%d)", epoch, n.currentEpoch)
+		n.mu.Unlock()
+		return
+	}
+	headerCopy := proto.Clone(header).(*pb.CheckpointHeader)
+
+	// Get ALL pending reports (all Intents for this epoch)
+	if len(n.pendingReports) == 0 {
+		n.logger.Warnf("No pending reports found for epoch=%d", epoch)
+		n.mu.Unlock()
+		return
+	}
+
+	// Copy all pending reports
+	pendingCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
+	for k, v := range n.pendingReports {
+		pendingCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+	}
+
+	n.mu.Unlock()
+
+	// Group reports by Intent
+	groupedReports := n.groupReportsByIntent(pendingCopy)
+	n.logger.Infof("Submitting ValidationBundle batch via gossip threshold epoch=%d intents=%d",
+		epoch, len(groupedReports))
+
+	// Wait for RootLayer state sync (same as checkpoint submission)
+	syncDelay := 15 * time.Second
+	n.logger.Infof("Waiting %v for RootLayer state synchronization before submitting ValidationBundles epoch=%d",
+		syncDelay, epoch)
+	time.Sleep(syncDelay)
+
+	// Build ValidationBundles for all Intents
+	bundles := make([]*rootpb.ValidationBundle, 0, len(groupedReports))
+	intentKeys := make([]string, 0, len(groupedReports))
+
+	for key, reps := range groupedReports {
+		bundle := n.buildValidationBundleForIntent(headerCopy, reps, nil)
+		if bundle == nil {
+			n.logger.Errorf("Failed to build ValidationBundle intent_key=%s epoch=%d", key, epoch)
+			continue
+		}
+		bundles = append(bundles, bundle)
+		intentKeys = append(intentKeys, key)
+	}
+
+	if len(bundles) == 0 {
+		n.logger.Warnf("No ValidationBundles to submit for epoch=%d", epoch)
+		return
+	}
+
+	// Submit entire batch using batch logic
+	successfulIntents, failedIntents := n.submitValidationBundleBatch(headerCopy, bundles, intentKeys)
+
+	// Clear successfully submitted Intent reports
+	for _, key := range successfulIntents {
+		n.clearReportsForIntent(key)
+	}
+
+	n.logger.Infof("ValidationBundle batch submission complete via gossip epoch=%d total=%d successful=%d failed=%d",
+		epoch, len(bundles), len(successfulIntents), len(failedIntents))
+}
+
 // submitValidationBundleBatch submits multiple ValidationBundles to RootLayer in a single batch call
 // Returns lists of successful and failed intent keys
 func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles []*rootpb.ValidationBundle, intentKeys []string) (successfulIntents []string, failedIntents []string) {
@@ -2422,9 +2504,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.CheckpointInterval == 0 {
 		c.CheckpointInterval = c.Timeouts.CheckpointInterval
-	}
-	if c.NATSUrl == "" {
-		c.NATSUrl = c.Network.NATSUrl
 	}
 	if c.SubnetID == "" {
 		c.SubnetID = c.Identity.SubnetID

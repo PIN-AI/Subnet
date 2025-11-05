@@ -3,7 +3,6 @@ package cometbft
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -17,9 +16,10 @@ import (
 
 // RootLayerClientAdapter adapts CompleteClient to CometBFT's RootLayerClient interface
 type RootLayerClientAdapter struct {
-	client   *rootlayer.CompleteClient
-	subnetID string
-	logger   logging.Logger
+	client    *rootlayer.CompleteClient
+	subnetID  string
+	logger    logging.Logger
+	sdkSigner crypto.ExtendedSigner // For signing ValidationBundle digest
 }
 
 // NewRootLayerClientAdapter creates a new adapter
@@ -27,15 +27,24 @@ func NewRootLayerClientAdapter(
 	client *rootlayer.CompleteClient,
 	subnetID string,
 	logger logging.Logger,
+	privateKeyHex string,
 ) *RootLayerClientAdapter {
 	if logger == nil {
 		logger = logging.NewDefaultLogger()
 	}
 
+	// Create SDK signer for ValidationBundle signatures
+	signer, err := crypto.LoadSignerFromPrivateKey(privateKeyHex)
+	if err != nil {
+		logger.Error("Failed to load signer for ValidationBundle", "error", err)
+		signer = nil
+	}
+
 	return &RootLayerClientAdapter{
-		client:   client,
-		subnetID: subnetID,
-		logger:   logger,
+		client:    client,
+		subnetID:  subnetID,
+		logger:    logger,
+		sdkSigner: signer,
 	}
 }
 
@@ -72,33 +81,26 @@ func (a *RootLayerClientAdapter) SubmitCheckpointSignatures(bundle *CheckpointSi
 			resultHash = bundle.CheckpointHash[:32]
 		}
 
+		// Use checkpoint hash as proof hash (similar to Raft's EventRoot)
+		var proofHash []byte
+		if len(bundle.CheckpointHash) == 32 {
+			proofHash = bundle.CheckpointHash
+		} else if len(bundle.CheckpointHash) < 32 {
+			// Pad to 32 bytes
+			proofHash = make([]byte, 32)
+			copy(proofHash, bundle.CheckpointHash)
+		} else {
+			// Truncate to 32 bytes
+			proofHash = bundle.CheckpointHash[:32]
+		}
+
 		items = append(items, &rootpb.ValidationItem{
 			IntentId:     report.IntentId,
 			AssignmentId: report.AssignmentId,
 			AgentId:      report.AgentId,
 			ExecutedAt:   report.Timestamp,
 			ResultHash:   resultHash,
-			ProofHash:    nil,
-		})
-	}
-
-	// Prepare validator signatures
-	signatures := make([]*rootpb.ValidationSignature, 0, len(bundle.ValidatorSignatures))
-	for validatorAddr, sig := range bundle.ValidatorSignatures {
-		// Ensure validator address is valid UTF-8 and properly formatted
-		// If it's not already 0x-prefixed, format it
-		validAddr := validatorAddr
-		if !strings.HasPrefix(validAddr, "0x") {
-			// If the address is binary, convert to hex
-			validAddr = fmt.Sprintf("0x%x", []byte(validatorAddr))
-			a.logger.Warn("Validator address was not 0x-prefixed, converted",
-				"original", validatorAddr,
-				"converted", validAddr)
-		}
-
-		signatures = append(signatures, &rootpb.ValidationSignature{
-			Validator: validAddr,
-			Signature: sig,
+			ProofHash:    proofHash,
 		})
 	}
 
@@ -137,6 +139,29 @@ func (a *RootLayerClientAdapter) SubmitCheckpointSignatures(bundle *CheckpointSi
 	a.logger.Info("Computed items_hash for ValidationBatch",
 		"items_count", len(sdkItems),
 		"items_hash", fmt.Sprintf("0x%x", itemsHash))
+
+	// Use signatures from CheckpointSignatureBundle (collected via vote extensions)
+	// These signatures were collected from all validators through CometBFT consensus
+	var signatures []*rootpb.ValidationSignature
+
+	if len(bundle.ValidatorSignatures) > 0 {
+		a.logger.Info("Using validator signatures from CheckpointSignatureBundle",
+			"signature_count", len(bundle.ValidatorSignatures),
+			"items_hash", fmt.Sprintf("0x%x", itemsHash))
+
+		for validatorAddr, signature := range bundle.ValidatorSignatures {
+			signatures = append(signatures, &rootpb.ValidationSignature{
+				Validator: validatorAddr,
+				Signature: signature,
+			})
+
+			a.logger.Info("Added validator signature",
+				"validator", validatorAddr,
+				"signature_len", len(signature))
+		}
+	} else {
+		a.logger.Warn("No validator signatures in CheckpointSignatureBundle, ValidationBundle submission will likely fail")
+	}
 
 	// Create ValidationBatchGroup with items_hash
 	group := &rootpb.ValidationBatchGroup{

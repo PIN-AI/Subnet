@@ -1,6 +1,18 @@
 # NATS JetStream Evaluation
 
-## Current State
+> ⚠️ **DEPRECATED - Historical Document**
+>
+> This document is **no longer applicable**. The system has migrated from NATS to **Raft + Memberlist Gossip** consensus.
+>
+> - **Current Consensus**: Raft for leader election + Memberlist Gossip for signature collection
+> - **Migration Date**: November 2025
+> - **Reason**: Raft+Gossip provides better fault tolerance and doesn't require external message broker
+>
+> This document is kept for historical reference only.
+
+---
+
+## Current State (Deprecated)
 Using NATS Core for consensus event broadcasting with custom deduplication.
 
 ## JetStream Benefits

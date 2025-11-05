@@ -61,7 +61,7 @@
 ```bash
 # 1. Install dependencies
 go version  # >= 1.21 required
-docker --version  # Optional, for NATS
+docker --version  # Optional
 
 # 2. Clone repository
 git clone https://github.com/PIN-AI/Subnet
@@ -73,14 +73,7 @@ make build
 
 ### Step 1: Start Infrastructure
 
-```bash
-# Start NATS (required for validator consensus)
-docker run -d --name nats -p 4222:4222 nats:latest
-
-# Or use local NATS
-brew install nats-server  # macOS
-nats-server &
-```
+**Note**: The system uses Raft+Gossip consensus. No external message broker (like NATS) is required.
 
 ### Step 2: Create Subnet on Blockchain
 
@@ -169,10 +162,6 @@ validator_set:
   min_validators: 3
   threshold_num: 2      # 2/3 threshold
   threshold_denom: 3
-
-# NATS message bus
-nats:
-  url: "nats://localhost:4222"
 
 # Storage
 storage:
@@ -594,11 +583,6 @@ CMD ["matcher", "--config", "/etc/subnet/matcher-config.yaml"]
 version: '3.8'
 
 services:
-  nats:
-    image: nats:latest
-    ports:
-      - "4222:4222"
-
   matcher:
     build:
       context: .
@@ -606,8 +590,6 @@ services:
     environment:
       - SUBNET_ID=${SUBNET_ID}
       - PRIVATE_KEY=${MATCHER_KEY}
-    depends_on:
-      - nats
 
   validator-1:
     build:
@@ -617,8 +599,6 @@ services:
       - SUBNET_ID=${SUBNET_ID}
       - VALIDATOR_ID=validator-1
       - PRIVATE_KEY=${VALIDATOR_1_KEY}
-    depends_on:
-      - nats
 
   validator-2:
     build:
@@ -628,8 +608,6 @@ services:
       - SUBNET_ID=${SUBNET_ID}
       - VALIDATOR_ID=validator-2
       - PRIVATE_KEY=${VALIDATOR_2_KEY}
-    depends_on:
-      - nats
 
   validator-3:
     build:
@@ -639,8 +617,6 @@ services:
       - SUBNET_ID=${SUBNET_ID}
       - VALIDATOR_ID=validator-3
       - PRIVATE_KEY=${VALIDATOR_3_KEY}
-    depends_on:
-      - nats
 ```
 
 Start:
@@ -661,9 +637,6 @@ docker-compose up -d
 
 **Debug:**
 ```bash
-# Check NATS connection
-docker logs <nats-container>
-
 # Check validator logs
 tail -f data/validator-1.log | grep "signature"
 
