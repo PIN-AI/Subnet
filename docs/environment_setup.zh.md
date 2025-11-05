@@ -453,7 +453,6 @@ identity:
   subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
 
 network:
-  nats_url: "nats://127.0.0.1:4222"
   matcher_grpc_port: ":8090"
 
 rootlayer:

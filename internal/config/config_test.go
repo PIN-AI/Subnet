@@ -32,7 +32,6 @@ timeouts:
   rootlayer_submit_timeout: 7s
 
 network:
-  nats_url: "nats://test:4222"
   validator_grpc_port: ":9999"
 
 limits:
@@ -73,7 +72,6 @@ validator_set:
 
 	// Test Network configuration
 	assert.NotNil(t, cfg.Network)
-	assert.Equal(t, "nats://test:4222", cfg.Network.NATSUrl)
 	assert.Equal(t, ":9999", cfg.Network.ValidatorGRPCPort)
 
 	// Test Limits configuration

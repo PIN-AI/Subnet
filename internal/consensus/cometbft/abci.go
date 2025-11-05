@@ -10,7 +10,11 @@ import (
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/ethereum/go-ethereum/common"
+	sdkCrypto "github.com/PIN-AI/intent-protocol-contract-sdk/sdk/crypto"
+
 	pb "subnet/proto/subnet"
+	"subnet/internal/crypto"
 	"subnet/internal/logging"
 )
 
@@ -33,10 +37,10 @@ type ValidationBundleSignatureTx struct {
 
 // VoteExtension represents the ECDSA signature attached to each vote
 type VoteExtension struct {
-	Epoch          uint64 `json:"epoch"`
-	CheckpointHash []byte `json:"checkpoint_hash"`
-	ValidatorAddr  string `json:"validator_addr"`
-	Signature      []byte `json:"signature"` // ECDSA signature
+	Epoch         uint64 `json:"epoch"`
+	ItemsHash     []byte `json:"items_hash"`     // keccak256(abi.encode(ValidationItems))
+	ValidatorAddr string `json:"validator_addr"`
+	Signature     []byte `json:"signature"` // ECDSA signature over items_hash
 }
 
 // ConsensusHandlers defines callbacks for consensus events
@@ -497,16 +501,11 @@ func (app *SubnetABCIApp) checkAndSubmitValidationBundle(epoch uint64) {
 
 // computeCheckpointHash computes the hash of a checkpoint header
 func (app *SubnetABCIApp) computeCheckpointHash(checkpoint *pb.CheckpointHeader) []byte {
-	// Serialize checkpoint to bytes
-	data, err := proto.Marshal(checkpoint)
-	if err != nil {
-		app.logger.Error("Failed to marshal checkpoint", "error", err)
-		return nil
-	}
-
-	// In production, use proper crypto hash (e.g., Keccak256 for Ethereum compatibility)
-	// For now, just return the marshaled data
-	return data
+	// Use crypto.CheckpointHasher to compute canonical 32-byte hash
+	// This ensures consistency with Raft mode
+	hasher := crypto.NewCheckpointHasher()
+	hash := hasher.ComputeHash(checkpoint)
+	return hash[:]
 }
 
 // broadcastSignature broadcasts a signature transaction to the mempool
@@ -690,22 +689,54 @@ func (app *SubnetABCIApp) ExtendVote(ctx context.Context, req *abci.RequestExten
 		return &abci.ResponseExtendVote{}, nil
 	}
 
-	// Compute checkpoint hash
+	// Compute checkpoint hash first (we need it for ResultHash and ProofHash)
 	checkpointHash := app.computeCheckpointHash(checkpoint)
 
-	// Sign with ECDSA key
-	signature, err := app.ecdsaSigner.Sign(checkpointHash)
+	// Convert pending execution reports to SDK ValidationItems
+	// Note: We use checkpoint hash for both ResultHash and ProofHash (same as rootlayer_adapter.go)
+	sdkItems := make([]sdkCrypto.ValidationItem, 0, len(app.pendingReports))
+	for _, report := range app.pendingReports {
+		intentID := common.HexToHash(report.IntentId)
+		assignmentID := common.HexToHash(report.AssignmentId)
+		agentAddr := common.HexToAddress(report.AgentId)
+
+		// Use checkpoint hash as resultHash and proofHash (32 bytes)
+		var resultHash [32]byte
+		var proofHash [32]byte
+		if len(checkpointHash) >= 32 {
+			copy(resultHash[:], checkpointHash[:32])
+			copy(proofHash[:], checkpointHash[:32])
+		}
+
+		sdkItems = append(sdkItems, sdkCrypto.ValidationItem{
+			IntentID:     intentID,
+			AssignmentID: assignmentID,
+			Agent:        agentAddr,
+			ResultHash:   resultHash,
+			ProofHash:    proofHash,
+		})
+	}
+
+	// Compute items_hash (this is what RootLayer will verify!)
+	itemsHash, err := sdkCrypto.ComputeItemsHash(sdkItems)
 	if err != nil {
-		app.logger.Error("Failed to sign checkpoint in ExtendVote", "error", err, "epoch", epoch)
+		app.logger.Error("Failed to compute items_hash in ExtendVote", "error", err, "epoch", epoch)
+		return &abci.ResponseExtendVote{}, nil
+	}
+
+	// Sign items_hash instead of checkpointHash
+	signature, err := app.ecdsaSigner.Sign(itemsHash[:])
+	if err != nil {
+		app.logger.Error("Failed to sign items_hash in ExtendVote", "error", err, "epoch", epoch)
 		return &abci.ResponseExtendVote{}, nil
 	}
 
 	// Create vote extension with ECDSA signature
 	voteExt := VoteExtension{
-		Epoch:          epoch,
-		CheckpointHash: checkpointHash,
-		ValidatorAddr:  app.ecdsaSigner.Address(),
-		Signature:      signature,
+		Epoch:         epoch,
+		ItemsHash:     itemsHash[:],
+		ValidatorAddr: app.ecdsaSigner.Address(),
+		Signature:     signature,
 	}
 
 	// Serialize vote extension
@@ -715,9 +746,10 @@ func (app *SubnetABCIApp) ExtendVote(ctx context.Context, req *abci.RequestExten
 		return &abci.ResponseExtendVote{}, nil
 	}
 
-	app.logger.Debug("Extended vote with ECDSA signature",
+	app.logger.Info("Extended vote with ECDSA signature over items_hash",
 		"epoch", epoch,
 		"validator", app.ecdsaSigner.Address(),
+		"items_hash", fmt.Sprintf("0x%x", itemsHash),
 		"height", req.Height)
 
 	return &abci.ResponseExtendVote{

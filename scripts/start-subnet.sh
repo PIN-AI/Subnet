@@ -462,13 +462,14 @@ else
             fi
         done
 
-        # Build validator pubkeys list
+        # Build validator pubkeys list (use actual public keys from PUBKEYS_ARRAY)
         VALIDATOR_PUBKEYS=""
         for j in $(seq 1 $NUM_VALIDATORS); do
+            PUBKEY="${PUBKEYS_ARRAY[$j-1]}"
             if [ -n "$VALIDATOR_PUBKEYS" ]; then
                 VALIDATOR_PUBKEYS="$VALIDATOR_PUBKEYS,"
             fi
-            VALIDATOR_PUBKEYS="${VALIDATOR_PUBKEYS}validator_$j:10"
+            VALIDATOR_PUBKEYS="${VALIDATOR_PUBKEYS}validator_$j:${PUBKEY}"
         done
 
         print_info "Starting $VALIDATOR_ID (Subnet: $VALIDATOR_SUBNET_ID)..."

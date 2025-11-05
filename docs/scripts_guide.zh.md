@@ -293,7 +293,7 @@ $ go run scripts/derive-pubkey.go 0xabc123...
 9. 领导验证器构建验证包
 10. 验证包提交到 RootLayer(HTTP API 和区块链)
 
-脚本启动所有必需的服务(NATS、匹配器、验证器、测试代理),监控日志进度,并提供详细的状态更新。
+脚本启动所有必需的服务(匹配器、验证器、测试代理),监控日志进度,并提供详细的状态更新。
 
 **用法**:
 ```bash
@@ -333,7 +333,6 @@ export ENABLE_CHAIN_SUBMIT=true
 - `MATCHER_PRIVATE_KEY` - 匹配器私钥(生产环境请勿使用!)
 
 **启动的服务**:
-- NATS 消息代理(端口 4222)
 - 匹配器(端口 8090)
 - 验证器 1(端口 9200) - 单验证器模式以加快测试
 - 测试代理(连接到匹配器和验证器)
@@ -371,7 +370,6 @@ export ENABLE_CHAIN_SUBMIT=true
 
 **前置条件**:
 - 所有二进制文件已构建(`make build`)
-- NATS 在端口 4222 上运行(脚本会尝试用 Docker 启动,如果未运行)
 - RootLayer 在配置的端点可访问
 
 **退出码**:
@@ -673,7 +671,6 @@ go build -o bin/X scripts/X.go
 **解决方案**:
 ```bash
 # 检查什么正在使用端口
-lsof -i :4222  # NATS
 lsof -i :8090  # 匹配器
 lsof -i :9200  # 验证器
 

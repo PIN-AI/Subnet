@@ -27,7 +27,6 @@ func main() {
 		validatorID      = flag.String("id", "", "Validator ID")
 		privateKey       = flag.String("key", "", "Private key hex (without 0x)")
 		grpcPort         = flag.Int("grpc", 9090, "gRPC server port")
-		natsURL          = flag.String("nats", "", "NATS server URL (deprecated - use Raft instead)")
 		storagePath      = flag.String("storage", "./data", "Storage path for LevelDB")
 		metricsPort      = flag.Int("metrics", 9095, "Metrics server port")
 		registryGRPC     = flag.String("registry-grpc", ":8091", "Registry gRPC listen address (empty to disable)")
@@ -146,10 +145,6 @@ func main() {
 			"grpc_port", *grpcPort,
 			"consensus", "Raft+Gossip",
 			"raft_bind", *raftBind)
-	} else if *natsURL != "" {
-		logger.Warn("NATS mode is deprecated - please use Raft consensus",
-			"id", *validatorID,
-			"grpc_port", *grpcPort)
 	} else {
 		logger.Info("Starting validator node",
 			"id", *validatorID,
@@ -166,7 +161,6 @@ func main() {
 		PrivateKey:       *privateKey,
 		ValidatorSet:     validatorSet,
 		StoragePath:      *storagePath,
-		NATSUrl:          *natsURL,  // Deprecated but kept for backward compatibility
 		GRPCPort:         *grpcPort,
 		MetricsPort:      *metricsPort,
 		RegistryEndpoint: *registryEndpoint,
