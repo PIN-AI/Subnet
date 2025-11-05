@@ -92,7 +92,7 @@ func main() {
 		matcherAddr   = flag.String("matcher", "localhost:8090", "Matcher address")
 		validatorAddr = flag.String("validator", "localhost:9090", "Validator gRPC address for execution report submission")
 		agentName     = flag.String("name", "SimpleAgent", "Agent name")
-		subnetID      = flag.String("subnet-id", "0x0000000000000000000000000000000000000000000000000000000000000009", "Subnet ID to subscribe to")
+		subnetID      = flag.String("subnet-id", "0x0000000000000000000000000000000000000000000000000000000000000003", "Subnet ID to subscribe to")
 	)
 	flag.Parse()
 
