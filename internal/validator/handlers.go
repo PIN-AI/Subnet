@@ -6,15 +6,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"time"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/proto"
 	"subnet/internal/consensus"
 	"subnet/internal/crypto"
 	"subnet/internal/types"
 	pb "subnet/proto/subnet"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 // ProcessExecutionReport processes an execution report from an agent
@@ -800,17 +802,51 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 }
 
 // getLeaderIDFromRaft maps the Raft leader address to the validator ID
+// Supports both IP addresses and hostnames through DNS resolution
 func (n *Node) getLeaderIDFromRaft() (string, error) {
 	leaderAddr := n.raftConsensus.LeaderAddress()
 	if leaderAddr == "" {
 		return "", fmt.Errorf("no raft leader available")
 	}
 
+	// Extract IP and port from leader address
+	leaderHost, leaderPort, err := net.SplitHostPort(leaderAddr)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse leader address %s: %w", leaderAddr, err)
+	}
+
 	// Look up the validator ID from Raft peers configuration
 	if n.config.Raft != nil && n.config.Raft.Peers != nil {
 		for _, peer := range n.config.Raft.Peers {
+			// Try exact match first (fast path)
 			if peer.Address == leaderAddr {
 				return peer.ID, nil
+			}
+
+			// Try matching by resolving hostname and comparing port
+			peerHost, peerPort, err := net.SplitHostPort(peer.Address)
+			if err != nil {
+				continue
+			}
+
+			// If ports match, try to match hosts
+			if peerPort == leaderPort {
+				// Direct IP comparison (handles both IP configs and hostname==IP cases)
+				if peerHost == leaderHost {
+					return peer.ID, nil
+				}
+
+				// Try DNS resolution if one is a hostname
+				// Resolve peer hostname to IPs
+				peerIPs, err := net.LookupHost(peerHost)
+				if err == nil {
+					// Check if leader IP matches any of the peer's IPs
+					for _, peerIP := range peerIPs {
+						if peerIP == leaderHost {
+							return peer.ID, nil
+						}
+					}
+				}
 			}
 		}
 	}

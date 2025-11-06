@@ -17,11 +17,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
-	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
-	"github.com/ethereum/go-ethereum/common"
-	"google.golang.org/protobuf/proto"
-	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/config"
 	"subnet/internal/consensus"
 	"subnet/internal/consensus/cometbft"
@@ -32,7 +27,13 @@ import (
 	"subnet/internal/rootlayer"
 	"subnet/internal/storage"
 	"subnet/internal/types"
+	rootpb "subnet/proto/rootlayer"
 	pb "subnet/proto/subnet"
+
+	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
+	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
+	"github.com/ethereum/go-ethereum/common"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -57,13 +58,13 @@ type Node struct {
 	logger       logging.Logger
 
 	// Consensus components
-	raftConsensus   *consensus.RaftConsensus
+	raftConsensus     *consensus.RaftConsensus
 	cometbftConsensus *cometbft.Consensus
-	gossipManager   *consensus.GossipManager
-	gossipDelegate  *consensus.SignatureGossipDelegate
-	fsm             *consensus.StateMachine
-	leaderTracker   *consensus.LeaderTracker
-	chain           *consensus.Chain
+	gossipManager     *consensus.GossipManager
+	gossipDelegate    *consensus.SignatureGossipDelegate
+	fsm               *consensus.StateMachine
+	leaderTracker     *consensus.LeaderTracker
+	chain             *consensus.Chain
 
 	// Storage
 	store storage.Store
@@ -187,6 +188,7 @@ type RaftConfig struct {
 	Enable           bool
 	DataDir          string
 	BindAddress      string
+	AdvertiseAddress string // Optional: advertise address for Raft cluster (defaults to BindAddress)
 	Bootstrap        bool
 	Peers            []RaftPeerConfig
 	HeartbeatTimeout time.Duration
@@ -2594,6 +2596,7 @@ func (c *Config) buildRaftConsensusConfig() (consensus.RaftConfig, error) {
 		NodeID:           c.ValidatorID,
 		DataDir:          c.Raft.DataDir,
 		BindAddress:      c.Raft.BindAddress,
+		AdvertiseAddress: c.Raft.AdvertiseAddress,
 		Bootstrap:        c.Raft.Bootstrap,
 		Peers:            peers,
 		HeartbeatTimeout: c.Raft.HeartbeatTimeout,
@@ -3209,7 +3212,7 @@ func (n *Node) convertToValidationBatchGroup(
 		CompletedAt:  firstBundle.CompletedAt,
 		Signatures:   validationSigs, // Injected epoch-level signatures
 		SignerBitmap: nil,            // Will be computed during submission
-		TotalWeight:  0,               // Will be computed during submission
+		TotalWeight:  0,              // Will be computed during submission
 		Items:        items,
 		ItemsHash:    itemsHash, // Computed items_hash for batch validation
 	}
@@ -3442,6 +3445,7 @@ func min(a, b int) int {
 	}
 	return b
 }
+
 // storeEpochValidationSignature records an epoch-level ValidationBundle signature and returns true when the threshold is met.
 func (n *Node) storeEpochValidationSignature(vbSig *pb.ValidationBundleSignature) (bool, int) {
 	if vbSig == nil {
