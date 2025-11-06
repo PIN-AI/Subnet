@@ -75,6 +75,11 @@ func main() {
 				cfg.PrivateKey = viper.GetString("private_key")
 			}
 
+			// Override with environment variable if set (Docker deployment)
+			if envKey := os.Getenv("TEST_PRIVATE_KEY"); envKey != "" {
+				cfg.PrivateKey = envKey
+			}
+
 			// Load on-chain configuration
 			if viper.IsSet("enable_chain_submit") {
 				cfg.EnableChainSubmit = viper.GetBool("enable_chain_submit")

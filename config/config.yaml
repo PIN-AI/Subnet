@@ -10,7 +10,7 @@ timeouts:
   propose_timeout: 5s
   collect_timeout: 10s
   finalize_timeout: 2s
-  checkpoint_interval: 30s
+  checkpoint_interval: 10s
 
   # Authentication and caching
   auth_cache_ttl: 5m

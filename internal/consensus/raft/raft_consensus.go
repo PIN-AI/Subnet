@@ -26,6 +26,7 @@ type RaftConfig struct {
 	NodeID           string
 	DataDir          string
 	BindAddress      string
+	AdvertiseAddress string        // Optional: advertise address for other nodes to connect to (defaults to BindAddress)
 	Bootstrap        bool
 	Peers            []RaftPeer
 	HeartbeatTimeout time.Duration
@@ -80,9 +81,15 @@ func NewRaftConsensus(cfg RaftConfig, handler RaftApplyHandler, logger logging.L
 		maxPool = 3
 	}
 
-	addr, err := net.ResolveTCPAddr("tcp", cfg.BindAddress)
+	// Determine advertise address: use AdvertiseAddress if set, otherwise BindAddress
+	advertiseAddr := cfg.AdvertiseAddress
+	if advertiseAddr == "" {
+		advertiseAddr = cfg.BindAddress
+	}
+	
+	addr, err := net.ResolveTCPAddr("tcp", advertiseAddr)
 	if err != nil {
-		return nil, fmt.Errorf("raft: resolve bind address: %w", err)
+		return nil, fmt.Errorf("raft: resolve advertise address: %w", err)
 	}
 	transport, err := raft.NewTCPTransport(cfg.BindAddress, addr, maxPool, 10*time.Second, os.Stderr)
 	if err != nil {

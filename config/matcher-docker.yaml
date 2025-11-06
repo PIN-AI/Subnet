@@ -18,6 +18,9 @@ matching:
   bid_window_seconds: 10
   selection_delay_seconds: 3
 
+# Private key for signing (top-level, read by matcher)
+private_key: "${TEST_PRIVATE_KEY}"
+
 signer:
   type: "ecdsa"
   private_key: "${TEST_PRIVATE_KEY}"
