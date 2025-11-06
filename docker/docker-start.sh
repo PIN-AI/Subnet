@@ -163,7 +163,7 @@ echo ""
 
 # Build
 print_info "Building Docker images..."
-if $DOCKER_COMPOSE -f docker/docker-compose.yml build; then
+if $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file "$PROJECT_ROOT/.env" build; then
     print_success "Image build completed"
 else
     print_error "Image build failed"
@@ -173,7 +173,7 @@ echo ""
 
 # Start
 print_info "Starting 3-node Raft cluster..."
-if $DOCKER_COMPOSE -f docker/docker-compose.yml $PROFILE_FLAG up -d; then
+if $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file "$PROJECT_ROOT/.env" $PROFILE_FLAG up -d; then
     print_success "Cluster started successfully!"
 else
     print_error "Cluster startup failed"
@@ -188,7 +188,7 @@ sleep 10
 # Show status
 echo ""
 echo "📊 Service Status:"
-$DOCKER_COMPOSE -f docker/docker-compose.yml ps
+$DOCKER_COMPOSE -f docker/docker-compose.yml --env-file "$PROJECT_ROOT/.env" ps
 echo ""
 
 # Health checks
@@ -212,8 +212,8 @@ fi
 # Check Validators
 for i in 1 2 3; do
     port=$((9089 + i))
-    if nc -z localhost $port 2>/dev/null; then
-        print_success "Validator-$i: Running ✓ (port $port)"
+    if nc -z localhost "$port" 2>/dev/null; then
+        print_success "Validator-$i: Running ✓ - port $port"
     else
         print_warning "Validator-$i: Port $port not open"
     fi
@@ -234,18 +234,18 @@ echo "   Validator-2:  localhost:9091 (Raft: 7401, Gossip: 7951)"
 echo "   Validator-3:  localhost:9092 (Raft: 7402, Gossip: 7952)"
 echo ""
 echo "📋 Common Commands:"
-echo "   View all logs:        $DOCKER_COMPOSE -f docker/docker-compose.yml logs -f"
-echo "   View specific node:   $DOCKER_COMPOSE -f docker/docker-compose.yml logs -f validator-1"
-echo "   View status:          $DOCKER_COMPOSE -f docker/docker-compose.yml ps"
-echo "   Stop services:        $DOCKER_COMPOSE -f docker/docker-compose.yml down"
-echo "   Restart services:     $DOCKER_COMPOSE -f docker/docker-compose.yml restart"
+echo "   View all logs:        cd $PROJECT_ROOT && $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file .env logs -f"
+echo "   View specific node:   cd $PROJECT_ROOT && $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file .env logs -f validator-1"
+echo "   View status:          cd $PROJECT_ROOT && $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file .env ps"
+echo "   Stop services:        cd $PROJECT_ROOT && $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file .env down"
+echo "   Restart services:     cd $PROJECT_ROOT && $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file .env restart"
 echo ""
 echo "🔍 Verify Raft Consensus:"
 echo "   # View Raft status in validator-1 logs"
-echo "   $DOCKER_COMPOSE -f docker/docker-compose.yml logs validator-1 | grep -i 'raft\\|leader'"
+echo "   cd $PROJECT_ROOT && $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file .env logs validator-1 | grep -i 'raft\\|leader'"
 echo ""
 echo "   # View all validator logs"
-echo "   $DOCKER_COMPOSE -f docker/docker-compose.yml logs -f validator-1 validator-2 validator-3"
+echo "   cd $PROJECT_ROOT && $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file .env logs -f validator-1 validator-2 validator-3"
 echo ""
 echo "📊 Resource Usage:"
 echo "   docker stats"
@@ -259,7 +259,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "Press Ctrl+C to exit log view (services will continue running)"
     echo ""
     sleep 2
-    $DOCKER_COMPOSE -f docker/docker-compose.yml logs -f
+    $DOCKER_COMPOSE -f docker/docker-compose.yml --env-file "$PROJECT_ROOT/.env" logs -f
 fi
 
 echo ""

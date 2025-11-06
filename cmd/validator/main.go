@@ -37,6 +37,7 @@ func main() {
 		raftEnable    = flag.Bool("raft-enable", false, "Enable Raft consensus")
 		raftBootstrap = flag.Bool("raft-bootstrap", false, "Bootstrap Raft cluster (first node only)")
 		raftBind      = flag.String("raft-bind", "127.0.0.1:7000", "Raft bind address")
+		raftAdvertise = flag.String("raft-advertise", "", "Raft advertise address (defaults to raft-bind if empty)")
 		raftDataDir   = flag.String("raft-data-dir", "./data/raft", "Raft data directory")
 		raftPeers     = flag.String("raft-peers", "", "Comma-separated list of validator_id:raft_address pairs (e.g. 'v1:127.0.0.1:7000,v2:127.0.0.1:7001')")
 
@@ -47,22 +48,22 @@ func main() {
 		gossipEnable = flag.Bool("gossip-enable", false, "Enable Gossip for signature propagation")
 		gossipBind   = flag.String("gossip-bind", "127.0.0.1", "Gossip bind address")
 		gossipPort   = flag.Int("gossip-port", 7946, "Gossip port")
-	gossipSeeds  = flag.String("gossip-seeds", "", "Comma-separated list of seed nodes (e.g. '127.0.0.1:6001,127.0.0.1:6002')")
+		gossipSeeds  = flag.String("gossip-seeds", "", "Comma-separated list of seed nodes (e.g. '127.0.0.1:6001,127.0.0.1:6002')")
 
 		// Consensus type selection
 		consensusType = flag.String("consensus-type", "raft-gossip", "Consensus engine type: 'raft-gossip' or 'cometbft'")
 
 		// CometBFT configuration
-		cometbftHome            = flag.String("cometbft-home", "./cometbft-data", "CometBFT home directory")
-		cometbftMoniker         = flag.String("cometbft-moniker", "", "Node moniker for CometBFT (default: validator-id)")
-		cometbftP2PPort         = flag.Int("cometbft-p2p-port", 26656, "CometBFT P2P port")
-		cometbftRPCPort         = flag.Int("cometbft-rpc-port", 26657, "CometBFT RPC port")
-		cometbftProxyPort       = flag.Int("cometbft-proxy-port", 26658, "ABCI proxy app port")
-		cometbftSeeds           = flag.String("cometbft-seeds", "", "Comma-separated list of seed nodes for CometBFT (e.g. 'node_id@host:port')")
-		cometbftPersistentPeers = flag.String("cometbft-persistent-peers", "", "Comma-separated list of persistent peers (e.g. 'node_id@host:port')")
-		cometbftGenesisFile     = flag.String("cometbft-genesis-file", "", "Path to genesis.json file (required for CometBFT)")
+		cometbftHome             = flag.String("cometbft-home", "./cometbft-data", "CometBFT home directory")
+		cometbftMoniker          = flag.String("cometbft-moniker", "", "Node moniker for CometBFT (default: validator-id)")
+		cometbftP2PPort          = flag.Int("cometbft-p2p-port", 26656, "CometBFT P2P port")
+		cometbftRPCPort          = flag.Int("cometbft-rpc-port", 26657, "CometBFT RPC port")
+		cometbftProxyPort        = flag.Int("cometbft-proxy-port", 26658, "ABCI proxy app port")
+		cometbftSeeds            = flag.String("cometbft-seeds", "", "Comma-separated list of seed nodes for CometBFT (e.g. 'node_id@host:port')")
+		cometbftPersistentPeers  = flag.String("cometbft-persistent-peers", "", "Comma-separated list of persistent peers (e.g. 'node_id@host:port')")
+		cometbftGenesisFile      = flag.String("cometbft-genesis-file", "", "Path to genesis.json file (required for CometBFT)")
 		cometbftPrivValidatorKey = flag.String("cometbft-priv-validator-key", "", "Path to priv_validator_key.json (required for CometBFT)")
-		cometbftNodeKey         = flag.String("cometbft-node-key", "", "Path to node_key.json (required for CometBFT)")
+		cometbftNodeKey          = flag.String("cometbft-node-key", "", "Path to node_key.json (required for CometBFT)")
 
 		// Validator set configuration
 		validatorCount  = flag.Int("validators", 4, "Total number of validators")
@@ -86,10 +87,10 @@ func main() {
 		subnetID = flag.String("subnet-id", "0x1111111111111111111111111111111111111111111111111111111111111111", "Subnet ID (32-byte hex string)")
 
 		// Blockchain configuration for ValidationBundle signing
-		enableChainSubmit  = flag.Bool("enable-chain-submit", false, "Enable on-chain ValidationBundle submission")
-		valChainRPCURL     = flag.String("chain-rpc-url", "", "Blockchain RPC URL for ValidationBundle signing")
-		valChainNetwork    = flag.String("chain-network", "", "Network name (e.g., base_sepolia)")
-		intentManagerAddr  = flag.String("intent-manager-addr", "", "IntentManager contract address")
+		enableChainSubmit = flag.Bool("enable-chain-submit", false, "Enable on-chain ValidationBundle submission")
+		valChainRPCURL    = flag.String("chain-rpc-url", "", "Blockchain RPC URL for ValidationBundle signing")
+		valChainNetwork   = flag.String("chain-network", "", "Network name (e.g., base_sepolia)")
+		intentManagerAddr = flag.String("intent-manager-addr", "", "IntentManager contract address")
 	)
 	flag.Parse()
 
@@ -179,16 +180,17 @@ func main() {
 		EnableRootLayerSubmit: *enableRootlayer,
 
 		// Blockchain configuration
-		EnableChainSubmit:  *enableChainSubmit,
-		ChainRPCURL:        *valChainRPCURL,
-		ChainNetwork:       *valChainNetwork,
-		IntentManagerAddr:  *intentManagerAddr,
+		EnableChainSubmit: *enableChainSubmit,
+		ChainRPCURL:       *valChainRPCURL,
+		ChainNetwork:      *valChainNetwork,
+		IntentManagerAddr: *intentManagerAddr,
 
 		// Raft consensus configuration
 		Raft: &validator.RaftConfig{
 			Enable:           *raftEnable,
 			DataDir:          *raftDataDir,
 			BindAddress:      *raftBind,
+			AdvertiseAddress: *raftAdvertise,
 			Bootstrap:        *raftBootstrap,
 			Peers:            parseRaftPeers(*raftPeers),
 			HeartbeatTimeout: 1 * time.Second,

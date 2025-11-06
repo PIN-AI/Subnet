@@ -27,13 +27,15 @@ RUN make build
 # ============================================
 FROM alpine:latest
 
-# Install runtime dependencies
+# Install runtime dependencies including gettext for envsubst
 RUN apk add --no-cache \
     ca-certificates \
     bash \
     curl \
     jq \
-    openssl
+    openssl \
+    netcat-openbsd \
+    gettext
 
 # Create non-root user
 RUN addgroup -g 1000 subnet && \
@@ -51,12 +53,19 @@ COPY --from=builder /build/scripts /app/scripts
 # Copy config templates
 COPY --from=builder /build/config /app/config
 
-# Create directories for data and logs
+# Copy entrypoint script
+COPY docker/entrypoint.sh /app/entrypoint.sh
+
+# Create directories for data and logs, set permissions, and make entrypoint executable
 RUN mkdir -p /app/data /app/logs && \
+    chmod +x /app/entrypoint.sh && \
     chown -R subnet:subnet /app
 
 # Switch to non-root user
 USER subnet
+
+# Set entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"]
 
 # Expose ports
 # Registry: 8091 (gRPC), 8101 (HTTP)
