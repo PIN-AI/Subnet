@@ -6,6 +6,42 @@ all: build
 
 build: build-matcher build-simple-agent build-mock-rootlayer build-registry build-validator build-test-agent build-scripts
 
+# Auto-detect architecture (default to amd64 for compatibility)
+ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g')
+ifeq ($(ARCH),)
+	ARCH = amd64
+endif
+
+# Build Linux binaries for Docker deployment (auto-detect architecture)
+build-linux: build-linux-matcher build-linux-registry build-linux-validator build-linux-simple-agent
+	@echo "Built Linux binaries for architecture: $(ARCH)"
+
+# Build Linux binaries for AMD64 (x86_64) - most common server architecture
+build-linux-amd64:
+	@echo "Building for Linux AMD64..."
+	@GOARCH=amd64 $(MAKE) build-linux
+
+# Build Linux binaries for ARM64 (Apple Silicon, ARM servers)
+build-linux-arm64:
+	@echo "Building for Linux ARM64..."
+	@GOARCH=arm64 $(MAKE) build-linux
+
+build-linux-matcher:
+	@echo "Building Matcher for Linux $(ARCH)..."
+	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/matcher cmd/matcher/main.go
+
+build-linux-registry:
+	@echo "Building Registry for Linux $(ARCH)..."
+	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/registry cmd/registry/main.go
+
+build-linux-validator:
+	@echo "Building Validator for Linux $(ARCH)..."
+	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/validator cmd/validator/main.go
+
+build-linux-simple-agent:
+	@echo "Building Simple Agent for Linux $(ARCH)..."
+	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/simple-agent cmd/simple-agent/main.go
+
 build-all:
 	@echo "Building all Go packages..."
 	@go build ./...
