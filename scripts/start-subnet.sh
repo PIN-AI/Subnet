@@ -393,7 +393,6 @@ if [ "$CONSENSUS_TYPE" = "raft" ]; then
             -gossip-bind "127.0.0.1" \
             -gossip-port $GOSSIP_PORT \
             -gossip-seeds "$GOSSIP_SEEDS" \
-            -checkpoint-interval "${CHECKPOINT_INTERVAL:-10s}" \
             -validator-endpoints "$VALIDATOR_ENDPOINTS" \
             > "$LOGS_DIR/validator-$i.log" 2>&1 &
 
@@ -499,7 +498,6 @@ else
             --chain-rpc-url="$CHAIN_RPC_URL" \
             --chain-network="$CHAIN_NETWORK" \
             --intent-manager-addr="$INTENT_MANAGER_ADDR" \
-            --checkpoint-interval="${CHECKPOINT_INTERVAL:-10s}" \
             > "$LOGS_DIR/validator${i}.log" 2>&1 &
 
         VALIDATOR_PID=$!
