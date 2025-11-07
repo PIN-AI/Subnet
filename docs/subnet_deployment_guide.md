@@ -96,7 +96,9 @@ export PIN_NETWORK="base_sepolia"
 
 ### Step 3: Configure and Start Matcher
 
-Edit `config/matcher-config.yaml`:
+**Note**: The project uses a unified `config/config.yaml` file for all components. You can also use specialized config files like `config/matcher-with-chain.yaml` for blockchain integration or `config/matcher-docker.yaml` for Docker deployments.
+
+Edit `config/config.yaml`:
 
 ```yaml
 identity:
@@ -134,12 +136,12 @@ private_key: "<MATCHER_PRIVATE_KEY>"
 Start Matcher:
 
 ```bash
-./bin/matcher --config config/matcher-config.yaml
+./bin/matcher --config config/config.yaml
 ```
 
 ### Step 4: Configure and Start Validators
 
-Edit `config/validator-1-config.yaml`:
+Edit `config/config.yaml`:
 
 ```yaml
 identity:
@@ -175,13 +177,13 @@ Start multiple Validators (at least 3):
 
 ```bash
 # Terminal 1
-./bin/validator --config config/validator-1-config.yaml
+./bin/validator --config config/config.yaml
 
 # Terminal 2
-./bin/validator --config config/validator-2-config.yaml
+./bin/validator --config config/config.yaml
 
 # Terminal 3
-./bin/validator --config config/validator-3-config.yaml
+./bin/validator --config config/config.yaml
 ```
 
 ### Step 5: Run Tests
@@ -192,7 +194,7 @@ export SUBNET_ID="0x0000...0002"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
 
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 ```
 
 ---
@@ -572,9 +574,9 @@ RUN go build -o matcher ./cmd/matcher
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 COPY --from=builder /app/matcher /usr/local/bin/
-COPY config/matcher-config.yaml /etc/subnet/
+COPY config/config.yaml /etc/subnet/
 
-CMD ["matcher", "--config", "/etc/subnet/matcher-config.yaml"]
+CMD ["matcher", "--config", "/etc/subnet/config.yaml"]
 ```
 
 **Docker Compose:**
@@ -703,8 +705,9 @@ tail -f logs/validator-1.log | grep "ValidationBundle"
 ### Complete Configuration Reference
 
 All configuration templates are in `config/` directory:
-- `config/matcher-config.yaml` - Matcher configuration
-- `config/validator-config.yaml` - Validator configuration
+- `config/config.yaml` - Main configuration file (unified for all components)
+- `config/matcher-with-chain.yaml` - Matcher with blockchain integration
+- `config/matcher-docker.yaml` - Matcher for Docker deployments
 - `config/policy_config.yaml` - Policy configuration
 - `config/auth_config.yaml` - Authentication configuration
 

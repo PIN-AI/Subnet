@@ -98,14 +98,6 @@ export TEST_MODE=true
 - Interactive parameter input
 - Better for manual testing and demos
 
-### `run-e2e.sh`
-**Purpose**: Quick E2E test entry point
-
-**Usage**:
-```bash
-./run-e2e.sh --no-interactive
-```
-
 ### `stop-subnet.sh`
 **Purpose**: Stop all subnet processes
 
@@ -120,51 +112,30 @@ export TEST_MODE=true
 
 ## Testing Scripts
 
-### `e2e-test.sh`
-**Purpose**: End-to-end test with real RootLayer
+### `send-intent.sh`
+**Purpose**: Interactive intent submission tool
 
 **Features**:
-- Complete intent submission and execution flow test
-- Validates assignment and validation process
-- Supports interactive and non-interactive modes
+- Interactive prompts for intent parameters
+- Validates input and generates intent ID
+- Submits to blockchain and RootLayer
+- Supports both interactive and non-interactive modes
 
 **Usage**:
 ```bash
-# Interactive mode (prompts for confirmation)
-./scripts/e2e-test.sh
+# Interactive mode (recommended for first use)
+./scripts/send-intent.sh
 
-# Non-interactive mode (direct execution)
-./scripts/e2e-test.sh --no-interactive
+# Non-interactive mode (uses defaults or environment variables)
+./scripts/send-intent.sh --no-interactive
+```
 
-# With environment variables
-export SUBNET_ID="0x..."
+**Environment Variables**:
+```bash
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
-./scripts/e2e-test.sh --no-interactive
-```
-
-### `simple-batch-test.sh`
-**Purpose**: Batch submit multiple intents for stress testing
-
-**Usage**:
-```bash
-./scripts/simple-batch-test.sh
-```
-
-### `e2e-test-multi-validator.sh`
-**Purpose**: E2E test in multi-validator environment
-
-**Usage**:
-```bash
-./scripts/e2e-test-multi-validator.sh
-```
-
-### `test-leader-rotation.sh`
-**Purpose**: Test Raft leader rotation mechanism
-
-**Usage**:
-```bash
-./scripts/test-leader-rotation.sh
+export TEST_PRIVATE_KEY="your_test_private_key"
 ```
 
 ### `run-integration-tests.sh`
@@ -174,6 +145,12 @@ export ROOTLAYER_HTTP="http://3.17.208.238:8081"
 ```bash
 ./scripts/run-integration-tests.sh
 ```
+
+**What it does**:
+- Starts subnet services in test mode
+- Submits test intents
+- Verifies end-to-end flow
+- Returns exit code 0 on success
 
 ---
 
@@ -316,15 +293,15 @@ go build -o bin/derive-pubkey scripts/derive-pubkey.go
 python3 scripts/fund-validators.py
 ```
 
-### `sync-proto.sh`
+### Syncing Proto Definitions
 **Purpose**: Sync proto definitions from `../pin_protocol` and regenerate Go code
 
 **Usage**:
 ```bash
-./scripts/sync-proto.sh
+make proto
 ```
 
-**Note**: Equivalent to `make proto`
+**Note**: This regenerates all Go code from proto definitions in `../pin_protocol/proto/`
 
 ---
 
@@ -376,7 +353,7 @@ Deployment Flow:
   start-subnet.sh
 
 Testing Flow:
-  e2e-test.sh / run-e2e.sh
+  send-intent.sh + start-subnet.sh
     ↓
   submit-intent-signed.go
     ↓

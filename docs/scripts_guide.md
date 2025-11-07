@@ -301,17 +301,17 @@ The script starts all required services (Matcher, Validators, Test Agent), monit
 export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000002"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 
 # Run without interaction (CI/CD mode)
-./scripts/e2e-test.sh --no-interactive
+./scripts/start-subnet.sh --no-interactive
 
 # With blockchain submission enabled
 export ENABLE_CHAIN_SUBMIT=true
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 
 # Custom RootLayer endpoints
-./scripts/e2e-test.sh \
+./scripts/start-subnet.sh \
   --rootlayer-grpc 3.17.208.238:9001 \
   --rootlayer-http http://3.17.208.238:8081
 ```
@@ -719,7 +719,7 @@ pip install web3 eth-account
    export SUBNET_ID="0xYOUR_SUBNET_ID"
    export ROOTLAYER_GRPC="localhost:9001"
    export ROOTLAYER_HTTP="http://localhost:8080"
-   ./scripts/e2e-test.sh
+   ./scripts/start-subnet.sh
    ```
 
 3. **Monitor Services**:
