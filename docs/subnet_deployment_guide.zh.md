@@ -96,7 +96,7 @@ export PIN_NETWORK="base_sepolia"
 
 ### 步骤3：配置并启动Matcher
 
-编辑 `config/matcher-config.yaml`:
+编辑 `config/config.yaml`:
 
 ```yaml
 identity:
@@ -134,12 +134,12 @@ private_key: "<MATCHER_PRIVATE_KEY>"
 启动Matcher:
 
 ```bash
-./bin/matcher --config config/matcher-config.yaml
+./bin/matcher --config config/config.yaml
 ```
 
 ### 步骤4：配置并启动Validators
 
-编辑 `config/validator-1-config.yaml`:
+编辑 `config/config.yaml`:
 
 ```yaml
 identity:
@@ -175,13 +175,13 @@ private_key: "<VALIDATOR_PRIVATE_KEY>"
 
 ```bash
 # Terminal 1
-./bin/validator --config config/validator-1-config.yaml
+./bin/validator --config config/config.yaml
 
 # Terminal 2
-./bin/validator --config config/validator-2-config.yaml
+./bin/validator --config config/config.yaml
 
 # Terminal 3
-./bin/validator --config config/validator-3-config.yaml
+./bin/validator --config config/config.yaml
 ```
 
 ### 步骤5：运行测试
@@ -192,7 +192,7 @@ export SUBNET_ID="0x0000...0002"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
 
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 ```
 
 ---
@@ -572,7 +572,7 @@ RUN go build -o matcher ./cmd/matcher
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
 COPY --from=builder /app/matcher /usr/local/bin/
-COPY config/matcher-config.yaml /etc/subnet/
+COPY config/config.yaml /etc/subnet/
 
 CMD ["matcher", "--config", "/etc/subnet/matcher-config.yaml"]
 ```
@@ -706,7 +706,7 @@ tail -f logs/validator-1.log | grep "ValidationBundle"
 ### 完整配置参考
 
 所有配置文件模板见 `config/` 目录：
-- `config/matcher-config.yaml` - Matcher配置
+- `config/config.yaml` - Matcher配置
 - `config/validator-config.yaml` - Validator配置
 - `config/policy_config.yaml` - 策略配置
 - `config/auth_config.yaml` - 认证配置

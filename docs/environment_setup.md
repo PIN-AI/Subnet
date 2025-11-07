@@ -450,7 +450,7 @@ export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
 
 # Run E2E test (non-interactive mode)
-./scripts/e2e-test.sh --no-interactive
+./scripts/start-subnet.sh --no-interactive
 
 # Check for success
 echo $?  # Should be 0
@@ -700,7 +700,7 @@ After completing environment setup:
 
 3. **Run E2E Test**:
    ```bash
-   ./scripts/e2e-test.sh --help
+   ./scripts/start-subnet.sh --help
    ```
 
 4. **Read Documentation**:
@@ -730,7 +730,7 @@ make build
 go test ./internal/matcher/...
 
 # 4. Test locally
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 
 # 5. Check for issues
 go vet ./...

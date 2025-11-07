@@ -121,5 +121,23 @@ docker compose -f docker/docker-compose.yml restart
 
 ## 🔧 Troubleshooting
 
-See [Troubleshooting Guide](../docs/troubleshooting.md)
+Common deployment issues:
+
+### Services Not Starting
+- Check Docker logs: `docker compose -f docker/docker-compose.yml logs`
+- Verify binaries are present in `../bin/` directory
+- Ensure `.env` file is properly configured
+
+### Port Conflicts
+- Check if ports are already in use: `lsof -i :8090,8091,8092,9090,9091,9092`
+- Modify port mappings in `docker/docker-compose.yml` if needed
+
+### Configuration Issues
+- Verify environment variables in `.env` file
+- Check configuration files in `config/` directory
+- Ensure RootLayer endpoints are accessible
+
+For detailed troubleshooting guides, see:
+- [E2E Test Guide](../docs/e2e_test_guide.md#troubleshooting) - Consensus and service issues
+- [Subnet Deployment Guide](../docs/subnet_deployment_guide.md) - Production deployment issues
 
