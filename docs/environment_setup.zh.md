@@ -62,16 +62,11 @@ Go 是 Subnet 组件(匹配器、验证器、注册中心)的主要语言。
 - 生成 protocol buffer 代码
 - 将 `.proto` 文件编译为 Go/Python
 
-### 3. NATS 消息代理
+### 3. ~~NATS 消息代理~~ (已废弃)
 
-**所需版本**: NATS 2.9.0 或更高
+**注意**: 从 v2.0 开始，系统使用 Raft+Gossip 共识，不再需要 NATS。
 
-用于验证器共识的分布式消息系统。
-
-**为什么需要**:
-- 验证器间通信
-- 共识消息广播
-- 检查点协调
+如果您在使用旧版本（v1.x），请参考 `docs/jetstream_evaluation.md`。
 
 ### 4. Git
 
@@ -91,8 +86,8 @@ Go 是 Subnet 组件(匹配器、验证器、注册中心)的主要语言。
 ### 用于测试和开发
 
 1. **Docker 和 Docker Compose**
-   - 快速部署 NATS
    - 容器化测试
+   - 快速部署服务
    - 版本: Docker 20.10+ / Docker Compose 2.0+
 
 2. **curl**
@@ -148,9 +143,6 @@ brew install protobuf
 # 验证 protoc 安装
 protoc --version  # 应显示 libprotoc 3.20.0 或更高
 
-# 安装 NATS server
-brew install nats-server
-
 # 安装可选工具
 brew install curl jq git
 
@@ -191,21 +183,6 @@ unzip protoc-24.4-osx-universal_binary.zip -d $HOME/protoc
 export PATH=$PATH:$HOME/protoc/bin
 ```
 
-**NATS**:
-```bash
-# 从 https://github.com/nats-io/nats-server/releases 下载
-curl -OL https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-darwin-arm64.zip
-
-# 解压
-unzip nats-server-v2.10.7-darwin-arm64.zip
-
-# 移动到 /usr/local/bin
-sudo mv nats-server-v2.10.7-darwin-arm64/nats-server /usr/local/bin/
-
-# 验证
-nats-server --version
-```
-
 ---
 
 ### Linux (Ubuntu/Debian)
@@ -242,14 +219,11 @@ export PATH="$PATH:$HOME/.local/bin"
 # 验证 protoc
 protoc --version
 
-# 安装 NATS server
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-linux-amd64.tar.gz -o nats-server.tar.gz
-tar -xzf nats-server.tar.gz
-sudo mv nats-server-v2.10.7-linux-amd64/nats-server /usr/local/bin/
+
 rm -rf nats-server*
 
 # 验证 NATS
-nats-server --version
+# NATS 已在 v2.0 废弃
 
 # 安装 Docker (可选)
 sudo apt install -y docker.io docker-compose
@@ -282,10 +256,6 @@ source ~/.bashrc
 # 安装 Protocol Buffers
 sudo yum install -y protobuf-compiler
 
-# 安装 NATS
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-linux-amd64.tar.gz -o nats-server.tar.gz
-tar -xzf nats-server.tar.gz
-sudo mv nats-server-v2.10.7-linux-amd64/nats-server /usr/local/bin/
 
 # 安装 Docker (Fedora/CentOS 8+)
 sudo dnf install -y docker docker-compose
@@ -379,23 +349,7 @@ ls -lh bin/
 
 ## 配置文件
 
-### 1. 启动 NATS Server
-
-```bash
-# 使用默认配置启动 NATS
-nats-server
-
-# 或在后台启动
-nats-server -D
-
-# 或使用 Docker
-docker run -d --name nats -p 4222:4222 nats:latest
-
-# 验证 NATS 正在运行
-curl http://localhost:8222/varz  # NATS 监控端点
-```
-
-### 2. 获取测试网 ETH
+### 1. 获取测试网 ETH
 
 在 Base Sepolia 上测试:
 
@@ -420,7 +374,7 @@ curl http://localhost:8222/varz  # NATS 监控端点
    chmod 600 .env
    ```
 
-### 3. 配置 RootLayer 连接
+### 2. 配置 RootLayer 连接
 
 ```bash
 # 设置 RootLayer 端点 (示例 - 根据您的部署调整)
@@ -515,7 +469,7 @@ export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
 
 # 运行 E2E 测试 (非交互模式)
-./scripts/e2e-test.sh --no-interactive
+./scripts/start-subnet.sh --no-interactive
 
 # 检查成功
 echo $?  # 应该是 0
@@ -566,51 +520,6 @@ go mod tidy
 
 ---
 
-### NATS 问题
-
-**问题**: NATS `connection refused`
-
-**解决方案**:
-```bash
-# 检查 NATS 是否运行
-ps aux | grep nats-server
-
-# 检查端口 4222
-lsof -i :4222
-# 或
-netstat -an | grep 4222
-
-# 如果未运行则启动 NATS
-nats-server -D
-
-# 或使用 Docker
-docker run -d --name nats -p 4222:4222 nats:latest
-
-# 检查 NATS 日志
-docker logs nats
-```
-
----
-
-**问题**: NATS 连接超时
-
-**解决方案**:
-```bash
-# 测试连接
-nc -zv localhost 4222
-
-# 检查防火墙
-sudo ufw status  # Ubuntu/Debian
-sudo firewall-cmd --list-all  # CentOS/RHEL
-
-# 允许 NATS 端口
-sudo ufw allow 4222
-# 或
-sudo firewall-cmd --add-port=4222/tcp --permanent
-sudo firewall-cmd --reload
-```
-
----
 
 ### 构建问题
 
@@ -733,7 +642,7 @@ docker ps
 **解决方案**:
 ```bash
 # 查找正在使用端口的进程
-lsof -i :4222  # NATS
+# NATS port (deprecated)
 lsof -i :8090  # 匹配器
 lsof -i :9200  # 验证器
 
@@ -810,7 +719,7 @@ export CHAIN_RPC_URL="https://sepolia.base.org"
 
 3. **运行 E2E 测试**:
    ```bash
-   ./scripts/e2e-test.sh --help
+   ./scripts/start-subnet.sh --help
    ```
 
 4. **阅读文档**:
@@ -840,7 +749,7 @@ make build
 go test ./internal/matcher/...
 
 # 4. 本地测试
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 
 # 5. 检查问题
 go vet ./...

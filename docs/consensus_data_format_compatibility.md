@@ -166,6 +166,6 @@ None expected if following these rules correctly.
 
 ## Related Documentation
 
-- `docs/consensus_architecture.md` - Overall consensus design
-- `docs/validation_bundle_multi_signature.md` - ValidationBundle signature collection
-- `docs/cometbft_workflow.md` - CometBFT integration details (if exists)
+- [docs/consensus_modes.md](consensus_modes.md) - Consensus mode selection guide (Raft vs CometBFT)
+- [docs/architecture.md](architecture.md) - System architecture with consensus mechanisms
+- [docs/e2e_test_guide.md](e2e_test_guide.md) - E2E testing with both consensus modes

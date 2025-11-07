@@ -148,16 +148,16 @@ Intent matching → Winner selection → Assignment creation
 ## Testing
 
 ### E2E Testing
-Run the comprehensive E2E test suite:
+Run the comprehensive E2E test:
 ```bash
-# Simple E2E test
-./run-e2e.sh --no-interactive
+# Start all services
+./scripts/start-subnet.sh
 
-# Batch operations E2E test
-./run-batch-e2e.sh --intent-count 10 --no-interactive
+# In another terminal, send test intent
+./scripts/send-intent.sh
 ```
 
-See `docs/batch_test.md` for detailed batch testing documentation.
+See [docs/e2e_test_guide.md](e2e_test_guide.md) for detailed E2E testing workflow.
 
 ### Unit Testing
 ```bash

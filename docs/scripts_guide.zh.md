@@ -301,17 +301,17 @@ $ go run scripts/derive-pubkey.go 0xabc123...
 export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000002"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 
 # 非交互式运行(CI/CD 模式)
-./scripts/e2e-test.sh --no-interactive
+./scripts/start-subnet.sh --no-interactive
 
 # 启用区块链提交
 export ENABLE_CHAIN_SUBMIT=true
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 
 # 自定义 RootLayer 端点
-./scripts/e2e-test.sh \
+./scripts/start-subnet.sh \
   --rootlayer-grpc 3.17.208.238:9001 \
   --rootlayer-http http://3.17.208.238:8081
 ```
@@ -554,7 +554,7 @@ go build -o test-agent validator_test_agent.go
    export SUBNET_ID="0x你的子网ID"
    export ROOTLAYER_GRPC="localhost:9001"
    export ROOTLAYER_HTTP="http://localhost:8080"
-   ./scripts/e2e-test.sh
+   ./scripts/start-subnet.sh
    ```
 
 3. **监控服务**:

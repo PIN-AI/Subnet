@@ -23,17 +23,7 @@ PinAI Subnet supports two consensus mechanisms:
 
 ## Quick Start
 
-### Method 1: Using Convenience Scripts (Recommended)
-
-```bash
-# Start Raft mode
-./start-raft.sh
-
-# Start CometBFT mode
-./start-cometbft.sh
-```
-
-### Method 2: Setting Environment Variables
+### Using Environment Variables
 
 ```bash
 # Raft mode (default)
@@ -44,6 +34,8 @@ export CONSENSUS_TYPE="raft"
 export CONSENSUS_TYPE="cometbft"
 ./scripts/start-subnet.sh
 ```
+
+**Tip**: You can also set `CONSENSUS_TYPE` in your `.env` file for persistent configuration.
 
 ## Detailed Configuration
 
@@ -105,34 +97,36 @@ export START_AGENT=true
 
 1. Stop current services:
 ```bash
-pkill -f 'bin/matcher|bin/validator|bin/registry|bin/simple-agent'
+./scripts/stop-subnet.sh
 ```
 
 2. Clean data:
 ```bash
-rm -rf subnet-logs test-cometbft
+rm -rf subnet-logs test-cometbft raft-data-* validator-db-*
 ```
 
 3. Start CometBFT mode:
 ```bash
-./start-cometbft.sh
+export CONSENSUS_TYPE="cometbft"
+./scripts/start-subnet.sh
 ```
 
 ### Switching from CometBFT to Raft
 
 1. Stop current services:
 ```bash
-pkill -f 'bin/matcher|bin/validator|bin/registry|bin/simple-agent'
+./scripts/stop-subnet.sh
 ```
 
 2. Clean data:
 ```bash
-rm -rf subnet-logs test-cometbft
+rm -rf subnet-logs test-cometbft raft-data-* validator-db-*
 ```
 
 3. Start Raft mode:
 ```bash
-./start-raft.sh
+export CONSENSUS_TYPE="raft"
+./scripts/start-subnet.sh
 ```
 
 **Note**: Switching consensus modes will clear all local state!
