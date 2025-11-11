@@ -2,11 +2,11 @@
 bin/
 *.test
 *.out
-matcher
-validator
-registry
-mock-rootlayer
-simple-agent
+/matcher
+/validator
+/registry
+/mock-rootlayer
+/simple-agent
 
 # Runtime data
 data/

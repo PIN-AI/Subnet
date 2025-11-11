@@ -9,13 +9,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"subnet/internal/config"
 	"subnet/internal/consensus"
@@ -2248,9 +2246,6 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 	n.logger.Infof("Submitting ValidationBatchGroup batch_id=%s epoch=%d items=%d",
 		batchID, header.Epoch, len(group.Items))
 
-	// Print and save complete ValidationBatchGroup structure to file
-	n.printAndSaveValidationBatchGroup(group, batchID)
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -3119,38 +3114,9 @@ func (n *Node) convertToValidationBatchGroup(
 		}
 	}
 
-	// Validate all string fields for UTF-8 validity BEFORE creating ValidationBatchGroup
-	n.logger.Info("=== UTF-8 Validation: Checking ValidationBatchGroup fields ===")
-	n.logger.Infof("SubnetId: %s (len=%d, utf8_valid=%v)", firstBundle.SubnetId, len(firstBundle.SubnetId), utf8.ValidString(firstBundle.SubnetId))
-	n.logger.Infof("RootHash: %s (len=%d, utf8_valid=%v)", firstBundle.RootHash, len(firstBundle.RootHash), utf8.ValidString(firstBundle.RootHash))
-	n.logger.Infof("AggregatorId: %s (len=%d, utf8_valid=%v)", firstBundle.AggregatorId, len(firstBundle.AggregatorId), utf8.ValidString(firstBundle.AggregatorId))
-
-	for i, sig := range validationSigs {
-		n.logger.Infof("Signature[%d]: Validator=%s (len=%d, utf8_valid=%v), Signature_len=%d",
-			i, sig.Validator, len(sig.Validator), utf8.ValidString(sig.Validator), len(sig.Signature))
-		if !utf8.ValidString(sig.Validator) {
-			n.logger.Errorf(">>> FOUND UTF-8 ISSUE: Validator address is not valid UTF-8! validator_hex=%x", []byte(sig.Validator))
-		}
-	}
-
 	// Convert each ValidationBundle to ValidationItem
 	items := make([]*rootpb.ValidationItem, 0, len(bundles))
-	for bundleIdx, bundle := range bundles {
-		n.logger.Infof("ValidationItem[%d]: IntentId=%s (utf8_valid=%v), AssignmentId=%s (utf8_valid=%v), AgentId=%s (utf8_valid=%v)",
-			bundleIdx, bundle.IntentId, utf8.ValidString(bundle.IntentId),
-			bundle.AssignmentId, utf8.ValidString(bundle.AssignmentId),
-			bundle.AgentId, utf8.ValidString(bundle.AgentId))
-
-		if !utf8.ValidString(bundle.IntentId) {
-			n.logger.Errorf(">>> FOUND UTF-8 ISSUE: IntentId is not valid UTF-8! intent_id_hex=%x", []byte(bundle.IntentId))
-		}
-		if !utf8.ValidString(bundle.AssignmentId) {
-			n.logger.Errorf(">>> FOUND UTF-8 ISSUE: AssignmentId is not valid UTF-8! assignment_id_hex=%x", []byte(bundle.AssignmentId))
-		}
-		if !utf8.ValidString(bundle.AgentId) {
-			n.logger.Errorf(">>> FOUND UTF-8 ISSUE: AgentId is not valid UTF-8! agent_id_hex=%x", []byte(bundle.AgentId))
-		}
-
+	for _, bundle := range bundles {
 		items = append(items, &rootpb.ValidationItem{
 			IntentId:     bundle.IntentId,
 			AssignmentId: bundle.AssignmentId,
@@ -3288,154 +3254,6 @@ type CometBFTConfig struct {
 	PrivValidatorKey  string           // Path to priv_validator_key.json
 	NodeKey           string           // Path to node_key.json
 	GenesisValidators map[string]int64 // Validator set (validator_id -> voting_power)
-}
-
-// printAndSaveValidationBatchGroup prints complete ValidationBatchGroup structure to log and saves to file
-func (n *Node) printAndSaveValidationBatchGroup(group *rootpb.ValidationBatchGroup, batchID string) {
-	var output strings.Builder
-
-	timestamp := time.Now().Format("2006-01-02_15-04-05")
-
-	output.WriteString(fmt.Sprintf("=== ValidationBatchGroup Complete Structure ===\n"))
-	output.WriteString(fmt.Sprintf("Batch ID: %s\n", batchID))
-	output.WriteString(fmt.Sprintf("Timestamp: %s\n\n", timestamp))
-
-	// Basic fields
-	output.WriteString(fmt.Sprintf("SubnetId: %s\n", group.SubnetId))
-	output.WriteString(fmt.Sprintf("  Length: %d, UTF-8 Valid: %v\n\n", len(group.SubnetId), utf8.ValidString(group.SubnetId)))
-
-	output.WriteString(fmt.Sprintf("RootHeight: %d\n\n", group.RootHeight))
-
-	output.WriteString(fmt.Sprintf("RootHash: %s\n", group.RootHash))
-	output.WriteString(fmt.Sprintf("  Length: %d, UTF-8 Valid: %v\n\n", len(group.RootHash), utf8.ValidString(group.RootHash)))
-
-	output.WriteString(fmt.Sprintf("AggregatorId: %s\n", group.AggregatorId))
-	output.WriteString(fmt.Sprintf("  Length: %d, UTF-8 Valid: %v\n\n", len(group.AggregatorId), utf8.ValidString(group.AggregatorId)))
-
-	output.WriteString(fmt.Sprintf("CompletedAt: %d\n\n", group.CompletedAt))
-
-	output.WriteString(fmt.Sprintf("TotalWeight: %d\n\n", group.TotalWeight))
-
-	// Signatures
-	output.WriteString(fmt.Sprintf("Signatures: (%d total)\n", len(group.Signatures)))
-	for i, sig := range group.Signatures {
-		output.WriteString(fmt.Sprintf("  [%d] Validator: %s\n", i, sig.Validator))
-		output.WriteString(fmt.Sprintf("      Length: %d, UTF-8 Valid: %v\n", len(sig.Validator), utf8.ValidString(sig.Validator)))
-		output.WriteString(fmt.Sprintf("      Signature: %d bytes (hex: %s...)\n", len(sig.Signature), hex.EncodeToString(sig.Signature[:min(20, len(sig.Signature))])))
-		output.WriteString(fmt.Sprintf("      Signature (base64): %s\n\n", base64.StdEncoding.EncodeToString(sig.Signature)))
-	}
-
-	output.WriteString(fmt.Sprintf("SignerBitmap: %v\n\n", group.SignerBitmap))
-
-	// ItemsHash (CRITICAL field for v2.3+)
-	if len(group.ItemsHash) > 0 {
-		output.WriteString(fmt.Sprintf("ItemsHash: 0x%x\n", group.ItemsHash))
-		output.WriteString(fmt.Sprintf("  Length: %d bytes\n", len(group.ItemsHash)))
-		output.WriteString(fmt.Sprintf("  Base64: %s\n\n", base64.StdEncoding.EncodeToString(group.ItemsHash)))
-	} else {
-		output.WriteString("ItemsHash: ❌ NOT SET (MISSING - WILL CAUSE VALIDATION FAILURE!)\n\n")
-	}
-
-	// ValidationItems
-	output.WriteString(fmt.Sprintf("Items: (%d total)\n", len(group.Items)))
-	for i, item := range group.Items {
-		output.WriteString(fmt.Sprintf("  [%d] IntentId: %s\n", i, item.IntentId))
-		output.WriteString(fmt.Sprintf("      Length: %d, UTF-8 Valid: %v\n", len(item.IntentId), utf8.ValidString(item.IntentId)))
-
-		output.WriteString(fmt.Sprintf("      AssignmentId: %s\n", item.AssignmentId))
-		output.WriteString(fmt.Sprintf("      Length: %d, UTF-8 Valid: %v\n", len(item.AssignmentId), utf8.ValidString(item.AssignmentId)))
-
-		output.WriteString(fmt.Sprintf("      AgentId: %s\n", item.AgentId))
-		output.WriteString(fmt.Sprintf("      Length: %d, UTF-8 Valid: %v\n", len(item.AgentId), utf8.ValidString(item.AgentId)))
-
-		output.WriteString(fmt.Sprintf("      ExecutedAt: %d\n", item.ExecutedAt))
-		output.WriteString(fmt.Sprintf("      ResultHash: %d bytes (hex: %s...)\n", len(item.ResultHash), hex.EncodeToString(item.ResultHash[:min(16, len(item.ResultHash))])))
-		output.WriteString(fmt.Sprintf("      ResultHash (base64): %s\n", base64.StdEncoding.EncodeToString(item.ResultHash)))
-		output.WriteString(fmt.Sprintf("      ProofHash: %v\n\n", item.ProofHash))
-	}
-
-	// JSON representation
-	output.WriteString("\n=== JSON Representation (bytes fields auto-converted to base64) ===\n\n")
-	jsonBytes, err := json.MarshalIndent(group, "", "  ")
-	if err != nil {
-		output.WriteString(fmt.Sprintf("JSON serialization error: %v\n", err))
-	} else {
-		output.WriteString(string(jsonBytes))
-		output.WriteString("\n\n")
-	}
-
-	// UTF-8 validation summary
-	output.WriteString("=== UTF-8 Validation Summary ===\n\n")
-	allValid := true
-
-	fields := []struct {
-		name  string
-		value string
-	}{
-		{"SubnetId", group.SubnetId},
-		{"RootHash", group.RootHash},
-		{"AggregatorId", group.AggregatorId},
-	}
-
-	for _, field := range fields {
-		valid := utf8.ValidString(field.value)
-		status := "✅"
-		if !valid {
-			status = "❌"
-			allValid = false
-		}
-		output.WriteString(fmt.Sprintf("%s %s: %v (length: %d)\n", status, field.name, valid, len(field.value)))
-	}
-
-	for i, sig := range group.Signatures {
-		valid := utf8.ValidString(sig.Validator)
-		status := "✅"
-		if !valid {
-			status = "❌"
-			allValid = false
-		}
-		output.WriteString(fmt.Sprintf("%s Validator[%d]: %v (length: %d)\n", status, i, valid, len(sig.Validator)))
-	}
-
-	for i, item := range group.Items {
-		itemFields := []struct {
-			name  string
-			value string
-		}{
-			{"IntentId", item.IntentId},
-			{"AssignmentId", item.AssignmentId},
-			{"AgentId", item.AgentId},
-		}
-		for _, field := range itemFields {
-			valid := utf8.ValidString(field.value)
-			status := "✅"
-			if !valid {
-				status = "❌"
-				allValid = false
-			}
-			output.WriteString(fmt.Sprintf("%s Item[%d].%s: %v (length: %d)\n", status, i, field.name, valid, len(field.value)))
-		}
-	}
-
-	output.WriteString("\n")
-	if allValid {
-		output.WriteString("✅ All string fields are valid UTF-8!\n")
-	} else {
-		output.WriteString("❌ Found invalid UTF-8 fields!\n")
-	}
-
-	// Log to console
-	n.logger.Info("=== ValidationBatchGroup Structure Dump START ===")
-	n.logger.Info(output.String())
-	n.logger.Info("=== ValidationBatchGroup Structure Dump END ===")
-
-	// Save to file in subnet-logs directory
-	filename := fmt.Sprintf("subnet-logs/validation_batch_group_%s.txt", timestamp)
-	if err := os.WriteFile(filename, []byte(output.String()), 0644); err != nil {
-		n.logger.Errorf("Failed to write ValidationBatchGroup structure to file: %v", err)
-	} else {
-		n.logger.Infof("ValidationBatchGroup structure saved to file: %s", filename)
-	}
 }
 
 // min returns the minimum of two integers
