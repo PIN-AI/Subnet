@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -34,7 +33,8 @@ type Server struct {
 	rootlayerClient rootlayer.Client
 	verifier        *blockchain.ParticipantVerifier
 	allowUnverified bool
-	sdkClient       *sdk.Client // SDK client for on-chain operations
+	sdkClient       *sdk.Client          // SDK client for on-chain operations
+	strategy        BidMatchingStrategy  // Bid matching strategy for bid selection
 
 	// Intent and bid management
 	mu              sync.RWMutex
@@ -90,13 +90,22 @@ type PendingAssignment struct {
 	Intent     *rootpb.Intent
 }
 
-// NewServer creates a new Matcher server with window management
+// NewServer creates a new Matcher server with default lowest-price strategy
 func NewServer(cfg *Config, logger logging.Logger) (*Server, error) {
+	return NewServerWithStrategy(cfg, logger, NewLowestPriceBidStrategy())
+}
+
+// NewServerWithStrategy creates a new Matcher server with a custom matching strategy
+// This allows advanced users to provide their own strategy implementation
+func NewServerWithStrategy(cfg *Config, logger logging.Logger, strategy BidMatchingStrategy) (*Server, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
 	if logger == nil {
 		logger = logging.NewDefaultLogger()
+	}
+	if strategy == nil {
+		strategy = NewLowestPriceBidStrategy()
 	}
 
 	// Validate configuration
@@ -191,6 +200,7 @@ func NewServer(cfg *Config, logger logging.Logger) (*Server, error) {
 		signer:                signer,
 		rootlayerClient:       rootlayerClient,
 		sdkClient:             sdkClient,
+		strategy:              strategy,
 		intents:               make(map[string]*IntentWithWindow),
 		bidsByIntent:          make(map[string][]*pb.Bid),
 		matchingResults:       make(map[string]*pb.MatchingResult),
@@ -362,20 +372,21 @@ func (s *Server) performMatching(intentID string) {
 		return
 	}
 
-	s.logger.Infof("Performing matching for intent %s with %d bids", intentID, len(bids))
+	s.logger.Infof("Performing matching for intent %s with %d bids using strategy: %s",
+		intentID, len(bids), s.strategy.Name())
 
-	// Sort bids by price (ascending)
-	sort.Slice(bids, func(i, j int) bool {
-		return bids[i].Price < bids[j].Price
-	})
+	// Use strategy to select winner and runner-ups
+	winner, runnerUps, err := s.strategy.SelectWinner(window.Intent, bids)
+	if err != nil {
+		s.logger.Errorf("Matching strategy failed for intent %s: %v", intentID, err)
+		window.Matched = true
+		return
+	}
 
-	// Select winner (lowest price)
-	winner := bids[0]
-
-	// Select runner-ups (next 2 lowest)
-	runnerUpIDs := []string{}
-	for i := 1; i < len(bids) && i < 3; i++ {
-		runnerUpIDs = append(runnerUpIDs, bids[i].BidId)
+	// Extract runner-up IDs
+	runnerUpIDs := make([]string, 0, len(runnerUps))
+	for _, bid := range runnerUps {
+		runnerUpIDs = append(runnerUpIDs, bid.BidId)
 	}
 
 	// Sign the matching result
