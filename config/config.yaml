@@ -116,8 +116,10 @@ agent:
   # Matcher configuration
   matcher:
     id: "matcher-1"  # Unique matcher ID
-    strategy: "weighted"  # Use real weighted strategy
+    strategy: "lowest_price"  # Matching strategy: "lowest_price" (default)
+    # Future strategies: "weighted", "reputation_first", "random"
     config:
+      # Strategy-specific parameters (for future weighted strategy)
       price_weight: 0.4
       reputation_weight: 0.3
       capability_weight: 0.2
