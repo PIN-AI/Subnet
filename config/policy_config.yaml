@@ -29,9 +29,10 @@ validator:
 # Matcher strategy configuration
 matcher:
   strategy:
-    type: "weighted"         # Options: price_priority, weighted, capability, load_balanced, custom
+    type: "lowest_price"     # Options: lowest_price (default)
+                             # Future: weighted, reputation_first, random
     config:
-      # Weight configuration for scoring
+      # Weight configuration for scoring (for future weighted strategy)
       price_weight: 0.4
       reputation_weight: 0.3
       capability_weight: 0.2

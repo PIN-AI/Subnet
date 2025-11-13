@@ -50,7 +50,7 @@ func DefaultConfig() *Config {
 		Limits:   config.DefaultLimitsConfig(),
 
 		// Legacy defaults
-		MatchingStrategy: "weighted",
+		MatchingStrategy: "lowest_price", // Default to lowest price strategy
 		DefaultLeaseTTL:  5 * time.Minute,
 		MinLeaseTTL:      1 * time.Minute,
 		MaxLeaseTTL:      30 * time.Minute,
@@ -131,6 +131,18 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// CreateStrategy creates a BidMatchingStrategy instance based on the configuration
+// This allows strategies to be configured via config files
+func (c *Config) CreateStrategy() (BidMatchingStrategy, error) {
+	switch c.MatchingStrategy {
+	case "lowest_price", "":
+		// Default strategy: lowest price
+		return NewLowestPriceBidStrategy(), nil
+	default:
+		return nil, fmt.Errorf("unknown matching strategy: %s (supported: lowest_price)", c.MatchingStrategy)
+	}
 }
 
 // validatePrivateKey checks if the private key is in valid format
