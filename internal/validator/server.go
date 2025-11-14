@@ -336,6 +336,46 @@ func (s *Server) GetValidatorMetrics(ctx context.Context, req *pb.GetValidatorMe
 	return metrics, nil
 }
 
+// GetExecutionReport retrieves an execution report by ID
+func (s *Server) GetExecutionReport(ctx context.Context, req *pb.GetExecutionReportRequest) (*pb.ExecutionReport, error) {
+	if req.ReportId == "" {
+		return nil, status.Error(codes.InvalidArgument, "report_id is required")
+	}
+
+	report, err := s.node.GetExecutionReportByID(req.ReportId)
+	if err != nil {
+		return nil, status.Errorf(codes.NotFound, "execution report not found: %v", err)
+	}
+
+	return report, nil
+}
+
+// ListExecutionReports retrieves execution reports, optionally filtered by intent ID
+func (s *Server) ListExecutionReports(ctx context.Context, req *pb.ListExecutionReportsRequest) (*pb.ListExecutionReportsResponse, error) {
+	limit := req.Limit
+	if limit == 0 {
+		limit = 100 // Default limit
+	}
+
+	reports, err := s.node.ListExecutionReports(req.IntentId, int(limit))
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list execution reports: %v", err)
+	}
+
+	entries := make([]*pb.ExecutionReportEntry, 0, len(reports))
+	for reportID, report := range reports {
+		entries = append(entries, &pb.ExecutionReportEntry{
+			ReportId: reportID,
+			Report:   report,
+		})
+	}
+
+	return &pb.ListExecutionReportsResponse{
+		Reports: entries,
+		Total:   uint32(len(entries)),
+	}, nil
+}
+
 // validateExecutionReport validates an execution report
 func (s *Server) validateExecutionReport(report *pb.ExecutionReport) error {
 	if report.AssignmentId == "" {

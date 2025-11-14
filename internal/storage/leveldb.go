@@ -44,6 +44,7 @@ func keyWinner(intent string) []byte        { return []byte(fmt.Sprintf("iw:%s",
 func keyVerificationRecord(intent, agent, record string) []byte {
 	return []byte(fmt.Sprintf("vr:%s:%s:%s", intent, agent, record))
 }
+func keyExecutionReport(reportID string) []byte { return []byte(fmt.Sprintf("er:%s", reportID)) }
 
 func (s *LevelDBStore) SaveHeader(h *types.CheckpointHeader) error {
 	b, err := json.Marshal(h)
@@ -247,4 +248,54 @@ func (s *LevelDBStore) ListVerificationRecords(intentID, agentID string, limit i
 		return nil, err
 	}
 	return out, nil
+}
+
+// SaveExecutionReport stores an execution report by ID
+func (s *LevelDBStore) SaveExecutionReport(reportID string, report []byte) error {
+	return s.db.Put(keyExecutionReport(reportID), report, nil)
+}
+
+// GetExecutionReport retrieves an execution report by ID
+func (s *LevelDBStore) GetExecutionReport(reportID string) ([]byte, error) {
+	data, err := s.db.Get(keyExecutionReport(reportID), nil)
+	if err == leveldb.ErrNotFound {
+		return nil, fmt.Errorf("execution report not found: %s", reportID)
+	}
+	return data, err
+}
+
+// ListExecutionReports returns all execution reports, optionally filtered by intentID
+// Note: intentID filtering requires parsing reports, which is not efficient
+// For MVP, this returns all reports when intentID is empty
+func (s *LevelDBStore) ListExecutionReports(intentID string, limit int) (map[string][]byte, error) {
+	iter := s.db.NewIterator(util.BytesPrefix([]byte("er:")), nil)
+	defer iter.Release()
+
+	result := make(map[string][]byte)
+	count := 0
+
+	for iter.Next() {
+		// Extract reportID from key (format: "er:reportID")
+		key := string(iter.Key())
+		reportID := strings.TrimPrefix(key, "er:")
+
+		// Copy the value
+		reportData := make([]byte, len(iter.Value()))
+		copy(reportData, iter.Value())
+
+		// For intentID filtering, we'd need to deserialize and check
+		// For MVP, we skip filtering by intentID (would require proto unmarshaling)
+		result[reportID] = reportData
+		count++
+
+		if limit > 0 && count >= limit {
+			break
+		}
+	}
+
+	if err := iter.Error(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }

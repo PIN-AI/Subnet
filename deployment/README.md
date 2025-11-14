@@ -137,7 +137,4 @@ Common deployment issues:
 - Check configuration files in `config/` directory
 - Ensure RootLayer endpoints are accessible
 
-For detailed troubleshooting guides, see:
-- [E2E Test Guide](../docs/e2e_test_guide.md#troubleshooting) - Consensus and service issues
-- [Subnet Deployment Guide](../docs/subnet_deployment_guide.md) - Production deployment issues
-
+For detailed troubleshooting guides, see [Subnet Deployment Guide](../docs/subnet_deployment_guide.md#troubleshooting).
