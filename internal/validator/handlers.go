@@ -50,6 +50,18 @@ func (n *Node) ProcessExecutionReport(report *pb.ExecutionReport) (*pb.Receipt, 
 	score := n.scoreReport(report)
 	n.reportScores[reportID] = score
 
+	// Persist execution report to storage
+	reportBytes, err := proto.Marshal(report)
+	if err != nil {
+		n.logger.Error("Failed to marshal execution report", "error", err, "report_id", reportID)
+	} else {
+		if err := n.store.SaveExecutionReport(reportID, reportBytes); err != nil {
+			n.logger.Error("Failed to save execution report to storage", "error", err, "report_id", reportID)
+		} else {
+			n.logger.Infof("Saved execution report to storage report_id=%s", reportID)
+		}
+	}
+
 	// Create receipt
 	receipt := &pb.Receipt{
 		ReportId:    reportID,
@@ -852,4 +864,39 @@ func (n *Node) getLeaderIDFromRaft() (string, error) {
 	}
 
 	return "", fmt.Errorf("could not map Raft leader address %s to validator ID", leaderAddr)
+}
+
+// GetExecutionReportByID retrieves an execution report by its ID from storage
+func (n *Node) GetExecutionReportByID(reportID string) (*pb.ExecutionReport, error) {
+	reportBytes, err := n.store.GetExecutionReport(reportID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get execution report: %w", err)
+	}
+
+	var report pb.ExecutionReport
+	if err := proto.Unmarshal(reportBytes, &report); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal execution report: %w", err)
+	}
+
+	return &report, nil
+}
+
+// ListExecutionReports retrieves execution reports from storage, optionally filtered by intent ID
+func (n *Node) ListExecutionReports(intentID string, limit int) (map[string]*pb.ExecutionReport, error) {
+	reportBytesMap, err := n.store.ListExecutionReports(intentID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list execution reports: %w", err)
+	}
+
+	reports := make(map[string]*pb.ExecutionReport, len(reportBytesMap))
+	for reportID, reportBytes := range reportBytesMap {
+		var report pb.ExecutionReport
+		if err := proto.Unmarshal(reportBytes, &report); err != nil {
+			n.logger.Warn("Failed to unmarshal execution report", "report_id", reportID, "error", err)
+			continue
+		}
+		reports[reportID] = &report
+	}
+
+	return reports, nil
 }

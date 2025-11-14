@@ -168,4 +168,4 @@ None expected if following these rules correctly.
 
 - [docs/consensus_modes.md](consensus_modes.md) - Consensus mode selection guide (Raft vs CometBFT)
 - [docs/architecture.md](architecture.md) - System architecture with consensus mechanisms
-- [docs/e2e_test_guide.md](e2e_test_guide.md) - E2E testing with both consensus modes
+- [docs/subnet_deployment_guide.md](subnet_deployment_guide.md) - Operational checklist and validation flow

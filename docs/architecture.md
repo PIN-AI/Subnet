@@ -157,7 +157,7 @@ Run the comprehensive E2E test:
 ./scripts/send-intent.sh
 ```
 
-See [docs/e2e_test_guide.md](e2e_test_guide.md) for detailed E2E testing workflow.
+See [docs/subnet_deployment_guide.md](subnet_deployment_guide.md#intent-execution-flow--observability) for the full E2E workflow and log guide.
 
 ### Unit Testing
 ```bash
@@ -189,7 +189,7 @@ rootlayer:
 
 ## Supporting Notes
 
-- See `docs/e2e_test_guide.md` for comprehensive E2E testing guide
+- Operational runbooks live in `docs/subnet_deployment_guide.md` (keys, testing, troubleshooting)
 - `docs/jetstream_evaluation.md` captures historical NATS JetStream evaluation (system now uses Raft+Gossip)
 - Proto files under `proto/rootlayer` and `proto/subnet` are authoritative; regenerate with `make proto` when protocol changes
-- Both Chinese (`*.zh.md`) and English documentation available in `docs/`
+- Documentation is maintained in English under `docs/`

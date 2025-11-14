@@ -473,7 +473,6 @@ See `.env.example` for details.
 - **Quick Start**: `../docs/quick_start.md`
 - **Environment Setup**: `../docs/environment_setup.md`
 - **Deployment Guide**: `../docs/subnet_deployment_guide.md`
-- **E2E Test Guide**: `../docs/e2e_test_guide.md`
 - **Development Guide**: `../CLAUDE.md`
 
 ---
