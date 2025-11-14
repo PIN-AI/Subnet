@@ -22,25 +22,15 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 ## 📚 Documentation
 
-### Quick Start
-- **[Quick Start Guide](docs/quick_start.md)** - Choose your deployment method in 3 steps (Docker recommended!)
-- **[Docker Deployment](docker/README.md)** - Production-ready 3-node cluster with Docker
-
-### Deployment & Configuration
-- **[Subnet Deployment Guide](docs/subnet_deployment_guide.md)** ([中文](docs/subnet_deployment_guide.zh.md)) - Complete deployment and customization tutorial
-  - Quick deployment with default configuration
-  - Custom matcher strategy development
-  - Custom validator verification logic
-  - Custom agent executor development
-  - Production deployment guide
-- **[Environment Setup](docs/environment_setup.md)** ([中文](docs/environment_setup.zh.md)) - Environment configuration
-- **[Scripts Guide](docs/scripts_guide.md)** ([中文](docs/scripts_guide.zh.md)) - Development and deployment scripts reference
-- **[Consensus Modes Guide](docs/consensus_modes.md)** ([中文](docs/consensus_modes.zh.md)) - Choose between Raft and CometBFT consensus
-
-### Testing & Advanced Topics
-- **[E2E Test Guide](docs/e2e_test_guide.md)** - End-to-end testing workflow
-- **[Architecture Overview](docs/architecture.md)** - Full component walkthrough and system design
-- **[JetStream Evaluation](docs/jetstream_evaluation.md)** - ⚠️ DEPRECATED: Historical NATS JetStream evaluation (system now uses Raft+Gossip)
+All documentation is now consolidated in English. Start with these entry points:
+- **[Quick Start Guide](docs/quick_start.md)** – Choose a deployment method in three steps (Docker recommended)
+- **[Docker Deployment](docker/README.md)** – Production-ready 3-node cluster using Docker Compose
+- **[Subnet Deployment Guide](docs/subnet_deployment_guide.md)** – Validator keys, manual startup, intent flow, troubleshooting, and customization in one place
+- **[Environment Setup](docs/environment_setup.md)** – Required tooling and dependency installation
+- **[Scripts Guide](docs/scripts_guide.md)** – Reference for helper scripts
+- **[Consensus Modes Guide](docs/consensus_modes.md)** – Comparison of Raft+Gossip vs CometBFT
+- **[Architecture Overview](docs/architecture.md)** – Component-level documentation
+- **[JetStream Evaluation](docs/jetstream_evaluation.md)** – Historical note on the deprecated JetStream prototype
 
 ## Layout
 
@@ -75,26 +65,71 @@ go build -o bin/simple-agent   ./cmd/simple-agent
 
 ## Running the Services
 
-Typical local loop:
+### Quick Start (Recommended)
+
+Use the automated startup script:
 
 ```bash
-# Terminal 1 – Registry
-go run ./cmd/registry --http :8092 --grpc :8091
+# Copy and configure environment
+cp .env.example .env
+# Edit .env and fill in VALIDATOR_KEYS and VALIDATOR_PUBKEYS (see the "Validator Keys" section below)
 
-# Terminal 2 – Matcher
-go run ./cmd/matcher --grpc :8090 --bidding-window 10
-
-# Terminal 3 – Validator
-go run ./cmd/validator --config config/config.yaml
-
-# Optional – Mock RootLayer for intents
-go run ./cmd/mock-rootlayer --http :9090
-
-# Optional – Demo agent (uses subnet-sdk/go internally)
-go run ./cmd/simple-agent --matcher localhost:8090 --name demo-agent
+# Start complete subnet (matcher + validators + registry)
+./scripts/start-subnet.sh
 ```
 
-Production agents should use the separate SDK repositories in `../subnet-sdk` (Go and Python implementations).
+### Manual Service Startup (Advanced)
+
+For development and debugging:
+
+```bash
+# Terminal 1 – Registry (Raft mode only)
+./bin/registry -grpc :8091 -http :8101
+
+# Terminal 2 – Matcher
+./bin/matcher -grpc :8090 -http :8091
+
+# Terminal 3 – Validator
+# Note: validator requires many parameters. See docs/subnet_deployment_guide.md for details
+./bin/validator \
+  -id validator-1 \
+  -key <your_private_key_hex> \
+  -grpc 9090 \
+  -subnet-id 0x0000000000000000000000000000000000000000000000000000000000000003 \
+  -validators 1 \
+  -threshold-num 1 \
+  -threshold-denom 1 \
+  -validator-pubkeys "validator-1:<your_public_key_hex>" \
+  -rootlayer-endpoint 3.17.208.238:9001 \
+  -enable-rootlayer
+
+# Optional – Demo agent (uses subnet-sdk/go internally)
+./bin/simple-agent -matcher localhost:8090 -subnet-id 0x... -id my-agent -name MyAgent
+```
+
+Refer to `docs/scripts_guide.md` for automation details. Production agents should use the separate SDK repositories in `../subnet-sdk` (Go and Python implementations).
+
+### Validator Keys
+
+Each validator requires an ECDSA key pair:
+
+```bash
+# Generate a 32-byte private key (hex-encoded without 0x)
+PRIVKEY=$(openssl rand -hex 32)
+
+# Derive the uncompressed public key (requires bin/derive-pubkey)
+PUBKEY=$(./bin/derive-pubkey "$PRIVKEY")
+
+echo "Private:  $PRIVKEY"
+echo "Public :  $PUBKEY"
+```
+
+Populate `.env` with comma-separated lists following the validator order:
+
+```bash
+VALIDATOR_KEYS="key1,key2,key3"
+VALIDATOR_PUBKEYS="pubkey1,pubkey2,pubkey3"
+```
 
 ### On-Chain Participant Verification
 

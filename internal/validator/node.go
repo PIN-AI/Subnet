@@ -454,6 +454,18 @@ func (n *Node) OnExecutionReportCommitted(report *pb.ExecutionReport, reportKey 
 		// Key format: intentID:assignmentID:agentID
 		intentKey := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
 		n.reportReceivedAt[intentKey] = time.Now().Unix() // Track validator reception time for FIFO
+
+		// Persist execution report to storage (Raft mode)
+		reportBytes, err := proto.Marshal(report)
+		if err != nil {
+			n.logger.Error("Failed to marshal execution report", "error", err, "report_id", reportKey)
+		} else {
+			if err := n.store.SaveExecutionReport(reportKey, reportBytes); err != nil {
+				n.logger.Error("Failed to save execution report to storage", "error", err, "report_id", reportKey)
+			} else {
+				n.logger.Infof("Saved execution report to storage report_id=%s", reportKey)
+			}
+		}
 	}
 	n.mu.Unlock()
 	n.logger.Debugf("Raft committed execution report intent=%s assignment=%s", report.IntentId, report.AssignmentId)
@@ -3022,6 +3034,18 @@ func (n *Node) handleExecutionReportCommitted(report *pb.ExecutionReport, report
 		// Key format: intentID:assignmentID:agentID
 		intentKey := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
 		n.reportReceivedAt[intentKey] = time.Now().Unix() // Track validator reception time for FIFO
+
+		// Persist execution report to storage (CometBFT mode)
+		reportBytes, err := proto.Marshal(report)
+		if err != nil {
+			n.logger.Error("Failed to marshal execution report", "error", err, "report_id", reportKey)
+		} else {
+			if err := n.store.SaveExecutionReport(reportKey, reportBytes); err != nil {
+				n.logger.Error("Failed to save execution report to storage", "error", err, "report_id", reportKey)
+			} else {
+				n.logger.Infof("Saved execution report to storage report_id=%s", reportKey)
+			}
+		}
 	}
 	n.mu.Unlock()
 	n.logger.Infof("Stored execution report from CometBFT callback intent=%s assignment=%s reportKey=%s", report.IntentId, report.AssignmentId, reportKey)

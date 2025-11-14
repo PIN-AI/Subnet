@@ -264,5 +264,5 @@ grep -i "consensus\|raft\|cometbft" subnet-logs/validator1.log | head -5
 ## Next Steps
 
 - See [Deployment Guide](subnet_deployment_guide.md) for production configuration
-- See [E2E Test Guide](e2e_test_guide.md) for testing
+- See [Subnet Deployment Guide](subnet_deployment_guide.md#intent-execution-flow--observability) for testing and validation flow
 - See [Scripts Guide](scripts_guide.md) for all available scripts
