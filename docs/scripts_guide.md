@@ -289,12 +289,12 @@ Advanced intent submission tool that implements proper EIP-191 signature creatio
 go build -o bin/submit-intent-signed scripts/submit-intent-signed.go
 
 # Submit with full configuration via environment variables
-export PIN_BASE_SEPOLIA_INTENT_MANAGER="0xD04d23775D3B8e028e6104E31eb0F6c07206EB46"
+export PIN_BASE_SEPOLIA_INTENT_MANAGER="0xB2f092E696B33b7a95e1f961369Bb59611CAd093"
 export RPC_URL="https://sepolia.base.org"
 export PRIVATE_KEY="0xYOUR_PRIVATE_KEY"
 export PIN_NETWORK="base_sepolia"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1"
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000002"
 export INTENT_TYPE="my-task"
 export PARAMS_JSON='{"task":"Process this data","priority":"high"}'
 export AMOUNT_WEI="100000000000000"
@@ -340,7 +340,7 @@ export AMOUNT_WEI="100000000000000"
 ✓ Local signature verification passed
 
 📤 Step 1: Submitting to blockchain (IntentManager)...
-   Contract: 0xD04d23775D3B8e028e6104E31eb0F6c07206EB46
+   Contract: 0xB2f092E696B33b7a95e1f961369Bb59611CAd093
    Transaction: 0x7b3f9e1d...
    ⏳ Waiting for confirmation...
    ✅ Blockchain transaction confirmed!

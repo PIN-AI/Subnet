@@ -95,6 +95,41 @@ make test        # go test ./...
 make proto       # regenerate Go protobufs from ../pin_protocol
 ```
 
+## Logs and Debugging
+
+After starting the subnet, logs are written to `./subnet-logs/`:
+
+```
+subnet-logs/
+├── matcher.log        # Intent ingestion, bid matching
+├── validator-1.log    # Consensus, validation, checkpoint
+├── validator-2.log
+├── validator-3.log
+├── registry.log       # Participant discovery
+├── agent.log          # Task execution, results
+└── rootlayer.log      # RootLayer mock (if used)
+```
+
+**View logs:**
+```bash
+# Watch all logs
+tail -f subnet-logs/*.log
+
+# Watch specific service
+tail -f subnet-logs/matcher.log
+tail -f subnet-logs/validator-1.log
+
+# Search for events
+grep "Received intent" subnet-logs/matcher.log
+grep "ValidationBundle" subnet-logs/validator-*.log
+
+# Docker logs
+docker compose logs -f
+docker compose logs -f validator-1
+```
+
+📚 **Complete debugging guide**: See [`docs/quick_start.md`](docs/quick_start.md#-log-files-and-debugging) for log patterns, tracing intents, and troubleshooting common issues.
+
 You can also build individual binaries:
 
 ```bash
@@ -132,7 +167,10 @@ For development and debugging:
 ./bin/matcher -grpc :8090 -http :8091
 
 # Terminal 3 – Validator
-# Note: validator requires many parameters. See docs/subnet_deployment_guide.md for details
+# Option 1: Use config file (single-node only)
+./bin/validator -config config/config.yaml -id validator-1 -key <your_private_key_hex>
+
+# Option 2: Use command-line parameters only
 ./bin/validator \
   -id validator-1 \
   -key <your_private_key_hex> \
@@ -145,6 +183,13 @@ For development and debugging:
   -rootlayer-endpoint 3.17.208.238:9001 \
   -enable-rootlayer
 
+# IMPORTANT for multi-node deployment:
+# - Do NOT use config file for multiple validators (port conflicts)
+# - Use ./scripts/start-subnet.sh which automatically handles port allocation
+# - Or create separate config files (config/validator-1.yaml, validator-2.yaml, etc.)
+#
+# Note: Command-line parameters override config file values
+
 # Optional – Demo agent (uses subnet-sdk/go internally)
 ./bin/simple-agent -matcher localhost:8090 -subnet-id 0x... -id my-agent -name MyAgent
 ```
@@ -153,25 +198,64 @@ Refer to `docs/scripts_guide.md` for automation details. Production agents shoul
 
 ### Validator Keys
 
-Each validator requires an ECDSA key pair:
+Each validator requires an ECDSA key pair for signing consensus messages:
+- **Private key**: 64 hexadecimal characters (kept secret, used for signing)
+- **Public key**: 130 hexadecimal characters starting with `04` (shared with other validators)
+
+**Generate keys for 3 validators:**
 
 ```bash
-# Generate a 32-byte private key (hex-encoded without 0x)
-PRIVKEY=$(openssl rand -hex 32)
+# 1. Build the derive-pubkey tool (if not already built)
+make build
 
-# Derive the uncompressed public key (requires bin/derive-pubkey)
-PUBKEY=$(./bin/derive-pubkey "$PRIVKEY")
+# 2. Generate private keys
+PRIVKEY1=$(openssl rand -hex 32)
+PRIVKEY2=$(openssl rand -hex 32)
+PRIVKEY3=$(openssl rand -hex 32)
 
-echo "Private:  $PRIVKEY"
-echo "Public :  $PUBKEY"
+# 3. Derive public keys from private keys
+PUBKEY1=$(./bin/derive-pubkey "$PRIVKEY1")
+PUBKEY2=$(./bin/derive-pubkey "$PRIVKEY2")
+PUBKEY3=$(./bin/derive-pubkey "$PRIVKEY3")
+
+# 4. Display for verification
+echo "Validator 1:"
+echo "  Private: $PRIVKEY1"
+echo "  Public:  $PUBKEY1"
+echo ""
+echo "Validator 2:"
+echo "  Private: $PRIVKEY2"
+echo "  Public:  $PUBKEY2"
+echo ""
+echo "Validator 3:"
+echo "  Private: $PRIVKEY3"
+echo "  Public:  $PUBKEY3"
 ```
 
-Populate `.env` with comma-separated lists following the validator order:
+**Populate `.env` with comma-separated lists:**
 
 ```bash
-VALIDATOR_KEYS="key1,key2,key3"
-VALIDATOR_PUBKEYS="pubkey1,pubkey2,pubkey3"
+VALIDATOR_KEYS="$PRIVKEY1,$PRIVKEY2,$PRIVKEY3"
+VALIDATOR_PUBKEYS="$PUBKEY1,$PUBKEY2,$PUBKEY3"
 ```
+
+**Key Format Requirements:**
+- ✅ Private key: Exactly 64 hex characters (0-9, a-f)
+- ✅ Public key: Exactly 130 hex characters starting with `04`
+- ✅ No `0x` prefix needed
+- ✅ Keys must match the order: first private key → first public key
+
+**Troubleshooting:**
+- "derive-pubkey: command not found" → Run `make build` first
+- "Error decoding private key" → Check private key is exactly 64 hex characters
+- Keys don't work → Ensure VALIDATOR_KEYS and VALIDATOR_PUBKEYS are in the same order
+
+**Security:**
+- ⚠️ Use test-only keys with NO real funds
+- ⚠️ Never commit `.env` to git (already in `.gitignore`)
+- ⚠️ Each validator must have a unique private key
+
+📚 See [`docs/quick_start.md`](docs/quick_start.md) for complete key generation walkthrough.
 
 ### On-Chain Participant Verification
 

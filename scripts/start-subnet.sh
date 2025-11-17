@@ -48,15 +48,16 @@ echo ""
 CONSENSUS_TYPE="${CONSENSUS_TYPE:-raft}"
 
 # Default Subnet configuration (can be overridden per-validator)
-DEFAULT_SUBNET_ID="${SUBNET_ID:-0x0000000000000000000000000000000000000000000000000000000000000003}"
+DEFAULT_SUBNET_ID="${SUBNET_ID:-0x0000000000000000000000000000000000000000000000000000000000000002}"
 ROOTLAYER_GRPC="${ROOTLAYER_GRPC:-3.17.208.238:9001}"
-ROOTLAYER_HTTP="${ROOTLAYER_HTTP:-http://3.17.208.238:8081}"
+ROOTLAYER_HTTP="${ROOTLAYER_HTTP:-http://3.17.208.238:8081/api/v1}"
 
 # Blockchain configuration
 ENABLE_CHAIN_SUBMIT="${ENABLE_CHAIN_SUBMIT:-true}"
 CHAIN_RPC_URL="${CHAIN_RPC_URL:-https://sepolia.base.org}"
 CHAIN_NETWORK="${CHAIN_NETWORK:-base_sepolia}"
-INTENT_MANAGER_ADDR="${INTENT_MANAGER_ADDR:-0xD04d23775D3B8e028e6104E31eb0F6c07206EB46}"
+# Read from PIN_BASE_SEPOLIA_INTENT_MANAGER (matching .env.example) or fall back to INTENT_MANAGER_ADDR for backward compatibility
+INTENT_MANAGER_ADDR="${PIN_BASE_SEPOLIA_INTENT_MANAGER:-${INTENT_MANAGER_ADDR:-0xB2f092E696B33b7a95e1f961369Bb59611CAd093}}"
 
 # Number of validators to start
 NUM_VALIDATORS="${NUM_VALIDATORS:-3}"
@@ -359,6 +360,7 @@ if [ "$CONSENSUS_TYPE" = "raft" ]; then
     for i in $(seq 1 $NUM_VALIDATORS); do
         VALIDATOR_ID="validator-$i"
         GRPC_PORT=$((9090 + (i-1) * 10))
+        METRICS_PORT=$((9095 + (i-1) * 10))
         RAFT_PORT=$((7400 + (i-1) * 10))
         GOSSIP_PORT=$((7950 + (i-1) * 10))
         VALIDATOR_KEY="${KEYS_ARRAY[$i-1]}"
@@ -369,6 +371,7 @@ if [ "$CONSENSUS_TYPE" = "raft" ]; then
         "$PROJECT_ROOT/bin/validator" \
             -id "$VALIDATOR_ID" \
             -grpc $GRPC_PORT \
+            -metrics $METRICS_PORT \
             -subnet-id "$VALIDATOR_SUBNET_ID" \
             -key "$VALIDATOR_KEY" \
             -storage "$LOGS_DIR/val${i}-storage" \
@@ -400,7 +403,7 @@ if [ "$CONSENSUS_TYPE" = "raft" ]; then
         sleep 2
 
         if kill -0 $VALIDATOR_PID 2>/dev/null; then
-            print_success "$VALIDATOR_ID started (PID: $VALIDATOR_PID, Subnet: $VALIDATOR_SUBNET_ID, gRPC: $GRPC_PORT)"
+            print_success "$VALIDATOR_ID started (PID: $VALIDATOR_PID, Subnet: $VALIDATOR_SUBNET_ID, gRPC: $GRPC_PORT, Metrics: $METRICS_PORT)"
         else
             print_error "$VALIDATOR_ID failed to start"
             cat "$LOGS_DIR/validator-$i.log"
@@ -444,8 +447,10 @@ else
     for i in $(seq 1 $NUM_VALIDATORS); do
         VALIDATOR_ID="validator_$i"
         GRPC_PORT=$((9090 + (i-1) * 10))
+        METRICS_PORT=$((9095 + (i-1) * 10))
         P2P_PORT=$((26656 + (i-1) * 10))
         RPC_PORT=$((26657 + (i-1) * 10))
+        PROXY_PORT=$((26658 + (i-1) * 10))
         VALIDATOR_KEY="${KEYS_ARRAY[$i-1]}"
         VALIDATOR_SUBNET_ID="${SUBNET_IDS_ARRAY[$i-1]}"
 
@@ -479,6 +484,7 @@ else
             --subnet-id="$VALIDATOR_SUBNET_ID" \
             --key="$VALIDATOR_KEY" \
             --grpc=$GRPC_PORT \
+            --metrics=$METRICS_PORT \
             --storage="$COMETBFT_DIR/validator${i}/storage" \
             --registry-grpc="" \
             --registry-http="" \
@@ -489,6 +495,7 @@ else
             --cometbft-moniker="$VALIDATOR_ID" \
             --cometbft-p2p-port=$P2P_PORT \
             --cometbft-rpc-port=$RPC_PORT \
+            --cometbft-proxy-port=$PROXY_PORT \
             --cometbft-persistent-peers="$PEERS" \
             --validators=$NUM_VALIDATORS \
             --threshold-num=2 \
@@ -504,7 +511,7 @@ else
         sleep 2
 
         if kill -0 $VALIDATOR_PID 2>/dev/null; then
-            print_success "$VALIDATOR_ID started (PID: $VALIDATOR_PID, Subnet: $VALIDATOR_SUBNET_ID, gRPC: $GRPC_PORT, P2P: $P2P_PORT)"
+            print_success "$VALIDATOR_ID started (PID: $VALIDATOR_PID, Subnet: $VALIDATOR_SUBNET_ID, gRPC: $GRPC_PORT, Metrics: $METRICS_PORT, P2P: $P2P_PORT)"
         else
             print_error "$VALIDATOR_ID failed to start"
             cat "$LOGS_DIR/validator${i}.log"

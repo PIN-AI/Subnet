@@ -30,6 +30,10 @@ subnet-logs/
 .env.local
 .env.*.local
 
+# Subnet info files (contain subnet IDs and contract addresses)
+subnet-info-*.txt
+subnets/
+
 # IDE and OS
 .gocache
 .DS_Store
