@@ -381,11 +381,11 @@ For testing on Base Sepolia:
 ```bash
 # Set RootLayer endpoints (example - adjust for your deployment)
 export ROOTLAYER_GRPC="3.17.208.238:9001"
-export ROOTLAYER_HTTP="http://3.17.208.238:8081"
+export ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1"
 
 # Or add to your .env file
 echo "ROOTLAYER_GRPC=3.17.208.238:9001" >> .env
-echo "ROOTLAYER_HTTP=http://3.17.208.238:8081" >> .env
+echo "ROOTLAYER_HTTP=http://3.17.208.238:8081/api/v1" >> .env
 ```
 
 ### 3. Create Configuration File
@@ -412,7 +412,7 @@ network:
   matcher_grpc_port: ":8090"
 
 rootlayer:
-  http_url: "http://3.17.208.238:8081"
+  http_url: "http://3.17.208.238:8081/api/v1"
   grpc_endpoint: "3.17.208.238:9001"
 
 blockchain:
@@ -463,7 +463,7 @@ go mod tidy
 # Set required environment variables
 export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
-export ROOTLAYER_HTTP="http://3.17.208.238:8081"
+export ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1"
 
 # Run E2E test (non-interactive mode)
 ./scripts/start-subnet.sh --no-interactive
