@@ -50,8 +50,8 @@ func main() {
 		gossipPort   = flag.Int("gossip-port", 7946, "Gossip port")
 		gossipSeeds  = flag.String("gossip-seeds", "", "Comma-separated list of seed nodes (e.g. '127.0.0.1:6001,127.0.0.1:6002')")
 
-		// Consensus type selection
-		consensusType = flag.String("consensus-type", "raft-gossip", "Consensus engine type: 'raft-gossip' or 'cometbft'")
+		// Consensus type selection (user-facing values: raft, cometbft)
+		consensusTypeFlag = flag.String("consensus-type", "raft", "Consensus engine type: 'raft' or 'cometbft'")
 
 		// CometBFT configuration
 		cometbftHome             = flag.String("cometbft-home", "./cometbft-data", "CometBFT home directory")
@@ -84,7 +84,7 @@ func main() {
 		enableRootlayer   = flag.Bool("enable-rootlayer", false, "Enable ValidationBundle submission to RootLayer")
 
 		// Subnet configuration
-		subnetID = flag.String("subnet-id", "0x1111111111111111111111111111111111111111111111111111111111111111", "Subnet ID (32-byte hex string)")
+		subnetID = flag.String("subnet-id", "0x0000000000000000000000000000000000000000000000000000000000000003", "Subnet ID (32-byte hex string)")
 
 		// Blockchain configuration for ValidationBundle signing
 		enableChainSubmit = flag.Bool("enable-chain-submit", false, "Enable on-chain ValidationBundle submission")
@@ -93,6 +93,17 @@ func main() {
 		intentManagerAddr = flag.String("intent-manager-addr", "", "IntentManager contract address")
 	)
 	flag.Parse()
+
+	consensusType := *consensusTypeFlag
+	switch consensusType {
+	case "raft":
+		consensusType = "raft-gossip"
+	case "raft-gossip":
+		// legacy name still accepted
+	case "cometbft":
+	default:
+		log.Fatalf("Invalid consensus type: %s (must be 'raft' or 'cometbft')", consensusType)
+	}
 
 	if *registryEndpoint == "" {
 		port := *metricsPort
@@ -116,13 +127,8 @@ func main() {
 		fmt.Printf("Generated new private key: %s\n", *privateKey)
 	}
 
-	// Validate consensus type and required configuration
-	if *consensusType != "raft-gossip" && *consensusType != "cometbft" {
-		log.Fatalf("Invalid consensus type: %s (must be 'raft-gossip' or 'cometbft')", *consensusType)
-	}
-
 	// Set CometBFT defaults
-	if *consensusType == "cometbft" {
+	if consensusType == "cometbft" {
 		// Set default moniker to validator ID if not specified
 		if *cometbftMoniker == "" {
 			*cometbftMoniker = *validatorID
@@ -133,7 +139,7 @@ func main() {
 
 	// Setup logger
 	logger := logging.NewDefaultLogger()
-	if *consensusType == "cometbft" {
+	if consensusType == "cometbft" {
 		logger.Info("Starting validator node",
 			"id", *validatorID,
 			"grpc_port", *grpcPort,
@@ -210,7 +216,7 @@ func main() {
 
 		// CometBFT consensus configuration
 		CometBFT: &validator.CometBFTConfig{
-			Enable:            *consensusType == "cometbft",
+			Enable:            consensusType == "cometbft",
 			HomeDir:           *cometbftHome,
 			Moniker:           *cometbftMoniker,
 			ChainID:           "", // Will be auto-generated from subnet ID (shortened to meet 50-char limit)
@@ -226,7 +232,7 @@ func main() {
 		},
 
 		// Consensus type selection
-		ConsensusType: *consensusType,
+		ConsensusType: consensusType,
 
 		// Validator endpoints mapping for execution report forwarding
 		ValidatorEndpoints: parseValidatorEndpoints(*validatorEndpoints),

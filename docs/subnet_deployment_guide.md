@@ -1,5 +1,27 @@
 # Subnet Complete Deployment and Custom Development Guide
 
+**📍 You are here:** First-Time Setup → Subnet Deployment Guide (Advanced)
+
+**Prerequisites:**
+- Completed [Quick Start](quick_start.md) and chose manual deployment
+- Completed [Environment Setup](environment_setup.md)
+
+**Time to complete:** ~30 minutes (deployment + verification)
+
+**What you'll learn:**
+- Generate and manage validator keys
+- Manually start matcher, validators, and registry
+- Understand the complete intent execution flow
+- Customize matcher strategies and validator logic
+- Deploy to production with best practices
+
+**Next steps after this guide:**
+- ✅ Verify deployment → [Intent Execution Flow](#intent-execution-flow--observability)
+- 🔧 Customize → [Custom Development Guide](#custom-development-guide)
+- 🏭 Production → [Production Deployment](#production-deployment)
+
+---
+
 ## Table of Contents
 
 1. [Overview](#overview)
@@ -75,7 +97,7 @@ Each validator signs execution reports and ValidationBundles with an ECDSA key p
 openssl rand -hex 32
 
 # Derive public key using helper binary
-go build -o bin/derive-pubkey ./cmd/derive-pubkey
+go build -o bin/derive-pubkey scripts/derive-pubkey.go
 ./bin/derive-pubkey <private_key_hex>
 ```
 
@@ -359,7 +381,7 @@ If you see “transaction success” but no data, check the agent log for execut
 
 ### Agent Executor Customization
 
-- Use the official SDKs in `../subnet-sdk/go` or `../subnet-sdk/python` as a starting point. The demo `cmd/simple-agent` shows how to subscribe, bid, execute, and submit reports.
+- Use the official SDKs in the [PIN-AI subnet-sdk repo](https://github.com/PIN-AI/subnet-sdk) (`go/`, `python/`) as a starting point. The demo `cmd/simple-agent` shows how to subscribe, bid, execute, and submit reports.
 - Embed metadata (price, region, capability) in `pb.Bid.Metadata` so custom matcher strategies can reason about them.
 - Persist execution outputs and metadata long enough to retry submissions in case the validator connection drops.
 

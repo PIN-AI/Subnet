@@ -2,7 +2,7 @@
 # WARNING: This configuration uses real implementations.
 # For production use, ensure all security settings are properly configured.
 
-subnet_id: "0x1111111111111111111111111111111111111111111111111111111111111111"
+subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
 
 # Timeout configurations (new unified config)
 timeouts:
@@ -53,7 +53,7 @@ network:
 
 # Identity configuration (new unified config)
 identity:
-  subnet_id: "0x1111111111111111111111111111111111111111111111111111111111111111"
+  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
   validator_id: "validator-1"
   matcher_id: "matcher-1"
   agent_id: "agent-1"

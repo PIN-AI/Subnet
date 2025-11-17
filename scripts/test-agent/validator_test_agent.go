@@ -19,7 +19,7 @@ func main() {
 	validatorAddr := flag.String("validator", "localhost:9090", "Validator gRPC address")
 	agentID := flag.String("agent-id", "test-agent-validator", "Agent ID")
 	agentChainAddress := flag.String("chain-address", "0xfc5A111b714547fc2D1D796EAAbb68264ed4A132", "Agent blockchain address")
-	subnetID := flag.String("subnet-id", "0x1111111111111111111111111111111111111111111111111111111111111111", "Subnet ID to subscribe to")
+	subnetID := flag.String("subnet-id", "0x0000000000000000000000000000000000000000000000000000000000000003", "Subnet ID to subscribe to")
 	flag.Parse()
 
 	log.Printf("Starting validator test agent: %s", *agentID)
@@ -94,11 +94,11 @@ func main() {
 				ReportId:     fmt.Sprintf("report-%s-%d", *agentID, time.Now().Unix()),
 				AssignmentId: task.TaskId,
 				IntentId:     task.IntentId,
-				AgentId:      *agentChainAddress,  // Use chain address for RootLayer compatibility
+				AgentId:      *agentChainAddress, // Use chain address for RootLayer compatibility
 				Status:       pb.ExecutionReport_SUCCESS,
 				ResultData:   []byte(resultData),
 				Timestamp:    time.Now().Unix(),
-				Evidence:     nil, // In production would include verification evidence
+				Evidence:     nil,      // In production would include verification evidence
 				Signature:    []byte{}, // In production would sign the report
 			}
 
@@ -168,11 +168,11 @@ func main() {
 			BidId:       bidID,
 			IntentId:    intentID,
 			AgentId:     *agentID,
-			Price:       100,  // uint64
+			Price:       100, // uint64
 			Token:       "PIN",
 			SubmittedAt: time.Now().Unix(),
 			Metadata: map[string]string{
-				"chain_address": *agentChainAddress,  // Agent's blockchain address
+				"chain_address": *agentChainAddress, // Agent's blockchain address
 			},
 		}
 
