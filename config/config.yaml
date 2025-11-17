@@ -2,7 +2,8 @@
 # WARNING: This configuration uses real implementations.
 # For production use, ensure all security settings are properly configured.
 
-subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
+# Replace with your actual subnet ID
+subnet_id: "YOUR_SUBNET_ID_HERE"
 
 # Timeout configurations (new unified config)
 timeouts:
@@ -53,7 +54,7 @@ network:
 
 # Identity configuration (new unified config)
 identity:
-  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
+  subnet_id: "YOUR_SUBNET_ID_HERE"  # Replace with your actual subnet ID
   validator_id: "validator-1"
   matcher_id: "matcher-1"
   agent_id: "agent-1"
@@ -202,7 +203,7 @@ tls:
 # RootLayer configuration
 rootlayer:
   # HTTP API endpoint for RootLayer
-  http_url: "http://3.17.208.238:8081/api"
+  http_url: "http://3.17.208.238:8081/api/v1"
 
   # WebSocket endpoint for real-time subscriptions
   ws_url: "ws://3.17.208.238:8081/ws"

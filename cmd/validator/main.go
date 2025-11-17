@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 
 	"subnet/internal/blockchain"
+	"subnet/internal/config"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/registry"
@@ -23,6 +24,9 @@ import (
 )
 
 func main() {
+	// Configuration file flag (must be defined first)
+	configFile := flag.String("config", "", "Path to config file (YAML)")
+
 	var (
 		validatorID      = flag.String("id", "", "Validator ID")
 		privateKey       = flag.String("key", "", "Private key hex (without 0x)")
@@ -93,6 +97,50 @@ func main() {
 		intentManagerAddr = flag.String("intent-manager-addr", "", "IntentManager contract address")
 	)
 	flag.Parse()
+
+	// Load configuration file if specified
+	var cfg *config.AppConfig
+	if *configFile != "" {
+		var err error
+		cfg, err = config.Load(*configFile)
+		if err != nil {
+			log.Fatalf("Failed to load config file %s: %v", *configFile, err)
+		}
+
+		// Apply config file defaults (only if not set via command line)
+		if *validatorID == "" && cfg.Identity.ValidatorID != "" {
+			*validatorID = cfg.Identity.ValidatorID
+		}
+		if *subnetID == "0x0000000000000000000000000000000000000000000000000000000000000003" && cfg.SubnetID != "" {
+			*subnetID = cfg.SubnetID
+		}
+		if *storagePath == "./data" && cfg.Storage.LevelDBPath != "" {
+			*storagePath = cfg.Storage.LevelDBPath
+		}
+		if *validatorCount == 4 && cfg.ValidatorSet.MinValidators > 0 {
+			*validatorCount = cfg.ValidatorSet.MinValidators
+		}
+		if *thresholdNum == 3 && cfg.ValidatorSet.ThresholdNum > 0 {
+			*thresholdNum = cfg.ValidatorSet.ThresholdNum
+		}
+		if *thresholdDenom == 4 && cfg.ValidatorSet.ThresholdDenom > 0 {
+			*thresholdDenom = cfg.ValidatorSet.ThresholdDenom
+		}
+		if *rootlayerEndpoint == "" && cfg.RootLayer.GRPCAddr != "" {
+			*rootlayerEndpoint = cfg.RootLayer.GRPCAddr
+		}
+		if cfg.Blockchain != nil && cfg.Blockchain.Enabled {
+			if !*chainEnabled {
+				*chainEnabled = true
+			}
+			if *chainRPCURL == "" && cfg.Blockchain.RPCURL != "" {
+				*chainRPCURL = cfg.Blockchain.RPCURL
+			}
+			if *subnetContract == "" && cfg.Blockchain.SubnetContract != "" {
+				*subnetContract = cfg.Blockchain.SubnetContract
+			}
+		}
+	}
 
 	consensusType := *consensusTypeFlag
 	switch consensusType {
