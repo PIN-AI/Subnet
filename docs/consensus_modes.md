@@ -37,13 +37,15 @@ export CONSENSUS_TYPE="cometbft"
 
 **Tip**: You can also set `CONSENSUS_TYPE` in your `.env` file for persistent configuration.
 
+> Internally the validator refers to this mode as `raft-gossip`, but CLI flags and scripts always use the shorter `raft` value. Both strings are accepted for backward compatibility.
+
 ## Detailed Configuration
 
 ### Raft Mode Configuration
 
 ```bash
 # Environment variables
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000009"
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
 export CONSENSUS_TYPE="raft"
@@ -61,15 +63,15 @@ export START_AGENT=true
 - Suitable for development environments
 
 **Port Assignment (3 validators):**
-- Validator 1: gRPC=9090, Raft=7400
-- Validator 2: gRPC=9100, Raft=7401
-- Validator 3: gRPC=9110, Raft=7402
+- Validator 1: gRPC=9090, Raft=7000, Gossip=7946
+- Validator 2: gRPC=9100, Raft=7010, Gossip=7956
+- Validator 3: gRPC=9110, Raft=7020, Gossip=7966
 
 ### CometBFT Mode Configuration
 
 ```bash
 # Environment variables
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000009"
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
 export CONSENSUS_TYPE="cometbft"

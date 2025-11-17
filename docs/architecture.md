@@ -21,7 +21,7 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
    - Tracks pending assignments and runner-up fallback logic
 
 2. **Agent (external SDK)**
-   - Operators run agents via the published SDK (`subnet-sdk/go`, `subnet-sdk/python`)
+- Operators run agents via the published SDK ([`subnet-sdk/go`](https://github.com/PIN-AI/subnet-sdk/tree/main/go), [`subnet-sdk/python`](https://github.com/PIN-AI/subnet-sdk/tree/main/python))
    - Agents register with the registry service, subscribe to matcher tasks
    - Execute workloads with custom business logic
    - Submit execution reports to validators via gRPC
@@ -109,7 +109,7 @@ For iterative work you can also run `go test ./...` or build specific binaries f
 - **RootLayer Connectivity**: Matcher and validator require connectivity to RootLayer endpoints (gRPC: `3.17.208.238:9001`, HTTP: `http://3.17.208.238:8081`)
 - **Batch Operations**: Both Matcher and Validator use `CompleteClient` for batch submission support
 - **Dual Submission**: Validators can submit to both blockchain (Base Sepolia) and RootLayer simultaneously
-- **Agent SDK**: Production agents should use `/subnet-sdk` (Go/Python); `cmd/simple-agent` is for demo only
+- **Agent SDK**: Production agents should use the external repo [`PIN-AI/subnet-sdk`](https://github.com/PIN-AI/subnet-sdk) (Go/Python); `cmd/simple-agent` is for demo only
 
 ## Batch Submission Flow
 
@@ -190,6 +190,6 @@ rootlayer:
 ## Supporting Notes
 
 - Operational runbooks live in `docs/subnet_deployment_guide.md` (keys, testing, troubleshooting)
-- `docs/jetstream_evaluation.md` captures historical NATS JetStream evaluation (system now uses Raft+Gossip)
+- **Historical Note**: System previously evaluated NATS JetStream for messaging but now uses Raft+Gossip for consensus
 - Proto files under `proto/rootlayer` and `proto/subnet` are authoritative; regenerate with `make proto` when protocol changes
 - Documentation is maintained in English under `docs/`

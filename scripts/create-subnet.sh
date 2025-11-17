@@ -8,6 +8,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Load .env file if it exists
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    echo "Loading environment from .env file..."
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+    echo "✓ .env file loaded"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,6 +30,13 @@ RPC_URL="${RPC_URL:-https://sepolia.base.org}"
 PRIVATE_KEY="${PRIVATE_KEY}"
 SUBNET_NAME="${SUBNET_NAME:-My Test Subnet}"
 AUTO_APPROVE="${AUTO_APPROVE:-true}"
+
+# Fixed smart contract addresses for Base Sepolia (updated 2025-11-03)
+# These are protocol-wide addresses, same for all users
+export PIN_BASE_SEPOLIA_INTENT_MANAGER="${PIN_BASE_SEPOLIA_INTENT_MANAGER:-0xB2f092E696B33b7a95e1f961369Bb59611CAd093}"
+export PIN_BASE_SEPOLIA_SUBNET_FACTORY="${PIN_BASE_SEPOLIA_SUBNET_FACTORY:-0x2b5D7032297Df52ADEd7020c3B825f048Cd2df3E}"
+export PIN_BASE_SEPOLIA_STAKING_MANAGER="${PIN_BASE_SEPOLIA_STAKING_MANAGER:-0x7f887e88014e3AF57526B68b431bA16e6968C015}"
+export PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER="${PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER:-0x6A61BA20D910576A6c0B39175A6CF98358bB4008}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do

@@ -1,5 +1,24 @@
 # 🐳 Docker Deployment - 3 Steps to Launch!
 
+**📍 You are here:** First-Time Setup → Docker Deployment (Recommended)
+
+**Prerequisites:**
+- Completed [Environment Setup](../docs/environment_setup.md) - Docker installed
+- Have subnet registration info (Subnet ID, validator keys)
+
+**Time to complete:** ~5 minutes
+
+**What you'll learn:**
+- Deploy 3-node validator cluster with Docker Compose
+- Configure environment variables
+- Verify deployment and monitor logs
+
+**Next steps:**
+- ✅ After deployment → [Verify Intent Flow](../docs/subnet_deployment_guide.md#intent-execution-flow--observability)
+- 🔧 Customize → [Development Guide](../docs/subnet_deployment_guide.md#custom-development-guide)
+
+---
+
 The simplest deployment method, 3-node Raft cluster by default, just 3 commands!
 
 ---

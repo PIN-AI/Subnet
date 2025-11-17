@@ -22,15 +22,57 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 ## 📚 Documentation
 
-All documentation is now consolidated in English. Start with these entry points:
-- **[Quick Start Guide](docs/quick_start.md)** – Choose a deployment method in three steps (Docker recommended)
-- **[Docker Deployment](docker/README.md)** – Production-ready 3-node cluster using Docker Compose
-- **[Subnet Deployment Guide](docs/subnet_deployment_guide.md)** – Validator keys, manual startup, intent flow, troubleshooting, and customization in one place
-- **[Environment Setup](docs/environment_setup.md)** – Required tooling and dependency installation
-- **[Scripts Guide](docs/scripts_guide.md)** – Reference for helper scripts
-- **[Consensus Modes Guide](docs/consensus_modes.md)** – Comparison of Raft+Gossip vs CometBFT
-- **[Architecture Overview](docs/architecture.md)** – Component-level documentation
-- **[JetStream Evaluation](docs/jetstream_evaluation.md)** – Historical note on the deprecated JetStream prototype
+**Choose your path:** New users start with First-Time Setup. Developers and operators can jump directly to relevant sections below.
+
+> ℹ️ **Contract Address Update (2025-11-03):** Base Sepolia addresses were refreshed. Use values from `.env.example` or `deployment/env.template` to avoid deprecated contracts.
+
+---
+
+### 🚀 First-Time Setup (Essential, ~20 min)
+
+1. **[Quick Start](docs/quick_start.md)** – Choose deployment method + registration workflow
+2. **[Environment Setup](docs/environment_setup.md)** – Install Go, Docker, dependencies
+3. **Deploy** (pick one):
+   - ⭐ **Recommended**: [Docker Deployment](docker/README.md) – 3-node cluster in 5 minutes
+   - 🔧 **Advanced**: [Subnet Deployment Guide](docs/subnet_deployment_guide.md) – Manual setup with full control
+
+> ✅ **After deployment**, continue with "Verify & Monitor" below to understand the execution flow.
+
+---
+
+### 🔍 Verify & Monitor (After Deployment)
+
+- **[Intent Execution Flow](docs/subnet_deployment_guide.md#intent-execution-flow--observability)** – How intents flow through the system
+- **[Troubleshooting](docs/subnet_deployment_guide.md#troubleshooting)** – Common issues and solutions
+- **[Scripts Guide](docs/scripts_guide.md)** – Helper scripts reference
+
+---
+
+### 🔧 Customize & Develop
+
+**Understanding the System:**
+- [Architecture Overview](docs/architecture.md) – Component design and data flow
+- [Consensus Modes](docs/consensus_modes.md) – Raft+Gossip vs CometBFT comparison
+- [Consensus Data Format](docs/consensus_data_format_compatibility.md) – Internal data structures
+
+**Customization Guides:**
+- [Matcher Strategy](docs/subnet_deployment_guide.md#matcher-strategy-customization) – Custom bid matching logic
+- [Validator Logic](docs/subnet_deployment_guide.md#validator-logic-customization) – Custom validation rules
+- [Agent SDK](https://github.com/PIN-AI/subnet-sdk) – Build agents using the Go/Python SDKs (separate repository)
+
+---
+
+### 🏭 Production & Operations
+
+- [Production Deployment](docs/subnet_deployment_guide.md#production-deployment) – Best practices and checklists
+- [Deployment Playbook](deployment/README.md) – Operations runbook
+- [Security Notes](#security-notes) – Security checklist (see below)
+
+---
+
+### 📁 Reference & History
+
+- [Analysis Reports](analysis-reports/README.md) – Codebase analysis and exploration summaries
 
 ## Layout
 
@@ -38,11 +80,11 @@ All documentation is now consolidated in English. Start with these entry points:
 - `cmd/validator` – validator node receiving execution reports and broadcasting signatures
 - `cmd/registry` – lightweight discovery service for agents and validators
 - `cmd/mock-rootlayer` – mock RootLayer for local intent generation
-- `cmd/simple-agent` – demo agent built on the Go SDK (production agents should live in `../subnet-sdk`)
+- `cmd/simple-agent` – demo agent built on the Go SDK (production agents should live in the [Agent SDK repo](https://github.com/PIN-AI/subnet-sdk))
 - `internal/` – shared packages (matcher, validator, consensus FSM, rootlayer client, storage, grpc interceptors, logging, metrics, messaging, types, crypto)
 - `proto/` – generated protobufs for subnet and rootlayer APIs
 - `config/` – sample validator configuration (`config.yaml`)
-- `docs/` – curated documentation (`architecture.md`, `jetstream_evaluation.md`)
+- `docs/` – comprehensive documentation (guides, architecture, troubleshooting)
 
 ## Build & Test
 
@@ -107,7 +149,7 @@ For development and debugging:
 ./bin/simple-agent -matcher localhost:8090 -subnet-id 0x... -id my-agent -name MyAgent
 ```
 
-Refer to `docs/scripts_guide.md` for automation details. Production agents should use the separate SDK repositories in `../subnet-sdk` (Go and Python implementations).
+Refer to `docs/scripts_guide.md` for automation details. Production agents should use the separate SDK repositories at https://github.com/PIN-AI/subnet-sdk (Go and Python implementations).
 
 ### Validator Keys
 
