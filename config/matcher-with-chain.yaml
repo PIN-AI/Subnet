@@ -4,7 +4,7 @@
 # Identity configuration
 identity:
   matcher_id: "matcher-prod-001"
-  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
+  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
 
 # Matcher private key for signing (REQUIRED)
 # This key will be used to sign both RootLayer submissions and on-chain transactions

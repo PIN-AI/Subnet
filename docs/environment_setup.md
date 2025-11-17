@@ -1,5 +1,21 @@
 # Environment Setup Guide
 
+**📍 You are here:** First-Time Setup → Environment Setup
+
+**Prerequisites:** None (this is step 2 of first-time setup)
+
+**Time to complete:** ~10 minutes
+
+**What you'll learn:**
+- Install Go 1.24+
+- Install Docker & Docker Compose
+- Install required tools (openssl, protoc, make)
+
+**Next steps:**
+- ✅ After setup → Choose deployment: [Docker](../docker/README.md) or [Manual](subnet_deployment_guide.md)
+
+---
+
 Complete guide for setting up your development environment for PinAI Subnet.
 
 ## Table of Contents
@@ -386,11 +402,11 @@ vim config/config.yaml
 
 **Minimal config/config.yaml**:
 ```yaml
-subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
+subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
 
 identity:
   matcher_id: "matcher-001"
-  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
+  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
 
 network:
   matcher_grpc_port: ":8090"
@@ -445,7 +461,7 @@ go mod tidy
 
 ```bash
 # Set required environment variables
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000002"
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081"
 

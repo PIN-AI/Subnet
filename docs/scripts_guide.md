@@ -274,111 +274,7 @@ Returns the uncompressed public key in hexadecimal format (130 characters, 65 by
 
 ---
 
-### 5. e2e-test.sh
-
-**Purpose**: Complete end-to-end integration test for the entire Subnet flow
-
-**Location**: `scripts/e2e-test.sh`
-
-**Description**:
-Comprehensive E2E test script that simulates the complete intent lifecycle:
-1. Submits an Intent to RootLayer (dual submission: blockchain + RootLayer HTTP)
-2. Matcher pulls Intent from RootLayer gRPC
-3. Matcher opens bidding window
-4. Test Agent submits bid via SDK
-5. Matcher closes bidding and creates Assignment
-6. Agent executes task and submits ExecutionReport to Validator
-7. Validator validates report and broadcasts to all validators
-8. Validators collect signatures and reach threshold
-9. Leader Validator constructs ValidationBundle
-10. ValidationBundle submitted to RootLayer (both HTTP API and blockchain)
-
-The script starts all required services (Matcher, Validators, Test Agent), monitors logs for progress, and provides detailed status updates.
-
-**Usage**:
-```bash
-# Run E2E test with real RootLayer
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000002"
-export ROOTLAYER_GRPC="3.17.208.238:9001"
-export ROOTLAYER_HTTP="http://3.17.208.238:8081"
-./scripts/start-subnet.sh
-
-# Run without interaction (CI/CD mode)
-./scripts/start-subnet.sh --no-interactive
-
-# With blockchain submission enabled
-export ENABLE_CHAIN_SUBMIT=true
-./scripts/start-subnet.sh
-
-# Custom RootLayer endpoints
-./scripts/start-subnet.sh \
-  --rootlayer-grpc 3.17.208.238:9001 \
-  --rootlayer-http http://3.17.208.238:8081
-```
-
-**Options**:
-- `--rootlayer-grpc <addr>` - RootLayer gRPC endpoint (default: 3.17.208.238:9001)
-- `--rootlayer-http <url>` - RootLayer HTTP endpoint (default: http://3.17.208.238:8081)
-- `--no-interactive` - Run test and exit without interactive mode
-- `--help, -h` - Show help message
-
-**Environment Variables**:
-- `ROOTLAYER_GRPC` - Alternative to --rootlayer-grpc
-- `ROOTLAYER_HTTP` - Alternative to --rootlayer-http
-- `SUBNET_ID` - Subnet ID to use for testing
-- `ENABLE_CHAIN_SUBMIT` - Enable blockchain submission (true/false, default: false)
-- `CHAIN_RPC_URL` - Blockchain RPC URL (default: https://sepolia.base.org)
-- `CHAIN_NETWORK` - Network name (default: base_sepolia)
-- `INTENT_MANAGER_ADDR` - IntentManager contract address
-- `MATCHER_PRIVATE_KEY` - Private key for matcher (DO NOT use in production!)
-
-**Services Started**:
-- Matcher (port 8090)
-- Validator 1 (port 9200) - Single validator mode for faster testing
-- Test Agent (connects to matcher and validator)
-
-**Test Flow**:
-```
-1. Submit Intent → RootLayer (dual: blockchain TX + HTTP API)
-2. Matcher pulls Intent ← RootLayer gRPC
-3. Matcher opens bidding window (10s)
-4. Agent submits bid to Matcher
-5. Matcher closes window → creates Assignment
-6. Agent receives Assignment
-7. Agent executes task
-8. Agent submits ExecutionReport → Validator
-9. Validator validates and broadcasts report
-10. Validators collect signatures (threshold signing)
-11. Leader constructs ValidationBundle
-12. ValidationBundle → RootLayer (HTTP API + blockchain)
-```
-
-**Interactive Commands** (if not using --no-interactive):
-```
-> logs matcher          - Show matcher logs
-> logs validator-1      - Show validator logs
-> logs agent           - Show test agent logs
-> stats                - Show quick statistics
-> quit                 - Stop services and exit
-```
-
-**Log Files**:
-- `e2e-test-logs/matcher.log` - Matcher service logs
-- `e2e-test-logs/validator-1.log` - Validator logs
-- `e2e-test-logs/test-agent.log` - Test agent logs
-- `e2e-test-logs/pids.txt` - Process IDs for cleanup
-
-**Prerequisites**:
-- All binaries built (`make build`)
-- RootLayer accessible at configured endpoints
-
-**Exit Codes**:
-- `0` - Test passed, ValidationBundle submitted successfully
-- `1` - Test failed or services failed to start
-
----
-
-### 6. submit-intent-signed.go
+### 5. submit-intent-signed.go
 
 **Purpose**: Submits signed Intents with dual submission (blockchain + RootLayer HTTP)
 
@@ -398,7 +294,7 @@ export RPC_URL="https://sepolia.base.org"
 export PRIVATE_KEY="0xYOUR_PRIVATE_KEY"
 export PIN_NETWORK="base_sepolia"
 export ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1"
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000002"
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
 export INTENT_TYPE="my-task"
 export PARAMS_JSON='{"task":"Process this data","priority":"high"}'
 export AMOUNT_WEI="100000000000000"
@@ -416,6 +312,7 @@ export AMOUNT_WEI="100000000000000"
 - `INTENT_TYPE` - Intent type identifier
 - `PARAMS_JSON` - Intent parameters as JSON string
 - `AMOUNT_WEI` - Budget amount in Wei
+- `DEADLINE_HOURS` - Deadline offset from now (default 1 hour)
 
 **Features**:
 - **EIP-191 Signature**: Creates proper Ethereum signed messages
@@ -468,7 +365,7 @@ Intent will be:
 
 ---
 
-### 7. test-agent/
+### 6. test-agent/
 
 **Purpose**: Test agent implementation for E2E testing
 
@@ -483,15 +380,13 @@ Contains a simple test agent (`validator_test_agent.go`) that implements the ful
 - Submits ExecutionReports to Validators
 - Handles receipts
 
-This is used by `e2e-test.sh` to simulate a real agent during testing.
+Use this agent to drive local/manual testing flows (for example, after `start-subnet.sh` brings up matcher and validators).
 
 **Files**:
 - `validator_test_agent.go` - Main test agent implementation
-- `test-agent` - Compiled binary (created by e2e-test.sh)
+- `test-agent` - Compiled binary (build manually as needed)
 
 **Usage**:
-The test agent is automatically built and started by `e2e-test.sh`. It can also be run manually:
-
 ```bash
 cd scripts/test-agent
 go build -o test-agent validator_test_agent.go
@@ -500,12 +395,12 @@ go build -o test-agent validator_test_agent.go
   --agent-id "test-agent-001" \
   --matcher "localhost:8090" \
   --validator "localhost:9200" \
-  --subnet-id "0x1111..."
+  --subnet-id "0x0000000000000000000000000000000000000000000000000000000000000003"
 ```
 
 ---
 
-### 8. intent-test/
+### 7. intent-test/
 
 **Purpose**: Legacy intent testing utilities
 
@@ -517,7 +412,7 @@ Contains older intent submission and testing utilities. Most functionality has b
 **Files**:
 - Various test scripts and utilities for intent submission
 
-**Status**: Legacy - use `submit-intent-signed.go` and `e2e-test.sh` for current testing
+**Status**: Legacy - prefer `submit-intent-signed.go` together with `start-subnet.sh` for current testing workflows
 
 ---
 
@@ -535,7 +430,7 @@ Automates the process of registering multiple validators from a JSON file. This 
 # Set required environment variables
 export RPC_URL="https://sepolia.base.org"
 export PIN_NETWORK="base_sepolia"
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000009"
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
 export SUBNET_CONTRACT="0x5697DFA452a8cA1598a9CA736b3E9E75dA1a43A6"
 export PIN_BASE_SEPOLIA_STAKING_MANAGER="0xAc11AE66c7831A70Bea940b0AE16c967f940cB65"
 
@@ -714,21 +609,21 @@ pip install web3 eth-account
    make build
    ```
 
-2. **Run E2E Test**:
-   ```bash
-   export SUBNET_ID="0xYOUR_SUBNET_ID"
-   export ROOTLAYER_GRPC="localhost:9001"
-   export ROOTLAYER_HTTP="http://localhost:8080"
-   ./scripts/start-subnet.sh
-   ```
+2. **Run Local Subnet**:
+```bash
+export SUBNET_ID="0xYOUR_SUBNET_ID"
+export ROOTLAYER_GRPC="localhost:9001"
+export ROOTLAYER_HTTP="http://localhost:8080"
+./scripts/start-subnet.sh
+```
 
 3. **Monitor Services**:
-   ```bash
-   # In separate terminals
-   tail -f e2e-test-logs/matcher.log
-   tail -f e2e-test-logs/validator-1.log
-   tail -f e2e-test-logs/test-agent.log
-   ```
+```bash
+# In separate terminals
+tail -f subnet-logs/matcher.log
+tail -f subnet-logs/validator-1.log
+tail -f subnet-logs/agent.log
+```
 
 ### Production Deployment
 
@@ -779,12 +674,12 @@ pip install web3 eth-account
 
 - `REGISTRY_URL` - Registry HTTP endpoint (default: http://localhost:8092)
 
-### E2E Test Configuration
+### Local Test Configuration
 
 - `ENABLE_CHAIN_SUBMIT` - Enable blockchain submission (true/false)
-- `CHAIN_RPC_URL` - Blockchain RPC for E2E test
-- `CHAIN_NETWORK` - Network name for E2E test
-- `MATCHER_PRIVATE_KEY` - Private key for test matcher (DO NOT use in production!)
+- `CHAIN_RPC_URL` - Blockchain RPC used by local tests
+- `CHAIN_NETWORK` - Network name for local tests
+- `MATCHER_PRIVATE_KEY` - Private key for the test matcher (DO NOT use in production!)
 
 ---
 
@@ -795,7 +690,7 @@ pip install web3 eth-account
 - **Never commit private keys** to version control
 - Use environment variables or secure config management
 - For testing, use dedicated test accounts with minimal funds
-- `MATCHER_PRIVATE_KEY` in E2E test is for local testing ONLY
+- `MATCHER_PRIVATE_KEY` in local testing flows is for development ONLY
 
 ### Configuration Files
 
@@ -843,7 +738,7 @@ lsof -i :9200  # Validator
 pkill -f "bin/matcher"
 pkill -f "bin/validator"
 
-# Or change ports in e2e-test.sh
+# Or adjust ports/flags in scripts/start-subnet.sh
 ```
 
 ### Registry CLI Returns Empty Results
@@ -880,11 +775,11 @@ echo $PARAMS_JSON | jq .
 
 ### ValidationBundle Not Submitted
 
-**Problem**: E2E test completes but no ValidationBundle
+**Problem**: Local run completes but no ValidationBundle
 
 **Solution**:
 - Wait longer - ValidationBundle submission happens in next checkpoint after ExecutionReport arrives
-- Check validator logs: `grep -i "validation bundle" e2e-test-logs/validator-*.log`
+- Check validator logs: `grep -i "validation bundle" subnet-logs/validator-*.log`
 - Verify RootLayer is accessible
 - Check if ENABLE_CHAIN_SUBMIT is set correctly
 
