@@ -22,7 +22,7 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
 
 2. **Agent (external SDK)**
 - Operators run agents via the published SDK ([`subnet-sdk/go`](https://github.com/PIN-AI/subnet-sdk/tree/main/go), [`subnet-sdk/python`](https://github.com/PIN-AI/subnet-sdk/tree/main/python))
-   - Agents register with the registry service, subscribe to matcher tasks
+   - Agents connect directly to matcher via gRPC to receive tasks
    - Execute workloads with custom business logic
    - Submit execution reports to validators via gRPC
    - **SDK Batch Support**: Python and Go SDKs support batch bid and report submission
@@ -37,11 +37,7 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
    - Dual submission support: Both blockchain and RootLayer simultaneously
    - Automatic fallback from batch to individual submission on errors
 
-4. **Registry (`cmd/registry`, `internal/registry`)**
-   - Tracks agent and validator registrations with health heartbeats
-   - Provides discovery endpoints consumed by agents and validators (`/validators`, `/agents`)
-
-5. **Mock RootLayer (`cmd/mock-rootlayer`)**
+4. **Mock RootLayer (`cmd/mock-rootlayer`)**
    - Supplies intents and accepts matcher or validator updates for local testing
 
 ## Key Features
@@ -75,13 +71,12 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
 
 ## Code Map
 
-- `cmd/` – CLI entry points for matcher, validator, registry, mock rootlayer, and the example simple agent
+- `cmd/` – CLI entry points for matcher, validator, mock rootlayer, and the example simple agent
 - `internal/`
   - `matcher/` – bidding windows, matching engine, assignment manager, task streaming, and **batch assignment submission**
   - `validator/` – gRPC server, auth interceptor, execution report validation, and **batch ValidationBundle submission**
   - `consensus/` – **Raft consensus**, **Gossip signature propagation**, threshold FSM, leader election, epoch-based checkpointing
   - `rootlayer/` – HTTP/gRPC clients with **batch submission support** (CompleteClient)
-  - `registry/` – in-memory registry service with health tracking
   - `storage/` – LevelDB helpers for validator persistence and crash recovery
   - `grpc/` – shared authentication interceptors and signing helpers
   - `logging/`, `metrics/`, `types/`, `crypto/` – shared utilities
@@ -94,7 +89,7 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
 
 ```bash
 cd Subnet
-make build       # builds matcher, validator, registry, mock rootlayer, simple agent
+make build       # builds matcher, validator, mock rootlayer, simple agent
 make test        # runs Go unit tests across modules
 make proto       # regenerates protobuf stubs from ../pin_protocol
 ```

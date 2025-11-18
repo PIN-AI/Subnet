@@ -38,7 +38,7 @@ fi
 # Default values
 MATCHER_ADDR="${MATCHER_ADDR:-localhost:8093}"
 VALIDATOR_ADDR="${VALIDATOR_ADDR:-localhost:9090}"
-REGISTRY_ADDR="${REGISTRY_ADDR:-localhost:8101}"
+# REGISTRY_ADDR - deprecated, registry service removed
 SUBNET_ID="${SUBNET_ID:-0x0000000000000000000000000000000000000000000000000000000000000002}"
 
 # Agent configuration
@@ -50,7 +50,6 @@ echo ""
 print_info "Configuration:"
 echo "  Matcher:    $MATCHER_ADDR"
 echo "  Validator:  $VALIDATOR_ADDR"
-echo "  Registry:   $REGISTRY_ADDR"
 echo "  Subnet ID:  $SUBNET_ID"
 echo "  Agent ID:   $AGENT_ID"
 echo "  Agent Name: $AGENT_NAME"
@@ -96,7 +95,6 @@ if [ "$AGENT_TYPE" = "advanced" ]; then
     exec go run main.go \
         -matcher "$MATCHER_ADDR" \
         -validator "$VALIDATOR_ADDR" \
-        -registry "$REGISTRY_ADDR" \
         -subnet-id "$SUBNET_ID" \
         -agent-id "$AGENT_ID" \
         -agent-name "$AGENT_NAME"
