@@ -3,7 +3,7 @@
 # For production use, ensure all security settings are properly configured.
 
 # Replace with your actual subnet ID
-subnet_id: "YOUR_SUBNET_ID_HERE"
+subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000007"
 
 # Timeout configurations (new unified config)
 timeouts:
@@ -54,7 +54,7 @@ network:
 
 # Identity configuration (new unified config)
 identity:
-  subnet_id: "YOUR_SUBNET_ID_HERE"  # Replace with your actual subnet ID
+  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000007"
   validator_id: "validator-1"
   matcher_id: "matcher-1"
   agent_id: "agent-1"
@@ -154,6 +154,33 @@ validator:
 # Legacy NATS configuration removed in favor of:
 # - Raft for consensus ordering
 # - Gossip for P2P signature propagation
+
+# Raft configuration for consensus ordering
+raft:
+  # Enable Raft consensus
+  enable: true
+
+  # Bootstrap cluster (set to true for first node, false for joining nodes)
+  bootstrap: true
+
+  # Bind address for Raft listener (local interface)
+  bind: "0.0.0.0:7400"
+
+  # Advertise address (external address that other nodes should use)
+  advertise: "localhost:7400"
+
+  # Data directory for Raft state
+  data_dir: "./data/raft"
+
+  # Peer nodes in the Raft cluster
+  # For single node: list only self
+  # For multi-node: list all validators in the cluster
+  peers:
+    - id: "validator-1"
+      address: "localhost:7400"
+    # Add more peers for multi-node setup:
+    # - id: "validator-2"
+    #   address: "localhost:7401"
 
 # Gossip configuration for P2P signature propagation
 # Uses HashiCorp memberlist (SWIM protocol) for decentralized signature broadcasting

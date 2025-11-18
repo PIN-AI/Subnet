@@ -31,8 +31,8 @@ cd deployment
 ### Step 2: Configure Environment
 
 ```bash
-# Copy template
-cp env.template .env
+# Copy template from project root
+cp ../.env.example .env
 
 # Edit configuration
 nano .env
@@ -81,7 +81,7 @@ cd pinai-subnet-dist-*/
 ./install.sh
 
 # Configure
-cp env.template .env
+cp ../.env.example .env
 nano .env
 
 # Deploy

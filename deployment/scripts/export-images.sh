@@ -77,7 +77,7 @@ cp -r scripts "$DIST_DIR/"
 mkdir -p "$DIST_DIR/docker"
 cp docker/docker-compose.yml "$DIST_DIR/docker/"
 cp docker/entrypoint.sh "$DIST_DIR/docker/" 2>/dev/null || true
-cp env.template "$DIST_DIR/"
+cp ../.env.example "$DIST_DIR/.env.example"
 cp README.md "$DIST_DIR/" 2>/dev/null || true
 
 # Create installation script
@@ -105,7 +105,7 @@ docker load < "$TARBALL"
 echo "✓ Image loaded successfully"
 echo ""
 echo "📋 Next steps:"
-echo "   1. Configure: cp env.template .env && nano .env"
+echo "   1. Configure: cp .env.example .env && nano .env"
 echo "   2. Deploy:    ./scripts/deploy.sh"
 echo ""
 EOF
@@ -144,7 +144,7 @@ echo "   cd /opt"
 echo "   tar xzf $DIST_TARBALL"
 echo "   cd ${DIST_DIR}"
 echo "   ./install.sh"
-echo "   cp env.template .env"
+echo "   cp .env.example .env"
 echo "   nano .env  # Configure"
 echo "   ./scripts/deploy.sh"
 echo ""

@@ -17,7 +17,6 @@ This architecture separates concerns for production deployment:
 ```
 deployment/
 ├── .env                       # ⚠️  NEVER commit (contains private keys)
-├── env.template               # Template for .env
 ├── .gitignore                 # Protects .env and data/
 │
 ├── README.md                  # Overview and instructions
@@ -184,7 +183,7 @@ entrypoint.sh
 ```
 Development Machine:
   ✗ .env (should not exist or use test keys)
-  ✓ env.template (safe to commit)
+  ✓ ../.env.example (safe to commit, in project root)
 
 Production Server:
   ✓ .env (created from template)
@@ -223,7 +222,7 @@ Docker Network: subnet-network (172.28.0.0/16)
 
 ```bash
 cd deployment
-cp env.template .env
+cp ../.env.example .env
 nano .env  # Configure with test keys
 ./scripts/deploy.sh
 ```
@@ -239,7 +238,7 @@ cd /opt
 tar xzf pinai-subnet-dist-*.tar.gz
 cd pinai-subnet-dist-*/
 ./install.sh
-cp env.template .env
+cp ../.env.example .env
 nano .env  # Configure with production keys
 ./scripts/deploy.sh
 ```
