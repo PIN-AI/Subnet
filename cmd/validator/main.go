@@ -126,8 +126,49 @@ func main() {
 		if *thresholdDenom == 4 && cfg.ValidatorSet.ThresholdDenom > 0 {
 			*thresholdDenom = cfg.ValidatorSet.ThresholdDenom
 		}
-		if *rootlayerEndpoint == "" && cfg.RootLayer.GRPCAddr != "" {
-			*rootlayerEndpoint = cfg.RootLayer.GRPCAddr
+		// Build validator-endpoints from config file validator set
+		if *validatorEndpoints == "" && len(cfg.ValidatorSet.Validators) > 0 {
+			endpoints := ""
+			for i, v := range cfg.ValidatorSet.Validators {
+				if i > 0 {
+					endpoints += ","
+				}
+				endpoints += v.ID + ":" + v.Endpoint
+			}
+			*validatorEndpoints = endpoints
+		}
+		// Apply network configuration from config file
+		if cfg.Network.ValidatorGRPCPort != "" && *grpcPort == 9090 {
+			// Parse port from ":9090" format
+			var port int
+			fmt.Sscanf(cfg.Network.ValidatorGRPCPort, ":%d", &port)
+			if port > 0 {
+				*grpcPort = port
+			}
+		}
+		if cfg.Network.MetricsPort != "" && *metricsPort == 9095 {
+			// Parse port from ":9095" format
+			var port int
+			fmt.Sscanf(cfg.Network.MetricsPort, ":%d", &port)
+			if port > 0 {
+				*metricsPort = port
+			}
+		}
+
+		// Apply RootLayer configuration from config file
+		if *rootlayerEndpoint == "" {
+			// Try grpc_endpoint first, then grpc_addr
+			if cfg.RootLayer.GRPCEndpoint != "" {
+				*rootlayerEndpoint = cfg.RootLayer.GRPCEndpoint
+			} else if cfg.RootLayer.GRPCAddr != "" {
+				*rootlayerEndpoint = cfg.RootLayer.GRPCAddr
+			}
+		}
+		if !*enableRootlayer {
+			// Enable if either grpc_endpoint or grpc_addr is set
+			if cfg.RootLayer.GRPCEndpoint != "" || cfg.RootLayer.GRPCAddr != "" {
+				*enableRootlayer = true
+			}
 		}
 		if cfg.Blockchain != nil && cfg.Blockchain.Enabled {
 			if !*chainEnabled {
@@ -138,6 +179,69 @@ func main() {
 			}
 			if *subnetContract == "" && cfg.Blockchain.SubnetContract != "" {
 				*subnetContract = cfg.Blockchain.SubnetContract
+			}
+		}
+
+		// Apply RPC (Registry) configuration from config file
+		if cfg.RPC.ListenAddr != "" {
+			// If listen_addr is empty string, disable registry
+			// Otherwise use it as the HTTP registry address
+			if *registryHTTP == ":8092" {
+				*registryHTTP = cfg.RPC.ListenAddr
+			}
+		}
+
+		// Apply Raft configuration from config file
+		if cfg.Raft.Enable {
+			if !*raftEnable {
+				*raftEnable = true
+			}
+			if !*raftBootstrap && cfg.Raft.Bootstrap {
+				*raftBootstrap = cfg.Raft.Bootstrap
+			}
+			if *raftBind == "127.0.0.1:7000" && cfg.Raft.Bind != "" {
+				*raftBind = cfg.Raft.Bind
+			}
+			if *raftAdvertise == "" && cfg.Raft.Advertise != "" {
+				*raftAdvertise = cfg.Raft.Advertise
+			}
+			if *raftDataDir == "./data/raft" && cfg.Raft.DataDir != "" {
+				*raftDataDir = cfg.Raft.DataDir
+			}
+			// Build raft peers string from config file peers list
+			if *raftPeers == "" && len(cfg.Raft.Peers) > 0 {
+				peers := ""
+				for i, peer := range cfg.Raft.Peers {
+					if i > 0 {
+						peers += ","
+					}
+					peers += peer.ID + ":" + peer.Address
+				}
+				*raftPeers = peers
+			}
+		}
+
+		// Apply Gossip configuration from config file
+		if cfg.Gossip.Enable {
+			if !*gossipEnable {
+				*gossipEnable = true
+			}
+			if *gossipBind == "127.0.0.1" && cfg.Gossip.BindAddress != "" {
+				*gossipBind = cfg.Gossip.BindAddress
+			}
+			if *gossipPort == 7946 && cfg.Gossip.BindPort > 0 {
+				*gossipPort = cfg.Gossip.BindPort
+			}
+			// Build gossip seeds string from config file seeds list
+			if *gossipSeeds == "" && len(cfg.Gossip.Seeds) > 0 {
+				seeds := ""
+				for i, seed := range cfg.Gossip.Seeds {
+					if i > 0 {
+						seeds += ","
+					}
+					seeds += seed
+				}
+				*gossipSeeds = seeds
 			}
 		}
 	}

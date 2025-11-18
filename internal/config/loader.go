@@ -77,6 +77,32 @@ type RecoveryConfig struct {
 	Mode string `mapstructure:"mode"`
 }
 
+// RaftPeerConfig represents a single Raft peer
+type RaftPeerConfig struct {
+	ID      string `mapstructure:"id"`
+	Address string `mapstructure:"address"`
+}
+
+// RaftConfig represents Raft consensus configuration
+type RaftConfig struct {
+	Enable    bool             `mapstructure:"enable"`
+	Bootstrap bool             `mapstructure:"bootstrap"`
+	Bind      string           `mapstructure:"bind"`
+	Advertise string           `mapstructure:"advertise"`
+	DataDir   string           `mapstructure:"data_dir"`
+	Peers     []RaftPeerConfig `mapstructure:"peers"`
+}
+
+// GossipConfig represents Gossip protocol configuration
+type GossipConfig struct {
+	Enable         bool     `mapstructure:"enable"`
+	BindAddress    string   `mapstructure:"bind_address"`
+	BindPort       int      `mapstructure:"bind_port"`
+	Seeds          []string `mapstructure:"seeds"`
+	GossipInterval string   `mapstructure:"gossip_interval"`
+	ProbeInterval  string   `mapstructure:"probe_interval"`
+}
+
 type DemoSigner struct {
 	ID         string `mapstructure:"id"`
 	PrivKeyHex string `mapstructure:"privkey_hex"`
@@ -123,6 +149,8 @@ type AppConfig struct {
 	Validator    map[string]interface{} `mapstructure:"validator"`
 	RootLayer    RootLayerConfig        `mapstructure:"rootlayer"`
 	Blockchain   *BlockchainConfig      `mapstructure:"blockchain"`
+	Raft         RaftConfig             `mapstructure:"raft"`
+	Gossip       GossipConfig           `mapstructure:"gossip"`
 }
 
 type RootLayerConfig struct {
@@ -130,6 +158,7 @@ type RootLayerConfig struct {
 	WSURL              string `mapstructure:"ws_url"`
 	AuthToken          string `mapstructure:"auth_token"`
 	GRPCAddr           string `mapstructure:"grpc_addr"`
+	GRPCEndpoint       string `mapstructure:"grpc_endpoint"` // Alternative field name
 	GRPCTLS            bool   `mapstructure:"grpc_tls"`
 	GRPCDialTimeoutRaw string `mapstructure:"grpc_dial_timeout"`
 	ConnectTimeoutRaw  string `mapstructure:"connect_timeout"`

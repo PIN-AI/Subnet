@@ -12,7 +12,7 @@
 - Install required tools (openssl, protoc, make)
 
 **Next steps:**
-- ✅ After setup → Choose deployment: [Docker](../docker/README.md) or [Manual](subnet_deployment_guide.md)
+- ✅ After setup → Choose deployment: [Docker](../deployment/README.md) or [Manual](subnet_deployment_guide.md)
 
 ---
 

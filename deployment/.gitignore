@@ -1,7 +1,6 @@
 # Environment files (contains private keys)
 .env
 .env.*
-!env.template
 
 # Runtime data
 data/

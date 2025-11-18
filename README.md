@@ -24,7 +24,7 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 **Choose your path:** New users start with First-Time Setup. Developers and operators can jump directly to relevant sections below.
 
-> ℹ️ **Contract Address Update (2025-11-03):** Base Sepolia addresses were refreshed. Use values from `.env.example` or `deployment/env.template` to avoid deprecated contracts.
+> ℹ️ **Contract Address Update (2025-11-03):** Base Sepolia addresses were refreshed. Use values from `.env.example` to avoid deprecated contracts.
 
 ---
 
@@ -33,7 +33,7 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 1. **[Quick Start](docs/quick_start.md)** – Choose deployment method + registration workflow
 2. **[Environment Setup](docs/environment_setup.md)** – Install Go, Docker, dependencies
 3. **Deploy** (pick one):
-   - ⭐ **Recommended**: [Docker Deployment](docker/README.md) – 3-node cluster in 5 minutes
+   - ⭐ **Recommended**: [Docker Deployment](deployment/README.md) – 3-node cluster in 5 minutes
    - 🔧 **Advanced**: [Subnet Deployment Guide](docs/subnet_deployment_guide.md) – Manual setup with full control
 
 > ✅ **After deployment**, continue with "Verify & Monitor" below to understand the execution flow.

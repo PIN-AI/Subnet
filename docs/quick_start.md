@@ -6,7 +6,7 @@
 
 | I want to... | Use this guide | Time |
 |-------------|----------------|------|
-| 🎯 Quick test/demo (first time) | [Docker Deployment](../docker/README.md) ⭐ Recommended | 5 min |
+| 🎯 Quick test/demo (first time) | [Docker Deployment](../deployment/README.md) ⭐ Recommended | 5 min |
 | 🔧 Full control over setup | [Manual Deployment](#option-2-traditional-deployment) | 15 min |
 | 📦 Build custom agent | [Agent SDK Docs](https://github.com/PIN-AI/subnet-sdk) | - |
 | 🏭 Deploy to production | [Production Guide](subnet_deployment_guide.md#production-deployment) | - |
@@ -269,7 +269,7 @@ cd docker && ./docker-start-dev.sh
 cd docker && docker compose down
 ```
 
-📚 **Detailed Documentation**: [`docker/README.md`](docker/README.md) - Complete configuration, testing, and troubleshooting
+📚 **Detailed Documentation**: [`deployment/README.md`](../deployment/README.md) - Complete configuration, testing, and troubleshooting
 
 **Benefits**:
 - ✅ 5-minute deployment
@@ -322,7 +322,7 @@ cd Subnet
 
 ```
 Subnet/
-├── docker/                    # Docker deployment files
+├── deployment/               # Production deployment files (Docker)
 │   ├── Dockerfile            # Docker image definition
 │   ├── docker-compose.yml    # 3-node cluster config
 │   ├── docker-compose-dev.yml# Single-node config
@@ -403,7 +403,7 @@ ROOTLAYER_HTTP=http://3.17.208.238:8081/api/v1
 
 > Format 2 exists for legacy Docker/deployment scripts. The `start-subnet.sh` launcher requires the comma-separated Format 1 variables.
 
-> ⚠️ **Contract Addresses:** Base Sepolia addresses were updated on 2025‑11‑03. Copy the latest values from `.env.example` or `deployment/env.template` to avoid using deprecated contracts.
+> ⚠️ **Contract Addresses:** Base Sepolia addresses were updated on 2025‑11‑03. Copy the latest values from `.env.example` to avoid using deprecated contracts.
 
 **Key Source**:
 Keys must be those generated and registered in steps 3-4 of the "Quick Registration Process". Do not randomly generate new keys!
@@ -599,7 +599,7 @@ cp subnet-logs/*.log logs-archive/$(date +%Y%m%d)/
 
 ## 📚 Detailed Documentation
 
-- **Docker Deployment**: [`docker/README.md`](docker/README.md) - Complete Docker usage guide (with 3-node cluster details)
+- **Docker Deployment**: [`deployment/README.md`](../deployment/README.md) - Complete Docker usage guide (with 3-node cluster details)
 - **Scripts Guide**: [`docs/scripts_guide.md`](docs/scripts_guide.md) - All scripts documentation
 - **Environment Setup**: [`docs/environment_setup.md`](docs/environment_setup.md) - Dependency installation
 - **Architecture**: [`docs/architecture.md`](docs/architecture.md) - System architecture
@@ -665,4 +665,4 @@ That's it! 🚀
 
 ---
 
-Need help? Check `docker/README.md` or detailed docs in the `docs/` directory.
+Need help? Check `deployment/README.md` or detailed docs in the `docs/` directory.

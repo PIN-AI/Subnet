@@ -32,7 +32,7 @@ if [ ! -f ".env" ]; then
     print_error ".env file not found"
     echo ""
     echo "Please create .env file:"
-    echo "  cp env.template .env"
+    echo "  cp ../.env.example .env"
     echo "  nano .env  # Edit configuration"
     echo ""
     exit 1
@@ -89,16 +89,12 @@ echo ""
 # Check required variables
 print_info "Validating configuration..."
 
-REQUIRED_VARS=(
-    "SUBNET_ID"
-    "VALIDATOR_KEY_1"
-    "VALIDATOR_KEY_2"
-    "VALIDATOR_KEY_3"
-    "VALIDATOR_PUBKEY_1"
-    "VALIDATOR_PUBKEY_2"
-    "VALIDATOR_PUBKEY_3"
-    "TEST_PRIVATE_KEY"
-)
+# Build required vars list based on NUM_VALIDATORS
+REQUIRED_VARS=("SUBNET_ID" "TEST_PRIVATE_KEY")
+for i in $(seq 1 ${NUM_VALIDATORS:-3}); do
+    REQUIRED_VARS+=("VALIDATOR_KEY_$i")
+    REQUIRED_VARS+=("VALIDATOR_PUBKEY_$i")
+done
 
 # INTENT_MANAGER_ADDR is optional for testing
 if [ -z "$INTENT_MANAGER_ADDR" ]; then
@@ -151,17 +147,22 @@ echo ""
 
 # Create data directories
 print_info "Creating data directories..."
-mkdir -p data/registry data/matcher data/validator-1 data/validator-2 data/validator-3
+mkdir -p data/registry data/matcher
+for i in $(seq 1 ${NUM_VALIDATORS:-3}); do
+    mkdir -p "data/validator-$i"
+done
 print_success "Data directories ready"
 echo ""
 
 # Show configuration summary
+NUM_VALS=${NUM_VALIDATORS:-3}
+THRESHOLD_NUM=$(( ($NUM_VALS * 2 + 2) / 3 ))  # Ceiling of 2/3
 echo "📋 Deployment Configuration:"
 echo "   Subnet ID: $SUBNET_ID"
 echo "   RootLayer: $ROOTLAYER_GRPC"
 echo "   Chain: $CHAIN_NETWORK"
-echo "   Validators: 3 nodes"
-echo "   Threshold: 2/3"
+echo "   Validators: $NUM_VALS node(s)"
+echo "   Threshold: $THRESHOLD_NUM/$NUM_VALS"
 echo ""
 
 # Confirm deployment
@@ -188,9 +189,78 @@ print_info "Stopping existing services..."
 (cd "$DEPLOYMENT_DIR" && $DOCKER_COMPOSE -f docker/docker-compose.yml down 2>/dev/null) || true
 echo ""
 
+# ============================================
+# Export dynamic environment variables for docker-compose
+# ============================================
+print_info "Preparing dynamic configuration..."
+
+export NUM_VALIDATORS=${NUM_VALIDATORS:-3}
+export THRESHOLD_NUM=$(( ($NUM_VALIDATORS * 2 + 2) / 3 ))  # Ceiling of 2/3
+export THRESHOLD_DENOM=$NUM_VALIDATORS
+
+# Build validator pubkey list (validator-id:pubkey,validator-id:pubkey,...)
+PUBKEY_LIST=""
+for i in $(seq 1 $NUM_VALIDATORS); do
+    PUBKEY_VAR="VALIDATOR_PUBKEY_$i"
+    if [ -n "${!PUBKEY_VAR}" ]; then
+        if [ -n "$PUBKEY_LIST" ]; then
+            PUBKEY_LIST="$PUBKEY_LIST,validator-$i:${!PUBKEY_VAR}"
+        else
+            PUBKEY_LIST="validator-$i:${!PUBKEY_VAR}"
+        fi
+    fi
+done
+export VALIDATOR_PUBKEY_LIST="$PUBKEY_LIST"
+
+# Build raft peers list (validator-id:hostname:port,...)
+PEERS_LIST=""
+for i in $(seq 1 $NUM_VALIDATORS); do
+    if [ -n "$PEERS_LIST" ]; then
+        PEERS_LIST="$PEERS_LIST,validator-$i:validator-$i:$((7400 + i - 1))"
+    else
+        PEERS_LIST="validator-$i:validator-$i:$((7400 + i - 1))"
+    fi
+done
+export RAFT_PEERS="$PEERS_LIST"
+
+# Build gossip seeds list (hostname:port,...)
+SEEDS_LIST=""
+for i in $(seq 1 $NUM_VALIDATORS); do
+    if [ -n "$SEEDS_LIST" ]; then
+        SEEDS_LIST="$SEEDS_LIST,validator-$i:$((7950 + i - 1))"
+    else
+        SEEDS_LIST="validator-$i:$((7950 + i - 1))"
+    fi
+done
+export GOSSIP_SEEDS="$SEEDS_LIST"
+
+# Build validator endpoints list (validator-id:hostname:port,...)
+ENDPOINTS_LIST=""
+for i in $(seq 1 $NUM_VALIDATORS); do
+    if [ -n "$ENDPOINTS_LIST" ]; then
+        ENDPOINTS_LIST="$ENDPOINTS_LIST,validator-$i:validator-$i:$((9090 + i - 1))"
+    else
+        ENDPOINTS_LIST="validator-$i:validator-$i:$((9090 + i - 1))"
+    fi
+done
+export VALIDATOR_ENDPOINTS="$ENDPOINTS_LIST"
+
+print_success "Dynamic configuration ready"
+echo "   Validators: $NUM_VALIDATORS"
+echo "   Threshold: $THRESHOLD_NUM/$THRESHOLD_DENOM"
+echo "   Raft peers: $RAFT_PEERS"
+echo ""
+
 # Start services
 print_info "Starting services..."
-(cd "$DEPLOYMENT_DIR" && $DOCKER_COMPOSE -f docker/docker-compose.yml up -d)
+
+# Build list of services to start based on NUM_VALIDATORS
+SERVICES="registry matcher"
+for i in $(seq 1 ${NUM_VALIDATORS:-3}); do
+    SERVICES="$SERVICES validator-$i"
+done
+
+(cd "$DEPLOYMENT_DIR" && $DOCKER_COMPOSE -f docker/docker-compose.yml up -d $SERVICES)
 
 if [ $? -eq 0 ]; then
     print_success "Services started successfully"
@@ -229,8 +299,8 @@ else
     print_warning "Matcher: Not responding (may still be starting)"
 fi
 
-# Check Validators
-for i in 1 2 3; do
+# Check Validators (dynamic based on NUM_VALIDATORS)
+for i in $(seq 1 $NUM_VALIDATORS); do
     port=$((9089 + i))
     if nc -z localhost "$port" 2>/dev/null; then
         print_success "Validator-$i: Running ✓ (port $port)"
@@ -249,9 +319,10 @@ echo ""
 echo "🌐 Service Addresses:"
 echo "   Registry:     http://localhost:8101/agents"
 echo "   Matcher:      http://localhost:8094/health"
-echo "   Validator-1:  localhost:9090"
-echo "   Validator-2:  localhost:9091"
-echo "   Validator-3:  localhost:9092"
+for i in $(seq 1 $NUM_VALIDATORS); do
+    port=$((9089 + i))
+    echo "   Validator-$i:  localhost:$port"
+done
 echo ""
 echo "📋 Management Commands:"
 echo "   View logs:    $DOCKER_COMPOSE -f docker/docker-compose.yml logs -f"

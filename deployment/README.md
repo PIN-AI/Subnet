@@ -9,7 +9,6 @@ This directory contains everything needed to deploy PinAI Subnet in production u
 ```
 deployment/
 ├── README.md              # This file
-├── .env.template          # Environment configuration template
 ├── docker/
 │   ├── Dockerfile         # Binary-only Dockerfile (no source code)
 │   ├── docker-compose.yml # Production docker-compose
@@ -52,7 +51,7 @@ ls -lh bin/
 
 ```bash
 cd deployment
-cp .env.template .env
+cp ../.env.example .env
 nano .env  # Edit configuration
 ```
 
