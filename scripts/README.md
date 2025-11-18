@@ -175,7 +175,7 @@ export TEST_PRIVATE_KEY="your_test_private_key"
 ./scripts/create-subnet.sh --auto-approve false
 
 # Specify config file
-./scripts/create-subnet.sh --config /path/to/config.yaml
+./scripts/create-subnet.sh --config /path/to/blockchain.yaml
 
 # Using environment variables
 export NETWORK="base_sepolia"
@@ -186,7 +186,7 @@ export SUBNET_NAME="My Subnet"
 ```
 
 **Parameters**:
-- `--config`: Config file path (default: `config/config.yaml`)
+- `--config`: Config file path (default: `config/blockchain.yaml`)
 - `--network`: Network name (default: `base_sepolia`)
 - `--rpc`: RPC URL (overrides config file)
 - `--key`: Private key (overrides config file)

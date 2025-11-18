@@ -216,6 +216,198 @@ You should see bids arriving, a winner selected, the agent executing, and valida
 
 ---
 
+## Configuration System
+
+The subnet supports two configuration approaches:
+
+### New: Hierarchical Configuration (Recommended)
+
+The hierarchical system separates shared subnet configuration from validator-specific settings, eliminating duplication and configuration drift.
+
+#### Why Use Hierarchical Configuration?
+
+**Problems with Old System:**
+- ❌ Raft peers and Gossip seeds must be manually synchronized across all validators
+- ❌ Adding/removing validators requires updating every validator's config file
+- ❌ Easy to have configuration mismatches causing cluster formation failures
+- ❌ Duplicate settings across multiple files
+
+**Benefits of New System:**
+- ✅ **Auto-population**: Raft peers and Gossip seeds automatically extracted from validator_set
+- ✅ **Single source of truth**: All validators defined once in subnet.yaml
+- ✅ **No duplication**: Shared settings defined once, validator-specific settings separate
+- ✅ **Easy scaling**: Add validators by updating subnet.yaml only
+- ✅ **Type-safe**: Configuration validated at startup
+
+#### Configuration Files
+
+**Templates (commit to Git):**
+- `config/subnet.yaml.template` - Shared configuration template
+- `config/validator.yaml.template` - Validator-specific template
+- `config/blockchain.yaml.template` - Blockchain scripts template
+
+**Actual configs (in .gitignore):**
+- `config/subnet.yaml` - Your actual shared configuration
+- `config/validator-N.yaml` - Each validator's specific configuration
+- `config/blockchain.yaml` - Blockchain registration configuration
+
+#### Quick Start
+
+**Step 1: Create Configuration from Templates**
+```bash
+cd config/
+cp subnet.yaml.template subnet.yaml
+cp validator.yaml.template validator-1.yaml
+cp validator.yaml.template validator-2.yaml
+cp blockchain.yaml.template blockchain.yaml
+```
+
+**Step 2: Edit subnet.yaml (Shared Configuration)**
+
+Key sections to configure:
+```yaml
+# Set your subnet ID
+subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000007"
+
+# Define ALL validators with their endpoints
+validator_set:
+  min_validators: 2
+  threshold_num: 2
+  threshold_denom: 2
+  validators:
+    - id: "validator-1"
+      pubkey: "04fb3072a8cac3ec..."  # Full ECDSA public key
+      grpc_endpoint: "localhost:9090"
+      raft_address: "localhost:7400"   # Auto-populated to peers
+      gossip_address: "localhost:7950" # Auto-populated to seeds
+    - id: "validator-2"
+      pubkey: "04b6ce34bd4871dc..."
+      grpc_endpoint: "localhost:9091"
+      raft_address: "localhost:7401"
+      gossip_address: "localhost:7951"
+
+# Update blockchain contracts
+blockchain:
+  subnet_contract: "0x..."
+  intent_manager_address: "0x..."
+  staking_manager_address: "0x..."
+  checkpoint_manager_address: "0x..."
+
+# Configure RootLayer
+rootlayer:
+  grpc_endpoint: "3.17.208.238:9001"
+  http_url: "http://3.17.208.238:8081/api/v1"
+```
+
+**Step 3: Edit validator-N.yaml (Validator-Specific)**
+
+Each validator only needs its unique settings:
+```yaml
+# validator-1.yaml
+identity:
+  validator_id: "validator-1"  # Must match subnet.yaml
+
+network:
+  validator_grpc_port: ":9090"  # Unique per validator
+  metrics_port: ":9095"
+
+storage:
+  leveldb_path: "./data/validator-1.db"  # Unique per validator
+
+raft:
+  bootstrap: true  # Only true for FIRST validator
+  bind: "0.0.0.0:7400"
+  advertise: "localhost:7400"
+  data_dir: "./data/validator-1/raft"
+
+gossip:
+  bind_port: 7950  # Unique per validator
+```
+
+**Step 4: Start Validators**
+
+**Option A: Manual Start (Development)**
+```bash
+# Validator 1
+./bin/validator \
+  --subnet-config=config/subnet.yaml \
+  --validator-config=config/validator-1.yaml \
+  --key=<PRIVATE_KEY_1>
+
+# Validator 2
+./bin/validator \
+  --subnet-config=config/subnet.yaml \
+  --validator-config=config/validator-2.yaml \
+  --key=<PRIVATE_KEY_2>
+```
+
+**Option B: Script Start (Recommended)**
+```bash
+# Script automatically detects and uses hierarchical config if files exist
+export NUM_VALIDATORS=2
+export VALIDATOR_KEYS="key1,key2"
+export VALIDATOR_PUBKEYS="pubkey1,pubkey2"
+export TEST_PRIVATE_KEY="..."
+./scripts/start-subnet.sh
+```
+
+#### What Gets Auto-Populated?
+
+When using hierarchical configuration, the following are automatically extracted from `subnet.yaml`:
+
+**Raft Peers:**
+```
+validator-1:localhost:7400  ← from raft_address
+validator-2:localhost:7401  ← from raft_address
+```
+
+**Gossip Seeds:**
+```
+localhost:7950  ← from gossip_address
+localhost:7951  ← from gossip_address
+```
+
+You **never** need to manually configure these in validator-N.yaml!
+
+#### Adding a New Validator
+
+**With New System (Easy):**
+1. Add validator to `subnet.yaml` validator_set:
+```yaml
+validators:
+  - id: "validator-3"
+    pubkey: "04..."
+    grpc_endpoint: "localhost:9092"
+    raft_address: "localhost:7402"
+    gossip_address: "localhost:7952"
+```
+2. Create `config/validator-3.yaml` with unique settings
+3. Start validator-3 - peers/seeds auto-populated!
+
+**With Old System (Tedious):**
+1. Update validator-1-config.yaml to add validator-3 to peers
+2. Update validator-2-config.yaml to add validator-3 to peers
+3. Create validator-3-config.yaml with all validators in peers
+4. Easy to make mistakes and cause cluster formation failures
+
+### Legacy: Single Configuration File
+
+Still supported for backward compatibility:
+
+```bash
+./bin/validator \
+  --config=config/config.yaml \
+  --id=validator-1 \
+  --key=<PRIVATE_KEY>
+```
+
+**When to use legacy mode:**
+- Existing deployments that haven't migrated
+- Quick testing without creating config files
+- When you need command-line override flexibility
+
+See template files in `config/` directory for detailed configuration options and examples.
+
 ## Manual Validator Startup
 
 Use manual startup when you need to tweak ports, run validators on separate machines, or debug consensus behaviour.
@@ -389,9 +581,41 @@ Once these components are customized, follow the deployment steps above to roll 
 
 ## Production Deployment
 
+### Configuration Checklist
+
+**Before deployment, verify your configuration:**
+
+- [ ] **Configuration files created from templates:**
+  - [ ] `subnet.yaml` from `subnet.yaml.template`
+  - [ ] `validator-N.yaml` for each validator from `validator.yaml.template`
+  - [ ] `blockchain.yaml` from `blockchain.yaml.template`
+
+- [ ] **subnet.yaml:**
+  - [ ] `subnet_id` is correct
+  - [ ] All validators listed in `validator_set` with correct public keys
+  - [ ] All validator endpoints (grpc_endpoint, raft_address, gossip_address) are reachable
+  - [ ] Blockchain contract addresses are correct
+  - [ ] `blockchain.allow_unverified: false` for production
+  - [ ] `tls.enabled: true` with valid certificates
+  - [ ] RootLayer endpoint is correct
+
+- [ ] **validator-N.yaml (for each validator):**
+  - [ ] `validator_id` matches one in subnet.yaml
+  - [ ] Unique ports (grpc_port, metrics_port, raft bind_port, gossip bind_port)
+  - [ ] Unique storage paths
+  - [ ] `raft.bootstrap: true` only for first validator
+  - [ ] `raft.advertise` uses public IP/domain (reachable by other validators)
+  - [ ] NO private keys in files (use `--key` flag)
+
+- [ ] **Security:**
+  - [ ] Configuration files have restrictive permissions (`chmod 600`)
+  - [ ] Private keys stored securely (KMS, HSM, or encrypted vault)
+  - [ ] Configuration files in `.gitignore`
+  - [ ] Firewall rules configured
+
 ### Security Checklist
 
-- [ ] Use KMS for private key management (don't hardcode)
+- [ ] Use KMS/HSM for private key management (don't hardcode)
 - [ ] Enable TLS/mTLS for gRPC
 - [ ] Configure firewall rules
 - [ ] Enable blockchain participant verification
@@ -401,20 +625,23 @@ Once these components are customized, follow the deployment steps above to roll 
 
 ### Docker Deployment Example
 
-**Matcher Dockerfile:**
+**Validator Dockerfile:**
 
 ```dockerfile
 FROM golang:1.21-alpine AS builder
 WORKDIR /app
 COPY . .
-RUN go build -o matcher ./cmd/matcher
+RUN go build -o validator ./cmd/validator
 
 FROM alpine:latest
 RUN apk --no-cache add ca-certificates
-COPY --from=builder /app/matcher /usr/local/bin/
-COPY config/config.yaml /etc/subnet/
+COPY --from=builder /app/validator /usr/local/bin/
+COPY config/subnet.yaml /etc/subnet/
+COPY config/validator-1.yaml /etc/subnet/
 
-CMD ["matcher", "--config", "/etc/subnet/config.yaml"]
+CMD ["validator", \
+     "--subnet-config", "/etc/subnet/subnet.yaml", \
+     "--validator-config", "/etc/subnet/validator-1.yaml"]
 ```
 
 **Docker Compose:**
@@ -423,40 +650,50 @@ CMD ["matcher", "--config", "/etc/subnet/config.yaml"]
 version: '3.8'
 
 services:
-  matcher:
-    build:
-      context: .
-      dockerfile: Dockerfile.matcher
-    environment:
-      - SUBNET_ID=${SUBNET_ID}
-      - PRIVATE_KEY=${MATCHER_KEY}
-
   validator-1:
     build:
       context: .
       dockerfile: Dockerfile.validator
+    volumes:
+      - ./config/subnet.yaml:/etc/subnet/subnet.yaml:ro
+      - ./config/validator-1.yaml:/etc/subnet/validator-1.yaml:ro
     environment:
-      - SUBNET_ID=${SUBNET_ID}
-      - VALIDATOR_ID=validator-1
-      - PRIVATE_KEY=${VALIDATOR_1_KEY}
+      - VALIDATOR_PRIVATE_KEY=${VALIDATOR_1_KEY}
+    command: >
+      validator
+      --subnet-config /etc/subnet/subnet.yaml
+      --validator-config /etc/subnet/validator-1.yaml
+      --key ${VALIDATOR_1_KEY}
 
   validator-2:
     build:
       context: .
       dockerfile: Dockerfile.validator
+    volumes:
+      - ./config/subnet.yaml:/etc/subnet/subnet.yaml:ro
+      - ./config/validator-2.yaml:/etc/subnet/validator-2.yaml:ro
     environment:
-      - SUBNET_ID=${SUBNET_ID}
-      - VALIDATOR_ID=validator-2
-      - PRIVATE_KEY=${VALIDATOR_2_KEY}
+      - VALIDATOR_PRIVATE_KEY=${VALIDATOR_2_KEY}
+    command: >
+      validator
+      --subnet-config /etc/subnet/subnet.yaml
+      --validator-config /etc/subnet/validator-2.yaml
+      --key ${VALIDATOR_2_KEY}
 
   validator-3:
     build:
       context: .
       dockerfile: Dockerfile.validator
+    volumes:
+      - ./config/subnet.yaml:/etc/subnet/subnet.yaml:ro
+      - ./config/validator-3.yaml:/etc/subnet/validator-3.yaml:ro
     environment:
-      - SUBNET_ID=${SUBNET_ID}
-      - VALIDATOR_ID=validator-3
-      - PRIVATE_KEY=${VALIDATOR_3_KEY}
+      - VALIDATOR_PRIVATE_KEY=${VALIDATOR_3_KEY}
+    command: >
+      validator
+      --subnet-config /etc/subnet/subnet.yaml
+      --validator-config /etc/subnet/validator-3.yaml
+      --key ${VALIDATOR_3_KEY}
 ```
 
 Start:
@@ -464,6 +701,8 @@ Start:
 ```bash
 docker-compose up -d
 ```
+
+**Note:** The new configuration system automatically populates Raft peers and Gossip seeds from `subnet.yaml`, simplifying multi-validator deployments.
 
 ---
 
