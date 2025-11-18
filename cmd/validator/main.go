@@ -24,8 +24,10 @@ import (
 )
 
 func main() {
-	// Configuration file flag (must be defined first)
-	configFile := flag.String("config", "", "Path to config file (YAML)")
+	// Configuration file flags (must be defined first)
+	configFile := flag.String("config", "", "Path to single config file (YAML) - legacy mode")
+	subnetConfigFile := flag.String("subnet-config", "", "Path to subnet.yaml (shared configuration)")
+	validatorConfigFile := flag.String("validator-config", "", "Path to validator-specific.yaml")
 
 	var (
 		validatorID      = flag.String("id", "", "Validator ID")
@@ -101,12 +103,30 @@ func main() {
 
 	// Load configuration file if specified
 	var cfg *config.AppConfig
-	if *configFile != "" {
+
+	// Check which configuration mode to use
+	if *subnetConfigFile != "" && *validatorConfigFile != "" {
+		// New split configuration mode (Plan 3)
+		var err error
+		cfg, err = config.LoadSplit(*subnetConfigFile, *validatorConfigFile)
+		if err != nil {
+			log.Fatalf("Failed to load split config (subnet: %s, validator: %s): %v",
+				*subnetConfigFile, *validatorConfigFile, err)
+		}
+	} else if *configFile != "" {
+		// Legacy single configuration mode
 		var err error
 		cfg, err = config.Load(*configFile)
 		if err != nil {
 			log.Fatalf("Failed to load config file %s: %v", *configFile, err)
 		}
+	} else if *subnetConfigFile != "" || *validatorConfigFile != "" {
+		// Error: both subnet-config and validator-config must be specified together
+		log.Fatal("Error: both --subnet-config and --validator-config must be specified together")
+	}
+
+	// Apply configuration defaults if config was loaded
+	if cfg != nil {
 
 		// Apply config file defaults (only if not set via command line)
 		if *validatorID == "" && cfg.Identity.ValidatorID != "" {

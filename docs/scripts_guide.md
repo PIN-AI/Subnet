@@ -41,7 +41,7 @@ This script deploys a new subnet to the blockchain using the intent-protocol-con
 ```
 
 **Options**:
-- `--config FILE` - Path to config file (default: config/config.yaml)
+- `--config FILE` - Path to config file (default: config/blockchain.yaml)
 - `--network NAME` - Network name (default: base_sepolia)
 - `--rpc URL` - RPC URL (overrides config)
 - `--key HEX` - Private key hex (overrides config)
@@ -94,7 +94,7 @@ This script handles participant registration on an existing subnet. It supports 
 ```
 
 **Options**:
-- `--config FILE` - Path to config file (default: config/config.yaml)
+- `--config FILE` - Path to config file (default: config/blockchain.yaml)
 - `--network NAME` - Network name (default: base_sepolia)
 - `--rpc URL` - RPC URL (overrides config)
 - `--subnet ADDRESS` - Subnet contract address (overrides config)
@@ -590,7 +590,9 @@ tail -f subnet-logs/agent.log
 ### Configuration Files
 
 - Config files may contain sensitive data (private keys)
-- Use restrictive file permissions: `chmod 600 config/config.yaml`
+- Use restrictive file permissions: `chmod 600 config/*.yaml`
+- Validator configuration uses hierarchical system: `subnet.yaml` + `validator-N.yaml`
+- Blockchain operations use: `blockchain.yaml`
 - Consider using environment variables instead of config files for production
 
 ---

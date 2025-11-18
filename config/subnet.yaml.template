@@ -1,0 +1,151 @@
+# =============================================================================
+# Subnet Configuration Template
+# This file contains configuration shared by ALL validators in the subnet
+# =============================================================================
+#
+# USAGE:
+#   1. Copy this file: cp subnet.yaml.template subnet.yaml
+#   2. Fill in your subnet-specific values
+#   3. Update validator_set with your validators
+#   4. Update contract addresses for your network
+#
+# =============================================================================
+
+# Subnet identity (required)
+# Format: 32-byte hex string with 0x prefix
+subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000000"
+
+# =============================================================================
+# Validator Set - COMPLETE list of all validators in this subnet
+# =============================================================================
+validator_set:
+  # Minimum validators required for the subnet to operate
+  min_validators: 2
+
+  # Threshold for validation signatures (e.g., 2/3 means 2 out of 3 validators must sign)
+  threshold_num: 2
+  threshold_denom: 3
+
+  # ALL validators in this subnet
+  # Add one entry for each validator
+  validators:
+    - id: "validator-1"
+      # Public key (ECDSA uncompressed format, 65 bytes hex with 04 prefix)
+      pubkey: "04..."
+      # Endpoints (used by other validators to connect)
+      grpc_endpoint: "validator1.example.com:9090"
+      raft_address: "validator1.example.com:7400"
+      gossip_address: "validator1.example.com:7950"
+
+    - id: "validator-2"
+      pubkey: "04..."
+      grpc_endpoint: "validator2.example.com:9090"
+      raft_address: "validator2.example.com:7401"
+      gossip_address: "validator2.example.com:7951"
+
+    - id: "validator-3"
+      pubkey: "04..."
+      grpc_endpoint: "validator3.example.com:9090"
+      raft_address: "validator3.example.com:7402"
+      gossip_address: "validator3.example.com:7952"
+
+# =============================================================================
+# Blockchain Configuration (shared by all validators)
+# =============================================================================
+blockchain:
+  enabled: true
+
+  # Network name (e.g., base_sepolia, base_mainnet, ethereum_mainnet)
+  network: "base_sepolia"
+
+  # RPC URL for blockchain interaction
+  rpc_url: "https://sepolia.base.org"
+
+  # Contract addresses for this subnet
+  # IMPORTANT: Update these with your deployed contract addresses
+  subnet_contract: "0x..."
+  intent_manager_address: "0x..."
+  staking_manager_address: "0x..."
+  checkpoint_manager_address: "0x..."
+
+  # Cache settings
+  cache_ttl: 5m
+  cache_size: 1024
+
+  # Fallback behavior when blockchain is unavailable
+  enable_fallback: true
+  allow_unverified: false  # Set to false in production
+
+  # Enable on-chain ValidationBundle submission
+  enable_chain_submit: true
+
+# =============================================================================
+# RootLayer Configuration (shared by all validators)
+# =============================================================================
+rootlayer:
+  # gRPC endpoint for validator <-> RootLayer communication
+  grpc_endpoint: "rootlayer.example.com:9001"
+
+  # HTTP API endpoint (optional)
+  http_url: "http://rootlayer.example.com:8081/api/v1"
+
+  # Connection settings
+  connect_timeout: 10s
+  request_timeout: 30s
+
+  # Retry settings
+  max_retries: 3
+  retry_delay: 1s
+
+  # Enable RootLayer integration
+  enable: true
+
+# =============================================================================
+# Consensus Configuration (shared by all validators)
+# =============================================================================
+consensus:
+  # Timeout for propose phase (milliseconds)
+  propose_timeout_ms: 1500
+
+  # Timeout for signature collection (milliseconds)
+  collect_timeout_ms: 2000
+
+  # Challenge window for disputes (milliseconds)
+  challenge_window_ms: 300000
+
+# =============================================================================
+# Timeouts (shared by all validators)
+# =============================================================================
+timeouts:
+  # Consensus timeouts
+  propose_timeout: 5s
+  collect_timeout: 10s
+  finalize_timeout: 2s
+
+  # Checkpoint interval (how often to create checkpoints)
+  checkpoint_interval: 10s
+
+  # Authentication cache TTL
+  auth_cache_ttl: 5m
+
+  # Task response timeout
+  task_response_timeout: 30s
+
+# =============================================================================
+# Recovery Configuration (shared by all validators)
+# =============================================================================
+recovery:
+  # Recovery mode: "fast" (quick recovery) or "full" (comprehensive recovery)
+  mode: "fast"
+
+# =============================================================================
+# TLS Configuration (shared by all validators)
+# =============================================================================
+tls:
+  # Enable TLS for gRPC communication
+  # IMPORTANT: Set to true in production
+  enabled: false
+
+  # TLS certificate and key files (when enabled)
+  # cert_file: "/path/to/cert.pem"
+  # key_file: "/path/to/key.pem"

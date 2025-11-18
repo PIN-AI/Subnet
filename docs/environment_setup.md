@@ -387,28 +387,29 @@ echo "ROOTLAYER_GRPC=3.17.208.238:9001" >> .env
 echo "ROOTLAYER_HTTP=http://3.17.208.238:8081/api/v1" >> .env
 ```
 
-### 3. Create Configuration File
+### 3. Create Configuration Files
+
+The subnet uses a hierarchical configuration system:
 
 ```bash
-# Copy example configuration
-cp config/config.example.yaml config/config.yaml
+# Copy configuration templates
+cp config/subnet.yaml.template config/subnet.yaml
+cp config/validator.yaml.template config/validator-1.yaml
+cp config/blockchain.yaml.template config/blockchain.yaml
 
-# Edit with your values
-nano config/config.yaml
-# or
-vim config/config.yaml
+# Edit subnet-wide configuration
+nano config/subnet.yaml
+
+# Edit validator-specific configuration
+nano config/validator-1.yaml
+
+# Edit blockchain configuration (for create-subnet.sh and register.sh)
+nano config/blockchain.yaml
 ```
 
-**Minimal config/config.yaml**:
+**Minimal config/subnet.yaml** (shared across all validators):
 ```yaml
 subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
-
-identity:
-  matcher_id: "matcher-001"
-  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
-
-network:
-  matcher_grpc_port: ":8090"
 
 rootlayer:
   http_url: "http://3.17.208.238:8081/api/v1"
@@ -418,12 +419,23 @@ blockchain:
   rpc_url: "https://sepolia.base.org"
   subnet_contract: "0xYOUR_SUBNET_CONTRACT"
 
-agent:
-  matcher:
-    signer:
-      type: "ecdsa"
-      private_key: "YOUR_PRIVATE_KEY"
+consensus:
+  checkpoint_interval: 10
+  signature_threshold_numerator: 2
+  signature_threshold_denominator: 3
 ```
+
+**Minimal config/validator-1.yaml** (validator-specific):
+```yaml
+identity:
+  validator_id: "validator-1"
+
+network:
+  grpc_port: ":9090"
+  http_port: ":9091"
+```
+
+**Note**: Raft peers and Gossip seeds are auto-populated from the `--validator-pubkeys` flag at startup. See `docs/subnet_deployment_guide.md` for complete configuration guide.
 
 ---
 
@@ -786,7 +798,7 @@ git commit -m "feat: improve matcher bidding logic"
 
 1. **Never commit private keys** to version control
 2. **Use environment variables** for sensitive data
-3. **Set restrictive file permissions**: `chmod 600 config/config.yaml`
+3. **Set restrictive file permissions**: `chmod 600 config/*.yaml`
 4. **Use separate wallets** for testing and production
 5. **Keep dependencies updated**: `go get -u ./...`
 6. **Use firewall rules** to restrict access

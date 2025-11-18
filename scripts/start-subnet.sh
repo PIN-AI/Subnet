@@ -356,34 +356,50 @@ if [ "$CONSENSUS_TYPE" = "raft" ]; then
 
         print_info "Starting $VALIDATOR_ID (Subnet: $VALIDATOR_SUBNET_ID)..."
 
-        "$PROJECT_ROOT/bin/validator" \
-            -id "$VALIDATOR_ID" \
-            -grpc $GRPC_PORT \
-            -metrics $METRICS_PORT \
-            -subnet-id "$VALIDATOR_SUBNET_ID" \
-            -key "$VALIDATOR_KEY" \
-            -storage "$LOGS_DIR/val${i}-storage" \
-            -rootlayer-endpoint "$ROOTLAYER_GRPC" \
-            -chain-rpc-url "$CHAIN_RPC_URL" \
-            -chain-network "$CHAIN_NETWORK" \
-            -intent-manager-addr "$INTENT_MANAGER_ADDR" \
-            -enable-chain-submit \
-            -enable-rootlayer \
-            -validators $NUM_VALIDATORS \
-            -threshold-num 2 \
-            -threshold-denom 3 \
-            -validator-pubkeys "$VALIDATOR_PUBKEYS_PARAM" \
-            -raft-enable \
-            -raft-bootstrap \
-            -raft-bind "127.0.0.1:$RAFT_PORT" \
-            -raft-data-dir "$LOGS_DIR/val${i}-raft" \
-            -raft-peers "$PEER_LIST" \
-            -gossip-enable \
-            -gossip-bind "127.0.0.1" \
-            -gossip-port $GOSSIP_PORT \
-            -gossip-seeds "$GOSSIP_SEEDS" \
-            -validator-endpoints "$VALIDATOR_ENDPOINTS" \
-            > "$LOGS_DIR/validator-$i.log" 2>&1 &
+        # Check if hierarchical config files exist
+        SUBNET_CONFIG="$PROJECT_ROOT/config/subnet.yaml"
+        VALIDATOR_CONFIG="$PROJECT_ROOT/config/${VALIDATOR_ID}.yaml"
+
+        if [ -f "$SUBNET_CONFIG" ] && [ -f "$VALIDATOR_CONFIG" ]; then
+            # Use new hierarchical configuration
+            print_info "  Using hierarchical config: $SUBNET_CONFIG + $VALIDATOR_CONFIG"
+            "$PROJECT_ROOT/bin/validator" \
+                --subnet-config "$SUBNET_CONFIG" \
+                --validator-config "$VALIDATOR_CONFIG" \
+                --key "$VALIDATOR_KEY" \
+                > "$LOGS_DIR/validator-$i.log" 2>&1 &
+        else
+            # Fallback to legacy command-line parameters
+            print_info "  Using legacy command-line parameters"
+            "$PROJECT_ROOT/bin/validator" \
+                -id "$VALIDATOR_ID" \
+                -grpc $GRPC_PORT \
+                -metrics $METRICS_PORT \
+                -subnet-id "$VALIDATOR_SUBNET_ID" \
+                -key "$VALIDATOR_KEY" \
+                -storage "$LOGS_DIR/val${i}-storage" \
+                -rootlayer-endpoint "$ROOTLAYER_GRPC" \
+                -chain-rpc-url "$CHAIN_RPC_URL" \
+                -chain-network "$CHAIN_NETWORK" \
+                -intent-manager-addr "$INTENT_MANAGER_ADDR" \
+                -enable-chain-submit \
+                -enable-rootlayer \
+                -validators $NUM_VALIDATORS \
+                -threshold-num 2 \
+                -threshold-denom 3 \
+                -validator-pubkeys "$VALIDATOR_PUBKEYS_PARAM" \
+                -raft-enable \
+                -raft-bootstrap \
+                -raft-bind "127.0.0.1:$RAFT_PORT" \
+                -raft-data-dir "$LOGS_DIR/val${i}-raft" \
+                -raft-peers "$PEER_LIST" \
+                -gossip-enable \
+                -gossip-bind "127.0.0.1" \
+                -gossip-port $GOSSIP_PORT \
+                -gossip-seeds "$GOSSIP_SEEDS" \
+                -validator-endpoints "$VALIDATOR_ENDPOINTS" \
+                > "$LOGS_DIR/validator-$i.log" 2>&1 &
+        fi
 
         VALIDATOR_PID=$!
         sleep 2

@@ -38,7 +38,7 @@ type Config struct {
 func main() {
 	// Command line flags
 	var (
-		configPath     = flag.String("config", "./config/config.yaml", "Path to config file")
+		configPath     = flag.String("config", "./config/blockchain.yaml", "Path to config file")
 		network        = flag.String("network", "base_sepolia", "Network name")
 		rpcURL         = flag.String("rpc", "", "RPC URL (overrides config)")
 		privateKeyHex  = flag.String("key", "", "Private key hex (overrides config)")

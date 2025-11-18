@@ -1,0 +1,87 @@
+# =============================================================================
+# Blockchain Configuration Template for Scripts
+# Used by scripts/register.sh and scripts/create-subnet.sh
+# =============================================================================
+#
+# USAGE:
+#   1. Copy this file: cp blockchain.yaml.template blockchain.yaml
+#   2. Fill in your network and contract addresses
+#   3. Update registration parameters
+#
+# =============================================================================
+
+# Network configuration
+network: "base_sepolia"
+rpc_url: "https://sepolia.base.org"
+
+# =============================================================================
+# Smart Contract Addresses
+# IMPORTANT: Update with your deployed contract addresses
+# =============================================================================
+contracts:
+  # Factory and core contracts
+  subnet_factory: "0x..."
+  subnet_implementation: "0x..."
+
+  # Governance contracts
+  staking_manager: "0x..."
+  agent_identity_registry: "0x..."
+
+  # Operational contracts
+  checkpoint_manager: "0x..."
+  intent_manager: "0x..."
+
+# =============================================================================
+# Script Configuration
+# =============================================================================
+
+# Registration parameters
+registration:
+  # Stake amount for validator registration (in ETH)
+  # Minimum: 0.0001 ETH
+  # Recommended for testing: 0.01 ETH
+  # Production: 0.1 ETH or more
+  stake_amount: "0.01"
+
+  # Gas settings (optional, uses defaults if not specified)
+  gas_limit: 500000
+  gas_price_multiplier: 1.2
+
+# =============================================================================
+# Validator Accounts
+# =============================================================================
+# NOTE: Use pre-funded test accounts for testing
+# NEVER use production private keys in configuration files!
+#
+# For production:
+#   - Pass private keys via command line: --key <PRIVATE_KEY>
+#   - Use environment variables: VALIDATOR_PRIVATE_KEY
+#   - Use secure key management (HSM, KMS, encrypted vaults)
+#
+# Example validator accounts (placeholders):
+validator_accounts:
+  # validator-1: address=0x... (use --key flag to provide private key)
+  # validator-2: address=0x... (use --key flag to provide private key)
+  # validator-3: address=0x... (use --key flag to provide private key)
+
+# =============================================================================
+# Agent Configuration for Scripts
+# =============================================================================
+agent:
+  matcher:
+    signer:
+      type: "ecdsa"
+      # WARNING: DO NOT PUT REAL PRIVATE KEYS HERE
+      # This is for reference only - always use --key flag
+      # private_key: "pass_via_command_line_flag"
+
+# =============================================================================
+# PRODUCTION SECURITY CHECKLIST
+# =============================================================================
+# [ ] Contract addresses are correct for your network
+# [ ] RPC URL points to production network
+# [ ] Private keys are NOT in this file
+# [ ] Private keys are passed via secure method (--key flag, env var, KMS)
+# [ ] Stake amount is appropriate for production
+# [ ] Gas settings are configured for your network
+# [ ] File permissions are restrictive (chmod 600 blockchain.yaml)

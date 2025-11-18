@@ -24,7 +24,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default values
-CONFIG_FILE="${PROJECT_ROOT}/config/config.yaml"
+CONFIG_FILE="${PROJECT_ROOT}/config/blockchain.yaml"
 NETWORK="${NETWORK:-base_sepolia}"
 RPC_URL="${RPC_URL:-https://sepolia.base.org}"
 SUBNET_CONTRACT="${SUBNET_CONTRACT}"
@@ -92,7 +92,7 @@ Usage: $0 [OPTIONS]
 Register Validator, Matcher, and Agent on the subnet.
 
 Options:
-  --config FILE         Path to config file (default: config/config.yaml)
+  --config FILE         Path to config file (default: config/blockchain.yaml)
   --network NAME        Network name (default: base_sepolia)
   --rpc URL             RPC URL (overrides config)
   --subnet ADDRESS      Subnet contract address (overrides config)
