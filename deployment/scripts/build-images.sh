@@ -34,7 +34,6 @@ print_info "Checking for pre-compiled binaries..."
 REQUIRED_BINARIES=(
     "bin/validator"
     "bin/matcher"
-    "bin/registry"
     "bin/simple-agent"
 )
 

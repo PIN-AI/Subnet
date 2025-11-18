@@ -12,7 +12,7 @@ import (
 	"subnet/internal/config"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
-	"subnet/internal/registry"
+	// "subnet/internal/registry" // REMOVED: Registry component deprecated
 	"subnet/internal/types"
 	"subnet/internal/validator"
 	pb "subnet/proto/subnet"
@@ -31,7 +31,8 @@ func TestSimpleE2EFlow(t *testing.T) {
 	t.Log("\n[Phase 1] Setting up infrastructure...")
 
 	validatorSet, validatorKeys := setupValidators(t, 3)
-	agentRegistry := registry.New()
+	// REMOVED: Registry component deprecated
+	// agentRegistry := registry.New()
 
 	t.Logf("✓ Created %d validators with 2/3 threshold", len(validatorKeys))
 
@@ -83,7 +84,7 @@ func TestSimpleE2EFlow(t *testing.T) {
 			},
 		}
 
-		node, err := validator.NewNode(cfg, logger, agentRegistry)
+		node, err := validator.NewNode(cfg, logger)
 		if err != nil {
 			t.Fatalf("Failed to create validator %d: %v", i+1, err)
 		}

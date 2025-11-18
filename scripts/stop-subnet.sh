@@ -105,13 +105,7 @@ else
     pkill -f "bin/matcher" 2>/dev/null && print_success "Matcher stopped" || print_info "Matcher not running"
 fi
 
-# Stop Registry
-if [ -f "$LOGS_DIR/registry.pid" ]; then
-    graceful_stop "registry" "$LOGS_DIR/registry.pid" 5
-else
-    print_warning "Registry PID file not found"
-    pkill -f "bin/registry" 2>/dev/null && print_success "Registry stopped" || print_info "Registry not running"
-fi
+# Registry service deprecated - no need to stop
 
 echo ""
 print_success "All services stopped"

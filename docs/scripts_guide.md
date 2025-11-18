@@ -8,7 +8,6 @@ The `scripts/` directory provides essential tools for working with PinAI Subnet:
 
 - **Blockchain Operations**: Create subnets and register participants on-chain
 - **Testing & Validation**: End-to-end testing and test agents
-- **Service Management**: Registry CLI and monitoring tools
 - **Utilities**: Key derivation and intent submission tools
 
 ## Scripts Reference
@@ -156,95 +155,7 @@ This script handles participant registration on an existing subnet. It supports 
 
 ---
 
-### 3. registry-cli.sh
-
-**Purpose**: Command-line interface for interacting with the Registry service
-
-**Location**: `scripts/registry-cli.sh`
-
-**Description**:
-This tool provides a CLI for querying and monitoring the Registry service, which maintains the list of active agents and validators. It supports listing participants, getting details, sending heartbeats, and real-time monitoring.
-
-**Usage**:
-```bash
-# List all registered validators
-./scripts/registry-cli.sh list-validators
-
-# List all registered agents
-./scripts/registry-cli.sh list-agents
-
-# Get details of specific validator
-./scripts/registry-cli.sh validator validator-1
-
-# Get details of specific agent
-./scripts/registry-cli.sh agent agent-001
-
-# Send heartbeat for validator
-./scripts/registry-cli.sh validator-heartbeat validator-1
-
-# Watch validators (updates every 2s)
-./scripts/registry-cli.sh watch-validators
-
-# Watch all services
-./scripts/registry-cli.sh watch-all
-
-# Check registry health
-./scripts/registry-cli.sh health
-```
-
-**Commands**:
-- `list-agents` - List all registered agents
-- `list-validators` - List all registered validators
-- `agent <id>` - Get details of a specific agent
-- `validator <id>` - Get details of a specific validator
-- `agent-heartbeat <id>` - Send heartbeat for an agent
-- `validator-heartbeat <id>` - Send heartbeat for a validator
-- `watch-agents` - Watch agents count (updates every 2s)
-- `watch-validators` - Watch validators count (updates every 2s)
-- `watch-all` - Watch all services (updates every 2s)
-- `health` - Check registry health
-
-**Environment Variables**:
-- `REGISTRY_URL` - Registry endpoint (default: http://localhost:8092)
-
-**Dependencies**:
-- `curl` - Required for HTTP requests
-- `jq` - Optional, for formatted JSON output
-
-**Example Output**:
-```bash
-$ ./scripts/registry-cli.sh list-validators
-Fetching validators from http://localhost:8092
-{
-  "validators": [
-    {
-      "id": "validator-1",
-      "endpoint": "localhost:9090",
-      "status": "active",
-      "last_heartbeat": "2025-10-14T10:30:45Z"
-    }
-  ]
-}
-
-$ ./scripts/registry-cli.sh watch-all
-=== Registry Status at Mon Oct 14 10:30:50 UTC 2025 ===
-
-VALIDATORS:
-  Count: 4
-  - validator-1 [active] localhost:9200
-  - validator-2 [active] localhost:9201
-  - validator-3 [active] localhost:9202
-  - validator-4 [active] localhost:9203
-
-AGENTS:
-  Count: 2
-  - agent-001 [active] caps: code-execution, data-analysis
-  - agent-002 [active] caps: image-generation
-```
-
----
-
-### 4. derive-pubkey.go
+### 3. derive-pubkey.go
 
 **Purpose**: Derives public key from Ethereum private key
 
@@ -627,19 +538,7 @@ tail -f subnet-logs/agent.log
 
 ### Production Deployment
 
-1. **Check Registration Status**:
-   ```bash
-   ./scripts/registry-cli.sh health
-   ./scripts/registry-cli.sh list-validators
-   ./scripts/registry-cli.sh list-agents
-   ```
-
-2. **Monitor Registry**:
-   ```bash
-   ./scripts/registry-cli.sh watch-all
-   ```
-
-3. **Submit Production Intent**:
+1. **Submit Production Intent**:
    ```bash
    export SUBNET_ID="0xPROD_SUBNET_ID"
    export INTENT_TYPE="production-task"
@@ -670,10 +569,6 @@ tail -f subnet-logs/agent.log
 - `PIN_BASE_SEPOLIA_STAKING_MANAGER` - StakingManager contract address
 - `PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER` - CheckpointManager contract address
 
-### Registry Service
-
-- `REGISTRY_URL` - Registry HTTP endpoint (default: http://localhost:8092)
-
 ### Local Test Configuration
 
 - `ENABLE_CHAIN_SUBMIT` - Enable blockchain submission (true/false)
@@ -697,12 +592,6 @@ tail -f subnet-logs/agent.log
 - Config files may contain sensitive data (private keys)
 - Use restrictive file permissions: `chmod 600 config/config.yaml`
 - Consider using environment variables instead of config files for production
-
-### Registry Service
-
-- Registry CLI tools are read-only by default
-- Heartbeat endpoints should be authenticated in production
-- Use firewall rules to restrict registry access
 
 ---
 
@@ -739,22 +628,6 @@ pkill -f "bin/matcher"
 pkill -f "bin/validator"
 
 # Or adjust ports/flags in scripts/start-subnet.sh
-```
-
-### Registry CLI Returns Empty Results
-
-**Problem**: `curl: (7) Failed to connect`
-
-**Solution**:
-```bash
-# Check if registry is running
-./scripts/registry-cli.sh health
-
-# Start validator with registry enabled
-./bin/validator --registry-grpc :8092 --registry-http :8093 ...
-
-# Or set REGISTRY_URL
-export REGISTRY_URL="http://your-registry:8092"
 ```
 
 ### Intent Submission Fails

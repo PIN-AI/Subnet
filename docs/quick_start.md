@@ -439,7 +439,7 @@ docker compose down -v
 tail -f subnet-logs/*.log
 
 # Stop services
-pkill -f 'bin/matcher|bin/validator|bin/registry'
+pkill -f 'bin/matcher|bin/validator|bin/simple-agent'
 ```
 
 ---
@@ -456,7 +456,6 @@ subnet-logs/
 ├── validator-1.log       # Validator 1 logs (consensus, validation, checkpoint)
 ├── validator-2.log       # Validator 2 logs
 ├── validator-3.log       # Validator 3 logs
-├── registry.log          # Registry service logs (participant discovery)
 ├── agent.log             # Agent logs (task execution, result submission)
 └── rootlayer.log         # RootLayer mock logs (if using mock-rootlayer)
 ```
@@ -498,7 +497,6 @@ docker compose logs --tail=100 validator-1  # Last 100 lines
 | **Matcher** | `matcher.log` | `Received intent`, `Received bid`, `Selected winner`, `Created assignment` |
 | **Validator** | `validator-*.log` | `Processed execution report`, `Creating ValidationBundle`, `Submitting ValidationBundle`, `Checkpoint submitted` |
 | **Agent** | `agent.log` | `Received task`, `Executing task`, `Submitting execution report`, `Task completed` |
-| **Registry** | `registry.log` | `Registered participant`, `Participant lookup` |
 
 **Example: Tracing an intent through the system:**
 
@@ -552,9 +550,6 @@ grep "ERROR" subnet-logs/matcher.log
 # Check if agent is connected
 grep "Connected to matcher" subnet-logs/agent.log
 
-# Check registration
-grep "Registered" subnet-logs/registry.log
-
 # Check matcher assigned the task
 grep "Created assignment" subnet-logs/matcher.log
 ```
@@ -583,7 +578,7 @@ grep "ERROR" subnet-logs/validator-*.log
 du -h subnet-logs/
 
 # Clear old logs (stops services first!)
-pkill -f 'bin/matcher|bin/validator|bin/registry'
+pkill -f 'bin/matcher|bin/validator|bin/simple-agent'
 rm -rf subnet-logs/*.log
 ./scripts/start-subnet.sh
 

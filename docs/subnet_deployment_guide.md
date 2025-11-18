@@ -10,7 +10,7 @@
 
 **What you'll learn:**
 - Generate and manage validator keys
-- Manually start matcher, validators, and registry
+- Manually start matcher and validators
 - Understand the complete intent execution flow
 - Customize matcher strategies and validator logic
 - Deploy to production with best practices
@@ -188,7 +188,7 @@ Record the returned subnet ID and contract address, then plug them into `.env`.
 The launcher:
 
 - Builds binaries if needed
-- Starts registry, matcher, validators, and the sample agent
+- Starts matcher, validators, and optionally the sample agent
 - Stores logs in `./subnet-logs/`
 - Uses the validator keys and subnet configuration from `.env`
 

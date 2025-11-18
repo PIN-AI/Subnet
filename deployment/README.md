@@ -22,7 +22,6 @@ deployment/
 │   ├── deploy.sh          # Deploy to production
 │   └── export-images.sh   # Export images for distribution
 └── data/                  # Runtime data (mounted as volumes)
-    ├── registry/
     ├── matcher/
     ├── validator-1/
     ├── validator-2/
@@ -114,8 +113,7 @@ docker compose -f docker/docker-compose.yml restart
 
 ## 📊 Monitoring
 
-- Registry:   http://localhost:8101/agents
-- Matcher:    http://localhost:8092/health
+- Matcher:    http://localhost:8094/health (host port mapped from container 8091)
 - Validators: gRPC on 9090, 9091, 9092
 
 ## 🔧 Troubleshooting

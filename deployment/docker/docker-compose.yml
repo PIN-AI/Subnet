@@ -5,30 +5,13 @@ version: '3.8'
 
 services:
   # ============================================
-  # Registry Service
+  # Registry Service - DEPRECATED AND REMOVED
   # ============================================
-  registry:
-    image: pinai-subnet:latest
-    container_name: pinai-registry
-    hostname: registry
-    command: /app/bin/registry -grpc :8091 -http :8101
-    ports:
-      - "8091:8091"  # gRPC
-      - "8101:8101"  # HTTP
-    volumes:
-      - ../data/registry:/app/data              # Data persistence
-      - ../config/auth_config.yaml:/app/config/auth_config.yaml:ro  # Config (read-only)
-    env_file:
-      - ../.env
-    networks:
-      - subnet-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8101/agents"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+  # Registry component has been deprecated. Validator discovery now uses:
+  # - Raft mode: Static peer configuration (--raft-peers)
+  # - Gossip: Static seeds (--gossip-seeds)
+  # - CometBFT: Persistent peers (--cometbft-persistent-peers)
+  # Agents connect directly to matcher via gRPC.
 
   # ============================================
   # Matcher Service
@@ -57,9 +40,6 @@ services:
       - INTENT_MANAGER_ADDR=${INTENT_MANAGER_ADDR}
     networks:
       - subnet-network
-    depends_on:
-      registry:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "nc", "-z", "localhost", "8090"]
@@ -115,8 +95,6 @@ services:
     networks:
       - subnet-network
     depends_on:
-      registry:
-        condition: service_healthy
       matcher:
         condition: service_healthy
     restart: unless-stopped
@@ -168,8 +146,6 @@ services:
     networks:
       - subnet-network
     depends_on:
-      registry:
-        condition: service_healthy
       matcher:
         condition: service_healthy
     restart: unless-stopped
@@ -221,8 +197,6 @@ services:
     networks:
       - subnet-network
     depends_on:
-      registry:
-        condition: service_healthy
       matcher:
         condition: service_healthy
     restart: unless-stopped

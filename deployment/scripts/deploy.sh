@@ -147,7 +147,7 @@ echo ""
 
 # Create data directories
 print_info "Creating data directories..."
-mkdir -p data/registry data/matcher
+mkdir -p data/matcher
 for i in $(seq 1 ${NUM_VALIDATORS:-3}); do
     mkdir -p "data/validator-$i"
 done
@@ -255,7 +255,7 @@ echo ""
 print_info "Starting services..."
 
 # Build list of services to start based on NUM_VALIDATORS
-SERVICES="registry matcher"
+SERVICES="matcher"
 for i in $(seq 1 ${NUM_VALIDATORS:-3}); do
     SERVICES="$SERVICES validator-$i"
 done
@@ -285,13 +285,6 @@ echo ""
 print_info "Performing health checks..."
 sleep 5
 
-# Check Registry
-if curl -s http://localhost:8101/agents > /dev/null 2>&1; then
-    print_success "Registry: Healthy ✓"
-else
-    print_warning "Registry: Not responding (may still be starting)"
-fi
-
 # Check Matcher
 if curl -s http://localhost:8094/health > /dev/null 2>&1; then
     print_success "Matcher: Healthy ✓"
@@ -317,7 +310,6 @@ echo -e "${GREEN}🎉 Deployment Complete!${NC}"
 echo "======================================"
 echo ""
 echo "🌐 Service Addresses:"
-echo "   Registry:     http://localhost:8101/agents"
 echo "   Matcher:      http://localhost:8094/health"
 for i in $(seq 1 $NUM_VALIDATORS); do
     port=$((9089 + i))

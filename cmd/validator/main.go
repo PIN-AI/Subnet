@@ -17,10 +17,10 @@ import (
 	"subnet/internal/config"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
-	"subnet/internal/registry"
+	// "subnet/internal/registry" // REMOVED: Registry component deprecated
 	"subnet/internal/types"
 	"subnet/internal/validator"
-	pb "subnet/proto/subnet"
+	// pb "subnet/proto/subnet" // REMOVED: Only used by deprecated registry code
 )
 
 func main() {
@@ -33,9 +33,10 @@ func main() {
 		grpcPort         = flag.Int("grpc", 9090, "gRPC server port")
 		storagePath      = flag.String("storage", "./data", "Storage path for LevelDB")
 		metricsPort      = flag.Int("metrics", 9095, "Metrics server port")
-		registryGRPC     = flag.String("registry-grpc", ":8091", "Registry gRPC listen address (empty to disable)")
-		registryHTTP     = flag.String("registry-http", ":8092", "Registry HTTP listen address (empty to disable)")
-		registryEndpoint = flag.String("registry-endpoint", "", "Validator endpoint advertised via registry")
+		// REMOVED: Registry component deprecated - use static configuration (raft-peers, gossip-seeds, cometbft-persistent-peers)
+		// registryGRPC     = flag.String("registry-grpc", ":8091", "Registry gRPC listen address (empty to disable)")
+		// registryHTTP     = flag.String("registry-http", ":8092", "Registry HTTP listen address (empty to disable)")
+		// registryEndpoint = flag.String("registry-endpoint", "", "Validator endpoint advertised via registry")
 
 		// Raft consensus configuration
 		raftEnable    = flag.Bool("raft-enable", false, "Enable Raft consensus")
@@ -182,14 +183,12 @@ func main() {
 			}
 		}
 
-		// Apply RPC (Registry) configuration from config file
-		if cfg.RPC.ListenAddr != "" {
-			// If listen_addr is empty string, disable registry
-			// Otherwise use it as the HTTP registry address
-			if *registryHTTP == ":8092" {
-				*registryHTTP = cfg.RPC.ListenAddr
-			}
-		}
+		// REMOVED: RPC (Registry) configuration - Registry component deprecated
+		// if cfg.RPC.ListenAddr != "" {
+		// 	if *registryHTTP == ":8092" {
+		// 		*registryHTTP = cfg.RPC.ListenAddr
+		// 	}
+		// }
 
 		// Apply Raft configuration from config file
 		if cfg.Raft.Enable {
@@ -257,13 +256,14 @@ func main() {
 		log.Fatalf("Invalid consensus type: %s (must be 'raft' or 'cometbft')", consensusType)
 	}
 
-	if *registryEndpoint == "" {
-		port := *metricsPort
-		if port <= 0 {
-			port = *grpcPort
-		}
-		*registryEndpoint = fmt.Sprintf("127.0.0.1:%d", port)
-	}
+	// REMOVED: Registry endpoint configuration - Registry component deprecated
+	// if *registryEndpoint == "" {
+	// 	port := *metricsPort
+	// 	if port <= 0 {
+	// 		port = *grpcPort
+	// 	}
+	// 	*registryEndpoint = fmt.Sprintf("127.0.0.1:%d", port)
+	// }
 
 	// Validate required flags
 	if *validatorID == "" {
@@ -322,7 +322,7 @@ func main() {
 		StoragePath:      *storagePath,
 		GRPCPort:         *grpcPort,
 		MetricsPort:      *metricsPort,
-		RegistryEndpoint: *registryEndpoint,
+		// RegistryEndpoint: REMOVED - Registry component deprecated
 
 		// Consensus timing
 		ProposeTimeout:  5 * time.Second,
@@ -420,32 +420,15 @@ func main() {
 		logger.Info("On-chain agent verification disabled")
 	}
 
-	// Start registry service so agents can register
-	// Start registry service if configured
-	var agentRegistry *registry.Registry
-	if *registryGRPC != "" || *registryHTTP != "" {
-		regService := registry.NewService(*registryGRPC, *registryHTTP)
-		if err := regService.Start(); err != nil {
-			log.Fatalf("Failed to start registry service: %v", err)
-		}
-		defer regService.Stop()
+	// REMOVED: Registry component deprecated
+	// Validator discovery now uses static configuration:
+	// - Raft mode: --raft-peers
+	// - Gossip: --gossip-seeds
+	// - CometBFT: --cometbft-persistent-peers
+	// Agent discovery: Agents connect directly to matcher via gRPC
 
-		agentRegistry = regService.GetRegistry()
-		if *registryEndpoint != "" {
-			_ = agentRegistry.RegisterValidator(&registry.ValidatorInfo{
-				ID:       *validatorID,
-				Endpoint: *registryEndpoint,
-				LastSeen: time.Now(),
-				Status:   pb.AgentStatus_AGENT_STATUS_ACTIVE,
-			})
-		}
-	} else {
-		// Create empty in-memory registry when registry service is disabled
-		agentRegistry = registry.New()
-	}
-
-	// Create validator node with registry
-	node, err := validator.NewNode(config, logger, agentRegistry)
+	// Create validator node (registry parameter removed)
+	node, err := validator.NewNode(config, logger)
 	if err != nil {
 		log.Fatalf("Failed to create validator node: %v", err)
 	}

@@ -34,7 +34,6 @@ deployment/
 │   └── policy_config.yaml     # Validation policies
 │
 ├── data/                      # ✅ Persistent volumes (NOT in git)
-│   ├── registry/              # Registry data
 │   ├── matcher/               # Matcher data
 │   ├── validator-1/           # Validator 1 data
 │   ├── validator-2/           # Validator 2 data
@@ -57,7 +56,6 @@ pinai-subnet:latest
 ├── /app/bin/              # Pre-compiled binaries
 │   ├── validator          # Validator service
 │   ├── matcher            # Matcher service
-│   ├── registry           # Registry service
 │   └── simple-agent       # Agent binary
 ├── /app/entrypoint.sh     # Startup script
 └── Runtime dependencies   # Alpine + tools
@@ -88,7 +86,6 @@ Host: ./config/            →  Container: /app/config/ (read-only)
 
 ```
 Host: ./data/              →  Container: /app/data/ (read-write)
-├── registry/              →  /app/data/ (registry container)
 ├── matcher/               →  /app/data/ (matcher container)
 └── validator-{1,2,3}/     →  /app/data/ (validator containers)
 ```
@@ -208,8 +205,8 @@ User: subnet (UID 1000, non-root)
 Docker Network: subnet-network (172.28.0.0/16)
   ├─ Internal: Services communicate by hostname
   └─ External: Only exposed ports accessible
-     ├─ 8101 → Registry HTTP
      ├─ 8093 → Matcher gRPC
+     ├─ 8094 → Matcher HTTP
      ├─ 9090-9092 → Validator gRPC
      └─ 7400-7402 → Raft consensus
 ```
@@ -369,8 +366,9 @@ tar czf data-backup-$(date +%Y%m%d).tar.gz data/
 
 ```bash
 # Built into docker-compose.yml
+# Example for matcher service:
 healthcheck:
-  test: ["CMD", "curl", "-f", "http://localhost:8101/agents"]
+  test: ["CMD", "nc", "-z", "localhost", "8090"]
   interval: 30s
   timeout: 10s
   retries: 3
