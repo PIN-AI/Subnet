@@ -24,7 +24,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default values
-CONFIG_FILE="${PROJECT_ROOT}/config/config.yaml"
+CONFIG_FILE="${PROJECT_ROOT}/config/blockchain.yaml"
 NETWORK="${NETWORK:-base_sepolia}"
 RPC_URL="${RPC_URL:-https://sepolia.base.org}"
 PRIVATE_KEY="${PRIVATE_KEY}"
@@ -72,7 +72,7 @@ Usage: $0 [OPTIONS]
 Create a new subnet on the blockchain.
 
 Options:
-  --config FILE         Path to config file (default: config/config.yaml)
+  --config FILE         Path to config file (default: config/blockchain.yaml)
   --network NAME        Network name (default: base_sepolia)
   --rpc URL             RPC URL (overrides config)
   --key HEX             Private key hex (overrides config)

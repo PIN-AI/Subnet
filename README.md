@@ -82,7 +82,7 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 - `cmd/simple-agent` – demo agent built on the Go SDK (production agents should live in the [Agent SDK repo](https://github.com/PIN-AI/subnet-sdk))
 - `internal/` – shared packages (matcher, validator, consensus FSM, rootlayer client, storage, grpc interceptors, logging, metrics, messaging, types, crypto)
 - `proto/` – generated protobufs for subnet and rootlayer APIs
-- `config/` – sample validator configuration (`config.yaml`)
+- `config/` – configuration templates (`subnet.yaml.template`, `validator.yaml.template`, `blockchain.yaml.template`)
 - `docs/` – comprehensive documentation (guides, architecture, troubleshooting)
 
 ## Build & Test
@@ -161,10 +161,10 @@ For development and debugging:
 ./bin/matcher -grpc :8090 -http :8091
 
 # Terminal 2 – Validator
-# Option 1: Use config file (single-node only)
-./bin/validator -config config/config.yaml -id validator-1 -key <your_private_key_hex>
+# Option 1: Use hierarchical config files (recommended)
+./bin/validator --subnet-config config/subnet.yaml --validator-config config/validator-1.yaml --key <your_private_key_hex>
 
-# Option 2: Use command-line parameters only
+# Option 2: Use command-line parameters only (advanced)
 ./bin/validator \
   -id validator-1 \
   -key <your_private_key_hex> \
@@ -253,7 +253,7 @@ VALIDATOR_PUBKEYS="$PUBKEY1,$PUBKEY2,$PUBKEY3"
 
 ### On-Chain Participant Verification
 
-The matcher and validator can optionally verify participants against the Subnet contract. Set the `blockchain` section in `config/config.yaml` or the `CHAIN_*` environment variables (`CHAIN_ENABLED`, `CHAIN_RPC_URL`, `SUBNET_CONTRACT_ADDRESS`, `CHAIN_ENABLE_FALLBACK`, `ALLOW_UNVERIFIED_AGENTS`) to enable it. A helper script `scripts/register_subnet_components.go` registers matchers or validators on-chain, while `scripts/check_registration.go` inspects the current on-chain status.
+The matcher and validator can optionally verify participants against the Subnet contract. Set the `blockchain` section in `config/blockchain.yaml` or the `CHAIN_*` environment variables (`CHAIN_ENABLED`, `CHAIN_RPC_URL`, `SUBNET_CONTRACT_ADDRESS`, `CHAIN_ENABLE_FALLBACK`, `ALLOW_UNVERIFIED_AGENTS`) to enable it. Helper scripts `scripts/create-subnet.sh` and `scripts/register.sh` handle blockchain operations using the SDK.
 
 ## Protobuf Regeneration
 

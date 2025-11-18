@@ -30,6 +30,12 @@ subnet-logs/
 .env.local
 .env.*.local
 
+# Production configuration files (keep templates only)
+config/subnet.yaml
+config/validator-*.yaml
+config/blockchain.yaml
+!config/*.template
+
 # Subnet info files (contain subnet IDs and contract addresses)
 subnet-info-*.txt
 subnets/

@@ -1,0 +1,134 @@
+# =============================================================================
+# Validator-Specific Configuration Template
+# Load this together with subnet.yaml
+# =============================================================================
+#
+# USAGE:
+#   1. Copy this file: cp validator.yaml.template validator-N.yaml
+#   2. Replace N with your validator number (e.g., validator-1.yaml)
+#   3. Fill in validator-specific values
+#   4. DO NOT duplicate settings from subnet.yaml
+#
+# =============================================================================
+
+# Validator identity (required)
+identity:
+  # IMPORTANT: Must match one of the validator IDs in subnet.yaml
+  validator_id: "validator-1"
+
+  # Subnet ID (can be omitted if defined in subnet.yaml)
+  # subnet_id: "0x..."
+
+# =============================================================================
+# Private Key (VALIDATOR-SPECIFIC)
+# WARNING: NEVER commit real keys to git!
+# Use environment variables or secure key management in production
+# =============================================================================
+# Option 1: Load from file (recommended for production)
+# private_key_file: "/secure/path/to/validator-1.key"
+
+# Option 2: Inline (for testing only - DO NOT USE IN PRODUCTION)
+# Set via command line: --key <PRIVATE_KEY>
+
+# =============================================================================
+# Network Configuration (VALIDATOR-SPECIFIC)
+# =============================================================================
+network:
+  # gRPC port for this validator
+  # Each validator must use a unique port
+  validator_grpc_port: ":9090"
+
+  # Metrics port for this validator
+  # Each validator must use a unique port
+  metrics_port: ":9095"
+
+# =============================================================================
+# Storage Configuration (VALIDATOR-SPECIFIC)
+# Each validator MUST have its own data directory
+# =============================================================================
+storage:
+  # LevelDB path for this validator's state
+  # IMPORTANT: Each validator must have a unique path
+  leveldb_path: "./data/validator-1.db"
+
+# =============================================================================
+# Raft Configuration (VALIDATOR-SPECIFIC)
+# =============================================================================
+raft:
+  # Enable Raft consensus
+  enable: true
+
+  # Bootstrap: Only the FIRST validator should set this to true
+  # All other validators should set this to false
+  bootstrap: true
+
+  # Bind address (local interface this validator listens on)
+  # Use 0.0.0.0 to listen on all interfaces
+  bind: "0.0.0.0:7400"
+
+  # Advertise address (how other validators reach this validator)
+  # For production: use public IP or domain
+  # For local testing: use localhost
+  advertise: "localhost:7400"
+
+  # Data directory (MUST be unique per validator)
+  data_dir: "./data/validator-1/raft"
+
+  # Peers list is AUTO-POPULATED from subnet.yaml validator_set
+  # No need to manually configure peers here
+
+# =============================================================================
+# Gossip Configuration (VALIDATOR-SPECIFIC)
+# =============================================================================
+gossip:
+  # Enable Gossip for signature propagation
+  enable: true
+
+  # Bind address (local interface)
+  bind_address: "0.0.0.0"
+
+  # Bind port (MUST be unique per validator)
+  bind_port: 7950
+
+  # Gossip interval (how often to gossip)
+  gossip_interval: 200ms
+
+  # Probe interval (how often to check peer health)
+  probe_interval: 1s
+
+  # Seeds are AUTO-POPULATED from subnet.yaml validator_set
+  # No need to manually configure seeds here
+
+# =============================================================================
+# Metrics (VALIDATOR-SPECIFIC)
+# =============================================================================
+metrics:
+  enabled: true
+
+  # Metrics listen address (must match metrics_port above)
+  listen_addr: "0.0.0.0:9095"
+
+# =============================================================================
+# NOTES
+# =============================================================================
+# 1. Only bootstrap=true for the FIRST validator
+#    All other validators should set bootstrap=false
+#
+# 2. Each validator needs unique values for:
+#    - validator_id
+#    - validator_grpc_port
+#    - metrics_port
+#    - storage.leveldb_path
+#    - raft.bind and raft.advertise
+#    - raft.data_dir
+#    - gossip.bind_port
+#    - metrics.listen_addr
+#
+# 3. Raft peers and Gossip seeds are automatically populated from
+#    subnet.yaml validator_set - no manual configuration needed
+#
+# 4. For production deployment:
+#    - Use secure key management (HSM, KMS, or encrypted files)
+#    - Enable TLS in subnet.yaml
+#    - Use domain names or public IPs for advertise addresses
+#    - Set allow_unverified: false in subnet.yaml
