@@ -1,6 +1,6 @@
 # PinAI Subnet Template
 
-**Production-ready Subnet template** for building custom intent execution networks on PinAI protocol. This implementation coordinates matcher, validator, and registry services with built-in batch submission support for high-throughput operations.
+**Production-ready Subnet template** for building custom intent execution networks on PinAI protocol. This implementation coordinates matcher and validator services with built-in batch submission support for high-throughput operations.
 
 ## 🚀 What is This?
 
@@ -78,7 +78,6 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 - `cmd/matcher` – matcher gRPC server with bidding windows and task streams
 - `cmd/validator` – validator node receiving execution reports and broadcasting signatures
-- `cmd/registry` – lightweight discovery service for agents and validators
 - `cmd/mock-rootlayer` – mock RootLayer for local intent generation
 - `cmd/simple-agent` – demo agent built on the Go SDK (production agents should live in the [Agent SDK repo](https://github.com/PIN-AI/subnet-sdk))
 - `internal/` – shared packages (matcher, validator, consensus FSM, rootlayer client, storage, grpc interceptors, logging, metrics, messaging, types, crypto)
@@ -90,7 +89,7 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 
 ```bash
 cd Subnet
-make build       # builds matcher, validator, registry, mock-rootlayer, simple-agent
+make build       # builds matcher, validator, mock-rootlayer, simple-agent
 make test        # go test ./...
 make proto       # regenerate Go protobufs from ../pin_protocol
 ```
@@ -105,7 +104,6 @@ subnet-logs/
 ├── validator-1.log    # Consensus, validation, checkpoint
 ├── validator-2.log
 ├── validator-3.log
-├── registry.log       # Participant discovery
 ├── agent.log          # Task execution, results
 └── rootlayer.log      # RootLayer mock (if used)
 ```
@@ -135,7 +133,6 @@ You can also build individual binaries:
 ```bash
 go build -o bin/validator ./cmd/validator
 go build -o bin/matcher   ./cmd/matcher
-go build -o bin/registry  ./cmd/registry
 go build -o bin/mock-rootlayer ./cmd/mock-rootlayer
 go build -o bin/simple-agent   ./cmd/simple-agent
 ```
@@ -151,7 +148,7 @@ Use the automated startup script:
 cp .env.example .env
 # Edit .env and fill in VALIDATOR_KEYS and VALIDATOR_PUBKEYS (see the "Validator Keys" section below)
 
-# Start complete subnet (matcher + validators + registry)
+# Start complete subnet (matcher + validators + agent)
 ./scripts/start-subnet.sh
 ```
 
@@ -160,13 +157,10 @@ cp .env.example .env
 For development and debugging:
 
 ```bash
-# Terminal 1 – Registry (Raft mode only)
-./bin/registry -grpc :8091 -http :8101
-
-# Terminal 2 – Matcher
+# Terminal 1 – Matcher
 ./bin/matcher -grpc :8090 -http :8091
 
-# Terminal 3 – Validator
+# Terminal 2 – Validator
 # Option 1: Use config file (single-node only)
 ./bin/validator -config config/config.yaml -id validator-1 -key <your_private_key_hex>
 

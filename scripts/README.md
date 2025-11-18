@@ -25,7 +25,7 @@ This directory contains all operational scripts and tools for the PinAI Subnet p
 ### Startup & Shutdown
 
 #### `start-subnet.sh`
-**Purpose**: Start complete subnet (registry + matcher + validators + agent)
+**Purpose**: Start complete subnet (matcher + validators + optional agent)
 
 **Features**:
 - Supports both Raft and CometBFT consensus modes
@@ -270,21 +270,6 @@ go build -o bin/derive-pubkey scripts/derive-pubkey.go
 ./bin/derive-pubkey --private-key 0x...
 ```
 
-### `registry-cli.sh`
-**Purpose**: Registry service CLI tool
-
-**Usage**:
-```bash
-# List all registered validators
-./scripts/registry-cli.sh list-validators
-
-# List all agents
-./scripts/registry-cli.sh list-agents
-
-# Query validator status
-./scripts/registry-cli.sh get-validator validator-1
-```
-
 ### `fund-validators.py`
 **Purpose**: Fund validator accounts (for testing)
 
@@ -340,7 +325,7 @@ The project supports both Raft and CometBFT consensus modes. The following scrip
 ```
 Startup Flow:
   start-subnet.sh
-    ├── bin/registry (service discovery)
+    # Note: bin/registry removed (service discovery now uses static configuration)
     ├── bin/matcher (task distribution)
     ├── bin/validator (validators × N)
     └── bin/simple-agent (optional)

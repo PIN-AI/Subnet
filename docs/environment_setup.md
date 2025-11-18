@@ -61,7 +61,7 @@ Complete guide for setting up your development environment for PinAI Subnet.
 
 **Version Required**: Go 1.24.0 or later
 
-Go is the primary language for Subnet components (Matcher, Validator, Registry).
+Go is the primary language for Subnet components (Matcher, Validator).
 
 **Why needed**:
 - Compile Subnet binaries
@@ -106,7 +106,7 @@ Version control system.
 
 3. **jq**
    - JSON parsing in scripts
-   - Registry CLI formatting
+   - Script formatting and output
    - Not required but highly recommended
 
 ### For Blockchain Interaction
@@ -331,7 +331,6 @@ make build
 # This creates binaries in ./bin/:
 # - matcher
 # - validator
-# - registry
 # - mock-rootlayer
 # - simple-agent
 ```
@@ -690,9 +689,6 @@ export PIN_BASE_SEPOLIA_SUBNET_FACTORY="0x..."
 ### Optional
 
 ```bash
-# Registry
-export REGISTRY_URL="http://localhost:8092"
-
 # Testing
 export ENABLE_CHAIN_SUBMIT="true"
 export CHAIN_RPC_URL="https://sepolia.base.org"

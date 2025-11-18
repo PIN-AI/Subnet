@@ -104,7 +104,6 @@ deployment/
 │   ├── auth_config.yaml
 │   └── policy_config.yaml
 ├── data/                   # Persistent volumes (NOT in git)
-│   ├── registry/
 │   ├── matcher/
 │   └── validator-{1,2,3}/
 └── scripts/
@@ -140,7 +139,6 @@ After deployment:
 
 | Service | Port | URL/Address |
 |---------|------|-------------|
-| Registry | 8101 | http://localhost:8101/agents |
 | Matcher gRPC | 8093 | localhost:8093 |
 | Matcher HTTP | 8094 | http://localhost:8094/health |
 | Validator-1 | 9090 | localhost:9090 |
@@ -211,9 +209,6 @@ docker compose -f docker/docker-compose.yml up -d
 ### Check Service Health
 
 ```bash
-# Registry
-curl http://localhost:8101/agents
-
 # Matcher
 curl http://localhost:8094/health
 
@@ -260,13 +255,12 @@ Typical resource usage per service:
 
 | Service | CPU | Memory | Disk |
 |---------|-----|--------|------|
-| Registry | ~5% | ~50MB | ~10MB |
 | Matcher | ~10% | ~100MB | ~50MB |
 | Validator | ~15% | ~200MB | ~500MB |
 
 **Total for 3-validator cluster:**
-- CPU: ~60%
-- Memory: ~800MB
+- CPU: ~55%
+- Memory: ~750MB
 - Disk: ~2GB (with data)
 
 ---

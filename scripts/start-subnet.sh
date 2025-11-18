@@ -126,7 +126,7 @@ echo ""
 print_info "Cleaning up old processes..."
 pkill -f "bin/matcher" 2>/dev/null || true
 pkill -f "bin/validator" 2>/dev/null || true
-pkill -f "bin/registry" 2>/dev/null || true
+# pkill -f "bin/registry" 2>/dev/null || true  # Registry deprecated
 pkill -f "bin/test-agent" 2>/dev/null || true
 pkill -f "bin/simple-agent" 2>/dev/null || true
 sleep 1
@@ -143,7 +143,7 @@ print_success "Logs directory: $LOGS_DIR"
 
 print_info "Checking binaries..."
 cd "$PROJECT_ROOT"
-if [ ! -f "bin/validator" ] || [ ! -f "bin/matcher" ] || [ ! -f "bin/registry" ]; then
+if [ ! -f "bin/validator" ] || [ ! -f "bin/matcher" ]; then
     print_info "Building binaries..."
     make build
     print_success "Build complete"
@@ -223,30 +223,18 @@ echo "🎬 Starting services..."
 echo "=================================="
 
 # ============================================
-# Start Registry (optional, based on consensus type)
+# Start Registry (DEPRECATED - removed)
 # ============================================
+# Registry component has been deprecated and removed.
+# Validator discovery now uses static configuration:
+# - Raft mode: --raft-peers
+# - Gossip: --gossip-seeds
+# - CometBFT: --cometbft-persistent-peers
+#
+# Agent discovery: Agents connect directly to matcher via gRPC
+# No centralized registry service needed.
 
-if [ "$CONSENSUS_TYPE" = "raft" ]; then
-    print_info "Starting Registry service..."
-    "$PROJECT_ROOT/bin/registry" \
-        -grpc ":8091" \
-        -http ":8101" \
-        > "$LOGS_DIR/registry.log" 2>&1 &
-    REGISTRY_PID=$!
-    sleep 2
-
-    if kill -0 $REGISTRY_PID 2>/dev/null; then
-        print_success "Registry started (PID: $REGISTRY_PID)"
-        echo "   - gRPC: localhost:8091"
-        echo "   - HTTP: localhost:8101"
-    else
-        print_error "Registry failed to start"
-        cat "$LOGS_DIR/registry.log"
-        exit 1
-    fi
-else
-    print_info "Skipping Registry (not needed for CometBFT)"
-fi
+print_info "Registry service skipped (component deprecated)"
 
 # ============================================
 # Start Matcher
@@ -376,8 +364,6 @@ if [ "$CONSENSUS_TYPE" = "raft" ]; then
             -key "$VALIDATOR_KEY" \
             -storage "$LOGS_DIR/val${i}-storage" \
             -rootlayer-endpoint "$ROOTLAYER_GRPC" \
-            -registry-grpc "" \
-            -registry-http "" \
             -chain-rpc-url "$CHAIN_RPC_URL" \
             -chain-network "$CHAIN_NETWORK" \
             -intent-manager-addr "$INTENT_MANAGER_ADDR" \
@@ -486,8 +472,6 @@ else
             --grpc=$GRPC_PORT \
             --metrics=$METRICS_PORT \
             --storage="$COMETBFT_DIR/validator${i}/storage" \
-            --registry-grpc="" \
-            --registry-http="" \
             --rootlayer-endpoint="$ROOTLAYER_GRPC" \
             --enable-rootlayer=true \
             --consensus-type=cometbft \
@@ -563,9 +547,7 @@ echo -e "${GREEN}✅ All services started!${NC}"
 echo "=================================="
 echo ""
 echo "📊 Service Status:"
-if [ "$CONSENSUS_TYPE" = "raft" ]; then
-    echo "   Registry:   gRPC=localhost:8091, HTTP=localhost:8101"
-fi
+# Registry service deprecated - removed from startup
 echo "   Matcher:    gRPC=localhost:8090, HTTP=localhost:8091 (Subnet: $MATCHER_SUBNET_ID)"
 echo "   Validators: $NUM_VALIDATORS ($CONSENSUS_TYPE)"
 for i in $(seq 1 $NUM_VALIDATORS); do
@@ -606,7 +588,7 @@ if [ "$CONSENSUS_TYPE" = "cometbft" ]; then
 fi
 
 echo "🛑 To stop all services:"
-echo "   pkill -f 'bin/matcher|bin/validator|bin/registry|bin/simple-agent'"
+echo "   pkill -f 'bin/matcher|bin/validator|bin/simple-agent'"
 echo ""
 
 # ============================================
@@ -618,7 +600,7 @@ if [ "$TEST_MODE" = "true" ]; then
     exit 0
 else
     echo "Press Ctrl+C to stop all services..."
-    trap 'echo ""; print_info "Stopping services..."; pkill -f "bin/matcher|bin/validator|bin/registry|bin/simple-agent"; print_success "All services stopped"; exit 0' INT
+    trap 'echo ""; print_info "Stopping services..."; pkill -f "bin/matcher|bin/validator|bin/simple-agent"; print_success "All services stopped"; exit 0' INT
 
     while true; do
         sleep 1

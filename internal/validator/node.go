@@ -21,7 +21,7 @@ import (
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/metrics"
-	"subnet/internal/registry"
+	// "subnet/internal/registry" // REMOVED: Registry component deprecated
 	"subnet/internal/rootlayer"
 	"subnet/internal/storage"
 	"subnet/internal/types"
@@ -73,9 +73,9 @@ type Node struct {
 	// SDK client for blockchain operations
 	sdkClient *sdk.Client
 
-	// Agent registry
-	agentRegistry *registry.Registry
-	validatorHB   context.CancelFunc
+	// Agent registry - REMOVED: Registry component deprecated
+	// agentRegistry *registry.Registry
+	validatorHB context.CancelFunc
 
 	// Metrics
 	metrics       metrics.Provider
@@ -122,8 +122,9 @@ type Config struct {
 	StoragePath               string
 	GRPCPort                  int
 	MetricsPort               int
-	RegistryEndpoint          string
-	RegistryHeartbeatInterval time.Duration
+	// REMOVED: Registry component deprecated
+	// RegistryEndpoint          string
+	// RegistryHeartbeatInterval time.Duration
 
 	// Use unified config structures
 	Timeouts *config.TimeoutConfig
@@ -202,7 +203,8 @@ type RaftPeerConfig struct {
 }
 
 // NewNode creates a new validator node
-func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry) (*Node, error) {
+// UPDATED: Removed agentReg parameter - Registry component deprecated
+func NewNode(config *Config, logger logging.Logger) (*Node, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
@@ -293,7 +295,7 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 		store:            store,
 		rootlayerClient:  rootClient,
 		sdkClient:        sdkClient,
-		agentRegistry:    agentReg,
+		// agentRegistry: REMOVED - Registry component deprecated
 		metrics:          metrics.Noop{},
 		pendingReports:   make(map[string]*pb.ExecutionReport),
 		reportScores:     make(map[string]int32),
@@ -901,11 +903,13 @@ func (n *Node) Stop() error {
 		n.sdkClient.Close()
 	}
 
-	if n.agentRegistry != nil {
-		if err := n.agentRegistry.RemoveValidator(n.id); err != nil {
-			n.logger.Warnf("Failed to remove validator from registry error=%v", err)
-		}
-	}
+	// DEPRECATED: Registry component removed
+	// Validator cleanup no longer requires registry de-registration
+	// if n.agentRegistry != nil {
+	// 	if err := n.agentRegistry.RemoveValidator(n.id); err != nil {
+	// 		n.logger.Warnf("Failed to remove validator from registry error=%v", err)
+	// 	}
+	// }
 
 	if n.metricsServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1305,7 +1309,9 @@ func (n *Node) buildCheckpointHeader() *pb.CheckpointHeader {
 
 	// Compute merkle roots
 	stateRoot := n.computeStateRoot()
-	agentRoot := n.computeAgentRoot()
+	// DEPRECATED: AgentRoot not used in validation/RootLayer submission
+	// Registry component removed, returning zero hash for backwards compatibility
+	agentRoot := make([]byte, 32) // Zero hash placeholder
 	eventRoot := n.computeEventRoot()
 
 	header := &pb.CheckpointHeader{
@@ -1366,30 +1372,16 @@ func (n *Node) computeStateRoot() []byte {
 	return crypto.ComputeStateRoot(validatorIDs, balances)
 }
 
-// computeAgentRoot computes the agent merkle root
-func (n *Node) computeAgentRoot() []byte {
-	// Get agents from registry
-	agents := []string{}
-	statuses := []string{}
-
-	if n.agentRegistry != nil {
-		agentList := n.agentRegistry.ListAgents()
-		for _, agent := range agentList {
-			agents = append(agents, agent.ID)
-
-			// Map status to string
-			statusStr := "inactive"
-			if agent.Status == pb.AgentStatus_AGENT_STATUS_ACTIVE {
-				statusStr = "active"
-			} else if agent.Status == pb.AgentStatus_AGENT_STATUS_UNHEALTHY {
-				statusStr = "unhealthy"
-			}
-			statuses = append(statuses, statusStr)
-		}
-	}
-
-	return crypto.ComputeAgentRoot(agents, statuses)
-}
+// DELETED: computeAgentRoot() function removed
+// Reason: AgentRoot is not validated or consumed by any component.
+// The field is kept in CheckpointHeader for backwards compatibility but set to zero hash.
+// Old implementation relied on registry component which has been deprecated.
+//
+// Historical context:
+// - Previously computed merkle root from registry.ListAgents()
+// - Used in CheckpointHeader.Roots.AgentRoot
+// - Never validated by RootLayer, consensus, or chain manager
+// - Registry discovery replaced by static configuration (raft-peers, gossip, cometbft)
 
 // computeEventRoot computes the event/report merkle root
 func (n *Node) computeEventRoot() []byte {
@@ -1597,46 +1589,53 @@ func (n *Node) recordMetrics(state consensus.State) {
 }
 
 func (n *Node) startValidatorRegistry() {
-	if n.agentRegistry == nil || n.config.RegistryEndpoint == "" {
-		return
-	}
+	// DEPRECATED: Registry component removed
+	// Validator discovery now uses static configuration (raft-peers, gossip-seeds, cometbft-persistent-peers)
+	// No-op: registry registration and heartbeat are no longer needed
+	n.logger.Debug("Registry registration skipped (registry component deprecated)")
+	return
 
-	info := &registry.ValidatorInfo{
-		ID:       n.id,
-		Endpoint: n.config.RegistryEndpoint,
-		LastSeen: time.Now(),
-		Status:   pb.AgentStatus_AGENT_STATUS_ACTIVE,
-	}
-
-	if err := n.agentRegistry.RegisterValidator(info); err != nil {
-		n.logger.Warnf("Failed to register validator in registry error=%v", err)
-		return
-	}
-
-	ctx, cancel := context.WithCancel(n.ctx)
-	n.validatorHB = cancel
-	go n.validatorHeartbeat(ctx)
+	// OLD IMPLEMENTATION (registry-based, now unused):
+	// if n.agentRegistry == nil || n.config.RegistryEndpoint == "" {
+	// 	return
+	// }
+	// info := &registry.ValidatorInfo{
+	// 	ID:       n.id,
+	// 	Endpoint: n.config.RegistryEndpoint,
+	// 	LastSeen: time.Now(),
+	// 	Status:   pb.AgentStatus_AGENT_STATUS_ACTIVE,
+	// }
+	// if err := n.agentRegistry.RegisterValidator(info); err != nil {
+	// 	n.logger.Warnf("Failed to register validator in registry error=%v", err)
+	// 	return
+	// }
+	// ctx, cancel := context.WithCancel(n.ctx)
+	// n.validatorHB = cancel
+	// go n.validatorHeartbeat(ctx)
 }
 
 func (n *Node) validatorHeartbeat(ctx context.Context) {
-	interval := n.config.RegistryHeartbeatInterval
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
+	// DEPRECATED: Registry component removed
+	// No-op: heartbeat no longer sent to registry
+	return
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := n.agentRegistry.UpdateValidatorHeartbeat(n.id); err != nil {
-				n.logger.Warnf("Failed to update validator heartbeat error=%v", err)
-			}
-		}
-	}
+	// OLD IMPLEMENTATION (registry-based, now unused):
+	// interval := n.config.RegistryHeartbeatInterval
+	// if interval <= 0 {
+	// 	interval = 30 * time.Second
+	// }
+	// ticker := time.NewTicker(interval)
+	// defer ticker.Stop()
+	// for {
+	// 	select {
+	// 	case <-ctx.Done():
+	// 		return
+	// 	case <-ticker.C:
+	// 		if err := n.agentRegistry.UpdateValidatorHeartbeat(n.id); err != nil {
+	// 			n.logger.Warnf("Failed to update validator heartbeat error=%v", err)
+	// 		}
+	// 	}
+	// }
 }
 
 type httpExecutionReport struct {
@@ -2574,9 +2573,10 @@ func (c *Config) applyDefaults() {
 		c.Raft.MaxPool = 3
 	}
 
-	if c.RegistryHeartbeatInterval <= 0 {
-		c.RegistryHeartbeatInterval = 30 * time.Second
-	}
+	// REMOVED: Registry component deprecated
+	// if c.RegistryHeartbeatInterval <= 0 {
+	// 	c.RegistryHeartbeatInterval = 30 * time.Second
+	// }
 }
 
 func (c *Config) buildRaftConsensusConfig() (consensus.RaftConfig, error) {

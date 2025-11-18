@@ -4,7 +4,7 @@ SHELL := /bin/bash
 
 all: build
 
-build: build-matcher build-simple-agent build-mock-rootlayer build-registry build-validator build-test-agent build-scripts
+build: build-matcher build-simple-agent build-mock-rootlayer build-validator build-test-agent build-scripts
 
 # Auto-detect architecture (default to amd64 for compatibility)
 ARCH ?= $(shell uname -m | sed 's/x86_64/amd64/g' | sed 's/aarch64/arm64/g')
@@ -13,7 +13,7 @@ ifeq ($(ARCH),)
 endif
 
 # Build Linux binaries for Docker deployment (auto-detect architecture)
-build-linux: build-linux-matcher build-linux-registry build-linux-validator build-linux-simple-agent
+build-linux: build-linux-matcher build-linux-validator build-linux-simple-agent
 	@echo "Built Linux binaries for architecture: $(ARCH)"
 
 # Build Linux binaries for AMD64 (x86_64) - most common server architecture
@@ -30,9 +30,7 @@ build-linux-matcher:
 	@echo "Building Matcher for Linux $(ARCH)..."
 	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/matcher cmd/matcher/main.go
 
-build-linux-registry:
-	@echo "Building Registry for Linux $(ARCH)..."
-	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/registry cmd/registry/main.go
+# build-linux-registry: REMOVED - Registry component deprecated
 
 build-linux-validator:
 	@echo "Building Validator for Linux $(ARCH)..."
@@ -62,9 +60,7 @@ build-validator:
 	@echo "Building Validator..."
 	@go build -o bin/validator cmd/validator/main.go
 
-build-registry:
-	@echo "Building Registry Service..."
-	@go build -o bin/registry cmd/registry/main.go
+# build-registry: REMOVED - Registry component deprecated
 
 build-test-agent:
 	@echo "Building Test Agent..."
@@ -118,6 +114,8 @@ proto-from-pin:
 		--go_out=paths=source_relative:. \
 		--go-grpc_out=paths=source_relative:. \
 		../pin_protocol/proto/subnet/*.proto
+	@echo "[INFO] Removing deprecated registry service proto files..."
+	@rm -f ./proto/subnet/registry_service.pb.go ./proto/subnet/registry_service_grpc.pb.go
 	@echo "[INFO] Protobuf code generation from pin_protocol (subnet) complete"
 
 proto-rootlayer:
