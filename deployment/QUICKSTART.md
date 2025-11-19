@@ -18,7 +18,8 @@
 
 ```bash
 # On development machine
-cd /Users/ty/pinai/protocol/Subnet
+# Navigate to the Subnet project root
+cd <your-path-to-subnet-repo>
 
 # ⚠️ IMPORTANT: Compile LINUX binaries for Docker!
 # For Apple Silicon (M1/M2/M3):
