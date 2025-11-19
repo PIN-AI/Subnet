@@ -72,8 +72,8 @@ The only requirement? **Speak the protocol.** As long as your components impleme
 > - **Get testnet ETH**: [Coinbase Faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet) or bridge from Sepolia
 > - **Verify**: Check your balance at [Base Sepolia Explorer](https://sepolia.basescan.org/)
 
-1. **[Quick Start](docs/quick_start.md)** – Choose deployment method + registration workflow
-2. **[Environment Setup](docs/environment_setup.md)** – Install Go, Docker, dependencies
+1. **[Environment Setup](docs/environment_setup.md)** – Install Go, Docker, dependencies
+2. **[Quick Start](docs/quick_start.md)** – Choose deployment method + registration workflow
 3. **Deploy** (pick one):
    - ⭐ **Recommended**: [Docker Deployment](deployment/README.md) – 3-node cluster in 5 minutes
    - 🔧 **Advanced**: [Subnet Deployment Guide](docs/subnet_deployment_guide.md) – Manual setup with full control
