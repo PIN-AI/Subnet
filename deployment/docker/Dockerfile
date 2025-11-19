@@ -4,10 +4,15 @@
 
 FROM alpine:latest
 
+# Build argument for architecture (arm64 or amd64)
+# Default to arm64 for Apple Silicon
+ARG TARGETARCH=arm64
+
 # Metadata
 LABEL org.opencontainers.image.title="PinAI Subnet"
-LABEL org.opencontainers.image.description="PinAI Subnet Validator/Matcher/Registry - Binary Distribution"
+LABEL org.opencontainers.image.description="PinAI Subnet Validator/Matcher - Binary Distribution"
 LABEL org.opencontainers.image.vendor="PIN AI"
+LABEL org.opencontainers.image.architecture="${TARGETARCH}"
 
 # Install minimal runtime dependencies
 RUN apk add --no-cache \
@@ -24,12 +29,12 @@ RUN addgroup -g 1000 subnet && \
 # Set working directory
 WORKDIR /app
 
-# Copy pre-compiled binaries
-# IMPORTANT: These must be built before running docker build
-COPY bin/validator /app/bin/validator
-COPY bin/matcher /app/bin/matcher
-COPY bin/registry /app/bin/registry
-COPY bin/simple-agent /app/bin/simple-agent
+# Copy pre-compiled binaries from architecture-specific directory
+# IMPORTANT: Binaries must be built first with: make build-linux-arm64 or make build-linux-amd64
+# This ensures we copy Linux ELF binaries (not macOS Mach-O)
+COPY bin/linux-${TARGETARCH}/validator /app/bin/validator
+COPY bin/linux-${TARGETARCH}/matcher /app/bin/matcher
+COPY bin/linux-${TARGETARCH}/simple-agent /app/bin/simple-agent
 
 # Copy entrypoint script
 COPY deployment/docker/entrypoint.sh /app/entrypoint.sh
