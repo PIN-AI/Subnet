@@ -9,26 +9,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
-	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/nats-io/nats.go"
-	"google.golang.org/protobuf/proto"
-	rootpb "rootlayer/proto"
 	"subnet/internal/config"
 	"subnet/internal/consensus"
+	"subnet/internal/consensus/cometbft"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/metrics"
-	"subnet/internal/registry"
+	// "subnet/internal/registry" // REMOVED: Registry component deprecated
 	"subnet/internal/rootlayer"
 	"subnet/internal/storage"
 	"subnet/internal/types"
+	rootpb "subnet/proto/rootlayer"
 	pb "subnet/proto/subnet"
+
+	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
+	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
+	"github.com/ethereum/go-ethereum/common"
+	"google.golang.org/protobuf/proto"
+)
+
+const (
+	// MaxIntentsPerEpoch defines the maximum number of Intents that can be included in a single epoch
+	// This limit is enforced BEFORE signing to ensure the items_hash covers exactly these Intents
+	// Remaining Intents will wait for the next epoch
+	MaxIntentsPerEpoch = 10
+
+	// keepRecentEpochs defines how many recent epochs' data to keep in memory
+	// Older epochs will be cleaned up to prevent memory leaks
+	keepRecentEpochs = 3
 )
 
 // Node represents a validator node in the subnet
@@ -42,17 +56,16 @@ type Node struct {
 	logger       logging.Logger
 
 	// Consensus components
-	fsm           *consensus.StateMachine
-	leaderTracker *consensus.LeaderTracker
-	chain         *consensus.Chain
+	raftConsensus     *consensus.RaftConsensus
+	cometbftConsensus *cometbft.Consensus
+	gossipManager     *consensus.GossipManager
+	gossipDelegate    *consensus.SignatureGossipDelegate
+	fsm               *consensus.StateMachine
+	leaderTracker     *consensus.LeaderTracker
+	chain             *consensus.Chain
 
 	// Storage
 	store storage.Store
-
-	// Network
-	broadcaster consensus.Broadcaster
-	natsConn    *nats.Conn
-	natsSubs    []*nats.Subscription
 
 	// RootLayer client
 	rootlayerClient rootlayer.Client
@@ -60,17 +73,18 @@ type Node struct {
 	// SDK client for blockchain operations
 	sdkClient *sdk.Client
 
-	// Agent registry
-	agentRegistry *registry.Registry
-	validatorHB   context.CancelFunc
+	// Agent registry - REMOVED: Registry component deprecated
+	// agentRegistry *registry.Registry
+	validatorHB context.CancelFunc
 
 	// Metrics
 	metrics       metrics.Provider
 	metricsServer *http.Server
 
 	// Execution reports
-	pendingReports map[string]*pb.ExecutionReport
-	reportScores   map[string]int32
+	pendingReports   map[string]*pb.ExecutionReport
+	reportScores     map[string]int32
+	reportReceivedAt map[string]int64 // Track when validator received each report (for FIFO)
 
 	// Checkpoint management
 	currentEpoch      uint64
@@ -78,6 +92,18 @@ type Node struct {
 	signatures        map[string]*pb.Signature // validator_id -> signature
 	lastCheckpointAt  time.Time                // Track last checkpoint time
 	isLeader          bool                     // Track current leadership status
+
+	// ValidationBundle signature collection
+	// NEW: Epoch-level signature collection (replaces per-Intent model)
+	epochValidationSignatures map[uint64]map[string]*pb.ValidationBundleSignature // epoch -> (validator_address -> signature)
+	epochIntents              map[uint64][]string                                 // epoch -> [intentKeys]
+	epochSubmissionTriggered  map[uint64]bool                                     // epoch -> whether submission has been triggered
+
+	// DEPRECATED: Per-Intent signature collection (kept for backward compatibility, will be removed)
+	validationBundleSignatures map[string]map[string]*pb.ValidationBundleSignature // intent_key -> (validator_address -> signature)
+
+	// Validator endpoints mapping (validator_id -> grpc_endpoint)
+	validatorEndpoints map[string]string
 
 	// Configuration
 	config *Config
@@ -94,11 +120,11 @@ type Config struct {
 	PrivateKey                string
 	ValidatorSet              *types.ValidatorSet
 	StoragePath               string
-	NATSUrl                   string
 	GRPCPort                  int
 	MetricsPort               int
-	RegistryEndpoint          string
-	RegistryHeartbeatInterval time.Duration
+	// REMOVED: Registry component deprecated
+	// RegistryEndpoint          string
+	// RegistryHeartbeatInterval time.Duration
 
 	// Use unified config structures
 	Timeouts *config.TimeoutConfig
@@ -128,6 +154,21 @@ type Config struct {
 
 	// Validation policy
 	ValidationPolicy *ValidationPolicyConfig
+
+	// Raft consensus configuration
+	Raft *RaftConfig
+
+	// Gossip signature propagation configuration
+	Gossip *GossipConfig
+
+	// CometBFT consensus configuration
+	CometBFT *CometBFTConfig
+
+	// Consensus type selection
+	ConsensusType string // "raft-gossip" or "cometbft"
+
+	// Validator endpoints (validator_id -> grpc_address mapping for report forwarding)
+	ValidatorEndpoints map[string]string
 }
 
 // ValidationPolicyConfig defines validation policy configuration
@@ -141,8 +182,29 @@ type ValidationPolicyConfig struct {
 	MaxRetries              int     // Maximum retry attempts
 }
 
+// RaftConfig configures the embedded Raft consensus instance.
+type RaftConfig struct {
+	Enable           bool
+	DataDir          string
+	BindAddress      string
+	AdvertiseAddress string // Optional: advertise address for Raft cluster (defaults to BindAddress)
+	Bootstrap        bool
+	Peers            []RaftPeerConfig
+	HeartbeatTimeout time.Duration
+	ElectionTimeout  time.Duration
+	CommitTimeout    time.Duration
+	MaxPool          int
+}
+
+// RaftPeerConfig describes a known Raft peer.
+type RaftPeerConfig struct {
+	ID      string
+	Address string
+}
+
 // NewNode creates a new validator node
-func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry) (*Node, error) {
+// UPDATED: Removed agentReg parameter - Registry component deprecated
+func NewNode(config *Config, logger logging.Logger) (*Node, error) {
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
@@ -223,24 +285,134 @@ func NewNode(config *Config, logger logging.Logger, agentReg *registry.Registry)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	node := &Node{
-		id:              config.ValidatorID,
-		signer:          signer,
-		validatorSet:    config.ValidatorSet,
-		logger:          logger,
-		fsm:             fsm,
-		leaderTracker:   leaderTracker,
-		chain:           chain,
-		store:           store,
-		rootlayerClient: rootClient,
-		sdkClient:       sdkClient,
-		agentRegistry:   agentReg,
-		metrics:         metrics.Noop{},
-		pendingReports:  make(map[string]*pb.ExecutionReport),
-		reportScores:    make(map[string]int32),
-		signatures:      make(map[string]*pb.Signature),
-		config:          config,
-		ctx:             ctx,
-		cancel:          cancel,
+		id:               config.ValidatorID,
+		signer:           signer,
+		validatorSet:     config.ValidatorSet,
+		logger:           logger,
+		fsm:              fsm,
+		leaderTracker:    leaderTracker,
+		chain:            chain,
+		store:            store,
+		rootlayerClient:  rootClient,
+		sdkClient:        sdkClient,
+		// agentRegistry: REMOVED - Registry component deprecated
+		metrics:          metrics.Noop{},
+		pendingReports:   make(map[string]*pb.ExecutionReport),
+		reportScores:     make(map[string]int32),
+		reportReceivedAt: make(map[string]int64),
+		signatures:       make(map[string]*pb.Signature),
+
+		// NEW: Epoch-level signature collection
+		epochValidationSignatures: make(map[uint64]map[string]*pb.ValidationBundleSignature),
+		epochIntents:              make(map[uint64][]string),
+		epochSubmissionTriggered:  make(map[uint64]bool),
+
+		// DEPRECATED: Per-Intent signature collection (backward compatibility)
+		validationBundleSignatures: make(map[string]map[string]*pb.ValidationBundleSignature),
+
+		validatorEndpoints: config.ValidatorEndpoints,
+		config:             config,
+		ctx:                ctx,
+		cancel:             cancel,
+	}
+
+	// Initialise Raft consensus if enabled (transitional; will replace legacy path).
+	if config.Raft != nil && config.Raft.Enable {
+		raftCfg, err := config.buildRaftConsensusConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build raft config: %w", err)
+		}
+		raftConsensus, err := consensus.NewRaftConsensus(raftCfg, node, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create raft consensus: %w", err)
+		}
+		node.raftConsensus = raftConsensus
+		logger.Info("Raft consensus initialised",
+			"bind_addr", raftCfg.BindAddress,
+			"data_dir", raftCfg.DataDir,
+			"bootstrap", raftCfg.Bootstrap)
+	}
+
+	// Initialise Gossip for signature propagation if enabled
+	if config.Gossip != nil && config.Gossip.Enable {
+		// Create signature handler
+		gossipDelegate := consensus.NewSignatureGossipDelegate(
+			config.ValidatorID,
+			node.onGossipSignatureReceived,
+			logger,
+		)
+
+		// Create gossip manager
+		gossipCfg := config.Gossip.ToConsensusConfig(config.ValidatorID)
+		gossipManager, err := consensus.NewGossipManager(gossipCfg, gossipDelegate, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create gossip manager: %w", err)
+		}
+
+		node.gossipManager = gossipManager
+		node.gossipDelegate = gossipDelegate
+
+		// Set ValidationBundle signature handler
+		gossipManager.SetValidationBundleSignatureHandler(node.onValidationBundleSignatureReceived)
+
+		logger.Info("Gossip initialized",
+			"bind_addr", fmt.Sprintf("%s:%d", gossipCfg.BindAddress, gossipCfg.BindPort),
+			"seeds", gossipCfg.Seeds)
+	}
+
+	// Initialise CometBFT consensus if enabled
+	if config.CometBFT != nil && config.CometBFT.Enable {
+		cometCfg, err := config.buildCometBFTConfig()
+		if err != nil {
+			return nil, fmt.Errorf("failed to build cometbft config: %w", err)
+		}
+
+		// Set ECDSA signer via adapter if signer is available
+		if signer != nil {
+			ecdsaAdapter, err := cometbft.NewECDSASignerAdapter(config.PrivateKey, logger)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create ECDSA signer adapter: %w", err)
+			}
+			cometCfg.ECDSASigner = ecdsaAdapter
+			logger.Info("CometBFT ECDSA signer configured", "address", ecdsaAdapter.Address())
+		} else {
+			logger.Warn("No signer available, CometBFT ValidationBundle signing disabled")
+		}
+
+		// Set RootLayer client via adapter if available
+		if rootClient != nil {
+			// Cast to CompleteClient (if not already)
+			if completeClient, ok := rootClient.(*rootlayer.CompleteClient); ok {
+				// Pass private key for SDK-based ValidationBundle signing
+				rootAdapter := cometbft.NewRootLayerClientAdapter(completeClient, config.SubnetID, logger, config.PrivateKey)
+				cometCfg.RootLayerClient = rootAdapter
+				logger.Info("CometBFT RootLayer client configured with SDK signer")
+			} else {
+				logger.Warn("RootLayer client is not CompleteClient, CometBFT RootLayer submission disabled")
+			}
+		} else {
+			logger.Warn("No RootLayer client available, CometBFT checkpoint submission disabled")
+		}
+
+		// Create consensus handlers
+		handlers := cometbft.ConsensusHandlers{
+			OnCheckpointCommitted:          node.handleCommittedCheckpoint,
+			OnExecutionReportCommitted:     node.handleExecutionReportCommitted,
+			OnCheckpointFinalized:          node.handleCheckpointFinalized,
+			OnValidationSignatureCollected: node.handleValidationSignatureFromCometBFT,
+		}
+
+		cometConsensus, err := cometbft.NewConsensus(cometCfg, handlers, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create cometbft consensus: %w", err)
+		}
+
+		node.cometbftConsensus = cometConsensus
+		logger.Info("CometBFT consensus initialized",
+			"home_dir", cometCfg.HomeDir,
+			"chain_id", cometCfg.ChainID,
+			"p2p_listen", cometCfg.P2PListenAddress,
+			"rpc_listen", cometCfg.RPCListenAddress)
 	}
 
 	// Load latest checkpoint from storage
@@ -258,6 +430,387 @@ func (n *Node) GetID() string {
 	return n.id
 }
 
+// OnCheckpointCommitted satisfies consensus.RaftApplyHandler; full integration will replace legacy path.
+func (n *Node) OnCheckpointCommitted(header *pb.CheckpointHeader) {
+	if header == nil {
+		return
+	}
+	if n.raftConsensus == nil {
+		return
+	}
+	n.handleCommittedCheckpoint(header)
+}
+
+// OnExecutionReportCommitted satisfies consensus.RaftApplyHandler.
+func (n *Node) OnExecutionReportCommitted(report *pb.ExecutionReport, reportKey string) {
+	if report == nil || reportKey == "" {
+		return
+	}
+	n.mu.Lock()
+	if _, exists := n.pendingReports[reportKey]; !exists {
+		n.pendingReports[reportKey] = report
+		score := n.scoreReport(report)
+		n.reportScores[reportKey] = score
+
+		// Track reception time using the SAME key format as groupReportsByIntent
+		// Key format: intentID:assignmentID:agentID
+		intentKey := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
+		n.reportReceivedAt[intentKey] = time.Now().Unix() // Track validator reception time for FIFO
+
+		// Persist execution report to storage (Raft mode)
+		reportBytes, err := proto.Marshal(report)
+		if err != nil {
+			n.logger.Error("Failed to marshal execution report", "error", err, "report_id", reportKey)
+		} else {
+			if err := n.store.SaveExecutionReport(reportKey, reportBytes); err != nil {
+				n.logger.Error("Failed to save execution report to storage", "error", err, "report_id", reportKey)
+			} else {
+				n.logger.Infof("Saved execution report to storage report_id=%s", reportKey)
+			}
+		}
+	}
+	n.mu.Unlock()
+	n.logger.Debugf("Raft committed execution report intent=%s assignment=%s", report.IntentId, report.AssignmentId)
+}
+
+// onGossipSignatureReceived handles signatures received via gossip
+func (n *Node) onGossipSignatureReceived(sig *pb.Signature, checkpointHash []byte) {
+	if sig == nil {
+		return
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// Basic validation
+	if sig.SignerId == "" || len(sig.Der) == 0 {
+		n.logger.Warn("Invalid gossip signature: missing fields",
+			"signer", sig.SignerId)
+		return
+	}
+
+	// Check if signer is in validator set
+	if n.validatorSet == nil {
+		n.logger.Warn("No validator set configured, ignoring gossip signature")
+		return
+	}
+
+	var validatorInSet *types.Validator
+	for _, v := range n.validatorSet.Validators {
+		if v.ID == sig.SignerId {
+			validatorInSet = &v
+			break
+		}
+	}
+	if validatorInSet == nil {
+		n.logger.Warn("Signature from unknown validator, rejecting",
+			"signer", sig.SignerId)
+		return
+	}
+
+	// Verify checkpoint hash matches current checkpoint
+	if n.currentCheckpoint == nil {
+		n.logger.Warn("No current checkpoint, cannot verify gossip signature")
+		return
+	}
+
+	currentHash := n.computeCheckpointHash(n.currentCheckpoint)
+	if len(checkpointHash) > 0 && !bytesEqual(currentHash[:], checkpointHash) {
+		n.logger.Warn("Checkpoint hash mismatch, rejecting signature",
+			"signer", sig.SignerId,
+			"expected_epoch", n.currentCheckpoint.Epoch)
+		return
+	}
+
+	// Cryptographically verify the signature
+	if err := n.verifySignature(sig); err != nil {
+		n.logger.Warn("Signature verification failed",
+			"signer", sig.SignerId,
+			"error", err)
+		return
+	}
+
+	// Skip if we already have this signature
+	if n.signatures == nil {
+		n.signatures = make(map[string]*pb.Signature)
+	}
+	if _, exists := n.signatures[sig.SignerId]; exists {
+		n.logger.Debug("Duplicate signature ignored",
+			"signer", sig.SignerId)
+		return
+	}
+
+	// Add verified signature to map
+	n.signatures[sig.SignerId] = sig
+
+	n.logger.Debug("Received and verified signature via gossip",
+		"signer", sig.SignerId,
+		"total_sigs", len(n.signatures),
+		"epoch", n.currentCheckpoint.Epoch)
+
+	// Check if we've reached threshold (use weight-based if validators have weights)
+	thresholdReached := false
+	totalWeight := n.validatorSet.TotalWeight()
+	if totalWeight > 0 {
+		// Use weight-based threshold
+		thresholdReached = n.validatorSet.CheckWeightedThreshold(n.signatures)
+		if thresholdReached {
+			n.logger.Info("Weighted signature threshold reached via gossip",
+				"sigs", len(n.signatures),
+				"required_weight", n.validatorSet.RequiredWeight(),
+				"total_weight", totalWeight,
+				"epoch", n.currentCheckpoint.Epoch)
+		}
+	} else {
+		// Fall back to count-based threshold
+		thresholdReached = n.validatorSet.CheckThreshold(len(n.signatures))
+		if thresholdReached {
+			n.logger.Info("Signature threshold reached via gossip",
+				"sigs", len(n.signatures),
+				"required", n.validatorSet.RequiredSignatures(),
+				"epoch", n.currentCheckpoint.Epoch)
+		}
+	}
+
+	if thresholdReached {
+		// If we're the leader and using Raft, finalize checkpoint
+		if n.raftConsensus != nil && n.raftConsensus.IsLeader() {
+			go n.finalizeCheckpointAfterGossip()
+		}
+	}
+}
+
+// onValidationBundleSignatureReceived handles ValidationBundle signatures received via gossip
+func (n *Node) onValidationBundleSignatureReceived(vbSig *pb.ValidationBundleSignature) {
+	if vbSig == nil {
+		n.logger.Warn("Received nil ValidationBundleSignature via gossip")
+		return
+	}
+
+	if vbSig.ValidatorAddress == "" || len(vbSig.Signature) == 0 {
+		n.logger.Warn("Invalid ValidationBundle signature: missing validator or signature bytes",
+			"epoch", vbSig.Epoch,
+			"intent_id", vbSig.IntentId)
+		return
+	}
+
+	isEpochFormat := vbSig.IntentId == "" && vbSig.AssignmentId == "" && vbSig.AgentId == ""
+
+	if isEpochFormat {
+		thresholdReached, signatureCount := n.storeEpochValidationSignature(vbSig)
+
+		if thresholdReached {
+			n.logger.Infof("Epoch-level ValidationBundle signatures reached threshold epoch=%d collected=%d required=%d",
+				vbSig.Epoch,
+				signatureCount,
+				n.validatorSet.RequiredSignatures())
+
+			// Check if submission has already been triggered for this epoch
+			n.mu.Lock()
+			alreadyTriggered := n.epochSubmissionTriggered[vbSig.Epoch]
+			if !alreadyTriggered && n.raftConsensus != nil && n.raftConsensus.IsLeader() {
+				n.epochSubmissionTriggered[vbSig.Epoch] = true
+				n.mu.Unlock()
+				n.logger.Infof("Leader triggering ValidationBundle batch submission for epoch=%d (epoch-level signatures)", vbSig.Epoch)
+				go n.submitValidationBundlesForEpoch(vbSig.Epoch)
+			} else {
+				n.mu.Unlock()
+				if alreadyTriggered {
+					n.logger.Debugf("Submission already triggered for epoch=%d, skipping duplicate trigger", vbSig.Epoch)
+				} else {
+					n.logger.Debugf("Non-leader received epoch-level threshold for epoch=%d; awaiting leader submission", vbSig.Epoch)
+				}
+			}
+		}
+		return
+	}
+
+	// ===== Legacy path: per-Intent signatures (backward compatibility) =====
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if vbSig.IntentId == "" || vbSig.AssignmentId == "" {
+		n.logger.Warn("Legacy ValidationBundle signature missing intent fields",
+			"validator", vbSig.ValidatorAddress,
+			"epoch", vbSig.Epoch)
+		return
+	}
+
+	intentKey := fmt.Sprintf("%s:%s:%s", vbSig.IntentId, vbSig.AssignmentId, vbSig.AgentId)
+
+	if n.validationBundleSignatures == nil {
+		n.validationBundleSignatures = make(map[string]map[string]*pb.ValidationBundleSignature)
+	}
+	if n.validationBundleSignatures[intentKey] == nil {
+		n.validationBundleSignatures[intentKey] = make(map[string]*pb.ValidationBundleSignature)
+	}
+
+	if _, exists := n.validationBundleSignatures[intentKey][vbSig.ValidatorAddress]; exists {
+		n.logger.Debug("Duplicate legacy ValidationBundle signature ignored",
+			"validator", vbSig.ValidatorAddress,
+			"intent_id", vbSig.IntentId)
+		return
+	}
+
+	n.validationBundleSignatures[intentKey][vbSig.ValidatorAddress] = vbSig
+
+	n.logger.Warnf("Received legacy per-Intent ValidationBundle signature intent_key=%s epoch=%d total_sigs=%d (deprecated format)",
+		intentKey, vbSig.Epoch, len(n.validationBundleSignatures[intentKey]))
+
+	sigCount := len(n.validationBundleSignatures[intentKey])
+	if n.validatorSet.CheckThreshold(sigCount) {
+		n.logger.Infof("Legacy ValidationBundle signature threshold reached intent_id=%s sigs=%d required=%d",
+			vbSig.IntentId, sigCount, n.validatorSet.RequiredSignatures())
+
+		if n.raftConsensus != nil && n.raftConsensus.IsLeader() {
+			go n.submitValidationBundlesForEpoch(vbSig.Epoch)
+		}
+	}
+}
+
+// bytesEqual compares two byte slices for equality
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// finalizeCheckpointAfterGossip finalizes checkpoint after gossip threshold is reached
+func (n *Node) finalizeCheckpointAfterGossip() {
+	n.mu.RLock()
+	header := n.currentCheckpoint
+	if header == nil {
+		n.mu.RUnlock()
+		return
+	}
+	headerCopy := proto.Clone(header).(*pb.CheckpointHeader)
+
+	// Copy signatures and reports for async submission
+	signaturesCopy := make(map[string]*pb.Signature, len(n.signatures))
+	for k, v := range n.signatures {
+		signaturesCopy[k] = proto.Clone(v).(*pb.Signature)
+	}
+
+	pendingCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
+	for k, v := range n.pendingReports {
+		pendingCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+	}
+	n.mu.RUnlock()
+
+	// Submit to RootLayer (will fill header.Signatures with collected sigs)
+	n.submitToRootLayerWithData(headerCopy, pendingCopy, signaturesCopy)
+}
+
+func (n *Node) handleCommittedCheckpoint(header *pb.CheckpointHeader) {
+	headerCopy := proto.Clone(header).(*pb.CheckpointHeader)
+
+	n.mu.Lock()
+	if err := n.chain.AddCheckpoint(headerCopy); err != nil {
+		n.logger.Warnf("Failed to append checkpoint to chain error=%v", err)
+	}
+	if err := n.saveCheckpoint(headerCopy); err != nil {
+		n.logger.Warnf("Failed to persist checkpoint error=%v", err)
+	}
+	n.currentCheckpoint = headerCopy
+	if headerCopy.Epoch >= n.currentEpoch {
+		n.currentEpoch = headerCopy.Epoch + 1
+	}
+	n.lastCheckpointAt = time.Now()
+
+	// Reset signatures for new checkpoint
+	if n.gossipManager != nil {
+		n.signatures = make(map[string]*pb.Signature)
+	}
+
+	// Sign the checkpoint locally
+	sig, err := n.signCheckpoint(headerCopy)
+	if err != nil {
+		n.logger.Errorf("Failed to sign checkpoint error=%v", err)
+		n.mu.Unlock()
+		return
+	}
+
+	// Add own signature
+	if n.signatures == nil {
+		n.signatures = make(map[string]*pb.Signature)
+	}
+	n.signatures[n.id] = sig
+
+	// Compute checkpoint hash for verification
+	checkpointHash := n.computeCheckpointHash(headerCopy)
+
+	// Copy pending reports for ValidationBundle signing (before unlock)
+	pendingReportsCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
+	for k, v := range n.pendingReports {
+		pendingReportsCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+	}
+
+	n.mu.Unlock()
+
+	// ALL validators sign ValidationBundle for this checkpoint
+	if len(pendingReportsCopy) > 0 {
+		groupedReports := n.groupReportsByIntent(pendingReportsCopy)
+		n.logger.Infof("Validator signing ValidationBundle for checkpoint epoch=%d intents=%d", headerCopy.Epoch, len(groupedReports))
+		n.signAndGossipValidationBundles(headerCopy, groupedReports)
+	}
+
+	// Broadcast signature via gossip (if enabled)
+	if n.gossipManager != nil {
+		if err := n.gossipManager.BroadcastSignature(sig, headerCopy.Epoch, checkpointHash[:]); err != nil {
+			n.logger.Errorf("Failed to gossip signature error=%v", err)
+		} else {
+			n.logger.Debugf("Broadcasted signature via gossip epoch=%d validator=%s", headerCopy.Epoch, n.id)
+		}
+
+		// Check if we've already reached threshold (important for single-node mode)
+		// In single-node mode, we already have the only signature needed
+		n.mu.RLock()
+		thresholdReached := false
+		totalWeight := n.validatorSet.TotalWeight()
+		if totalWeight > 0 {
+			thresholdReached = n.validatorSet.CheckWeightedThreshold(n.signatures)
+		} else {
+			thresholdReached = n.validatorSet.CheckThreshold(len(n.signatures))
+		}
+		isLeader := n.raftConsensus != nil && n.raftConsensus.IsLeader()
+		n.mu.RUnlock()
+
+		// If threshold already reached and we're leader, submit immediately
+		// (handles single-node case where gossip won't deliver own message back)
+		if thresholdReached && isLeader {
+			n.logger.Infof("Signature threshold already reached after local sign (single-node mode), finalizing epoch=%d", headerCopy.Epoch)
+			go n.finalizeCheckpointAfterGossip()
+		}
+
+		// Otherwise wait for gossip to collect signatures (handled by onGossipSignatureReceived)
+		return
+	}
+
+	// Legacy path: if no gossip, submit directly (for backward compatibility)
+	n.mu.RLock()
+	pendingCopy := make(map[string]*pb.ExecutionReport, len(n.pendingReports))
+	for k, v := range n.pendingReports {
+		pendingCopy[k] = proto.Clone(v).(*pb.ExecutionReport)
+	}
+	signaturesCopy := make(map[string]*pb.Signature, len(n.signatures))
+	for k, v := range n.signatures {
+		signaturesCopy[k] = proto.Clone(v).(*pb.Signature)
+	}
+	isLeader := n.raftConsensus != nil && n.raftConsensus.IsLeader()
+	n.mu.RUnlock()
+
+	if isLeader {
+		n.logger.Infof("Raft leader submitting checkpoint to RootLayer epoch=%d", headerCopy.Epoch)
+		n.submitToRootLayerWithData(headerCopy, pendingCopy, signaturesCopy)
+	}
+}
+
 // Start starts the validator node
 func (n *Node) Start(ctx context.Context) error {
 	n.logger.Infof("Starting validator node id=%s", n.id)
@@ -272,13 +825,10 @@ func (n *Node) Start(ctx context.Context) error {
 		}
 	}
 
-	// Connect to NATS
-	if err := n.connectNATS(); err != nil {
-		return fmt.Errorf("failed to connect to NATS: %w", err)
+	// Consensus engine is required (either Raft or CometBFT)
+	if n.raftConsensus == nil && n.cometbftConsensus == nil {
+		return fmt.Errorf("Consensus engine is required (either Raft+Gossip or CometBFT) - legacy NATS mode has been removed")
 	}
-
-	// Wait for all validators to be ready on the NATS bus before starting consensus
-	n.awaitConsensusReadiness()
 
 	// Start metrics server if configured
 	if n.config.MetricsPort > 0 {
@@ -288,10 +838,27 @@ func (n *Node) Start(ctx context.Context) error {
 	// Register validator in registry and start heartbeat
 	n.startValidatorRegistry()
 
+	// Start CometBFT consensus if configured
+	if n.cometbftConsensus != nil {
+		if err := n.cometbftConsensus.Start(ctx); err != nil {
+			return fmt.Errorf("failed to start CometBFT consensus: %w", err)
+		}
+		n.logger.Info("CometBFT consensus started")
+	}
+
 	// Initialize leadership status
-	_, leader := n.leaderTracker.Leader(n.currentEpoch)
-	n.isLeader = leader != nil && leader.ID == n.id
-	n.logger.Infof("Initial leadership status is_leader=%t epoch=%d", n.isLeader, n.currentEpoch)
+	if n.raftConsensus != nil {
+		n.isLeader = n.raftConsensus.IsLeader()
+		n.logger.Infof("Initial Raft leadership status is_leader=%t epoch=%d", n.isLeader, n.currentEpoch)
+	} else if n.cometbftConsensus != nil {
+		// For CometBFT, check if this validator is ready to participate
+		n.isLeader = n.cometbftConsensus.IsReady()
+		n.logger.Infof("Initial CometBFT validator status is_ready=%t epoch=%d", n.isLeader, n.currentEpoch)
+	} else {
+		_, leader := n.leaderTracker.Leader(n.currentEpoch)
+		n.isLeader = leader != nil && leader.ID == n.id
+		n.logger.Infof("Initial leadership status is_leader=%t epoch=%d", n.isLeader, n.currentEpoch)
+	}
 
 	// Start consensus loop - this will handle checkpoint creation dynamically
 	go n.consensusLoop()
@@ -306,26 +873,22 @@ func (n *Node) Stop() error {
 
 	n.cancel()
 
-	if n.validatorHB != nil {
-		n.validatorHB()
-		n.validatorHB = nil
-	}
-
-	// Close broadcaster
-	if n.broadcaster != nil {
-		if err := n.broadcaster.Close(); err != nil {
-			n.logger.Errorf("Failed to close broadcaster error=%v", err)
+	if n.raftConsensus != nil {
+		if err := n.raftConsensus.Shutdown(); err != nil {
+			n.logger.Errorf("Failed to shutdown Raft consensus error=%v", err)
 		}
 	}
 
-	// Unsubscribe from NATS (if using old method)
-	for _, sub := range n.natsSubs {
-		sub.Unsubscribe()
+	// Shutdown gossip manager
+	if n.gossipManager != nil {
+		if err := n.gossipManager.Shutdown(); err != nil {
+			n.logger.Errorf("Failed to shutdown gossip manager error=%v", err)
+		}
 	}
 
-	// Close NATS connection (if using old method)
-	if n.natsConn != nil {
-		n.natsConn.Close()
+	if n.validatorHB != nil {
+		n.validatorHB()
+		n.validatorHB = nil
 	}
 
 	// Close RootLayer connection
@@ -340,11 +903,13 @@ func (n *Node) Stop() error {
 		n.sdkClient.Close()
 	}
 
-	if n.agentRegistry != nil {
-		if err := n.agentRegistry.RemoveValidator(n.id); err != nil {
-			n.logger.Warnf("Failed to remove validator from registry error=%v", err)
-		}
-	}
+	// DEPRECATED: Registry component removed
+	// Validator cleanup no longer requires registry de-registration
+	// if n.agentRegistry != nil {
+	// 	if err := n.agentRegistry.RemoveValidator(n.id); err != nil {
+	// 		n.logger.Warnf("Failed to remove validator from registry error=%v", err)
+	// 	}
+	// }
 
 	if n.metricsServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -365,160 +930,6 @@ func (n *Node) Stop() error {
 	return nil
 }
 
-// connectNATS establishes NATS connection and subscriptions
-func (n *Node) connectNATS() error {
-	// Create NATS broadcaster
-	subnetID := n.config.SubnetID
-	if subnetID == "" {
-		subnetID = "default"
-	}
-
-	broadcaster, err := consensus.NewNATSBroadcaster(
-		n.config.NATSUrl,
-		n.id,
-		subnetID,
-		n.logger,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create NATS broadcaster: %w", err)
-	}
-	n.broadcaster = broadcaster
-
-	// Subscribe to checkpoint proposals
-	if err := broadcaster.SubscribeToProposals(func(header *pb.CheckpointHeader) {
-		if err := n.HandleProposal(header); err != nil {
-			n.logger.Errorf("Failed to handle proposal error=%v", err)
-		}
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to proposals: %w", err)
-	}
-
-	// Subscribe to signatures
-	if err := broadcaster.SubscribeToSignatures(func(sig *pb.Signature) {
-		if err := n.AddSignature(sig); err != nil {
-			n.logger.Errorf("Failed to add signature error=%v", err)
-		}
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to signatures: %w", err)
-	}
-
-	// Subscribe to execution reports
-	if err := broadcaster.SubscribeToExecutionReports(func(report *pb.ExecutionReport) {
-		if _, err := n.ProcessExecutionReport(report); err != nil {
-			n.logger.Errorf("Failed to process execution report error=%v", err)
-		}
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to execution reports: %w", err)
-	}
-
-	// Subscribe to finalized checkpoints
-	if err := broadcaster.SubscribeToFinalized(func(header *pb.CheckpointHeader) {
-		if err := n.HandleFinalized(header); err != nil {
-			n.logger.Errorf("Failed to handle finalized checkpoint error=%v", err)
-		}
-	}); err != nil {
-		return fmt.Errorf("failed to subscribe to finalized checkpoints: %w", err)
-	}
-
-	n.logger.Infof("Connected to NATS with broadcaster url=%s subnet=%s", n.config.NATSUrl, subnetID)
-	return nil
-}
-
-// awaitConsensusReadiness blocks startup until a quorum of validators have subscribed to
-// the NATS subjects used for consensus. This prevents the first leader from proposing before
-// followers have active subscriptions, which previously caused proposals to be dropped.
-func (n *Node) awaitConsensusReadiness() {
-	if n.broadcaster == nil || n.validatorSet == nil {
-		return
-	}
-
-	required := make(map[string]struct{})
-	for _, v := range n.validatorSet.Validators {
-		required[v.ID] = struct{}{}
-	}
-
-	if _, ok := required[n.id]; !ok {
-		required[n.id] = struct{}{}
-	}
-
-	total := len(required)
-	if total == 0 {
-		return
-	}
-
-	ready := make(map[string]struct{}, total)
-	ready[n.id] = struct{}{}
-	readyCount := len(ready)
-
-	const (
-		readinessTimeout  = 8 * time.Second
-		readinessInterval = 500 * time.Millisecond
-	)
-
-	readyCh := make(chan string, total*2)
-
-	if err := n.broadcaster.SubscribeToReadiness(func(id string) {
-		select {
-		case readyCh <- id:
-		default:
-			n.logger.Debug("Dropping readiness signal (channel full)", "validator_id", id)
-		}
-	}); err != nil {
-		n.logger.Warnf("Failed to subscribe to consensus readiness error=%v", err)
-		if err := n.broadcaster.BroadcastReadiness(n.id); err != nil {
-			n.logger.Warnf("Failed to broadcast readiness error=%v", err)
-		}
-		return
-	}
-
-	start := time.Now()
-	if err := n.broadcaster.BroadcastReadiness(n.id); err != nil {
-		n.logger.Warnf("Failed to broadcast readiness error=%v", err)
-	} else {
-		n.logger.Infof("Announced consensus readiness validator_id=%s", n.id)
-	}
-
-	if readyCount >= total {
-		n.logger.Debug("Consensus readiness satisfied locally", "validators", total)
-		return
-	}
-
-	ticker := time.NewTicker(readinessInterval)
-	defer ticker.Stop()
-	timeout := time.NewTimer(readinessTimeout)
-	defer timeout.Stop()
-
-	for readyCount < total {
-		select {
-		case id := <-readyCh:
-			if _, ok := required[id]; !ok {
-				n.logger.Debug("Ignoring readiness from unknown validator", "validator_id", id)
-				continue
-			}
-			if _, seen := ready[id]; seen {
-				continue
-			}
-			ready[id] = struct{}{}
-			readyCount++
-			n.logger.Infof("Validator ready for consensus validator_id=%s ready=%d total=%d", id, readyCount, total)
-			if readyCount >= total {
-				n.logger.Infof("All validators ready for consensus total=%d wait_duration=%s", total, time.Since(start))
-				return
-			}
-		case <-ticker.C:
-			if err := n.broadcaster.BroadcastReadiness(n.id); err != nil {
-				n.logger.Warnf("Failed to re-broadcast readiness error=%v", err)
-			}
-		case <-timeout.C:
-			n.logger.Warnf("Timed out waiting for validator readiness ready=%d total=%d", readyCount, total)
-			return
-		case <-n.ctx.Done():
-			n.logger.Debug("Stopped waiting for readiness (context cancelled)")
-			return
-		}
-	}
-}
-
 // consensusLoop runs the main consensus state machine
 func (n *Node) consensusLoop() {
 	n.logger.Infof("Consensus loop started validator_id=%s", n.id)
@@ -536,14 +947,100 @@ func (n *Node) consensusLoop() {
 			if tickCount%10 == 0 {
 				n.logger.Debug("Consensus loop tick", "count", tickCount)
 			}
-			n.checkConsensusState()
-			n.checkCheckpointTrigger() // Check if leader should create checkpoint
+			if n.raftConsensus != nil {
+				n.checkRaftConsensusState()
+				n.checkRaftCheckpointTrigger()
+			} else if n.cometbftConsensus != nil {
+				n.checkCometBFTCheckpointTrigger()
+			} else {
+				n.checkConsensusState()
+				n.checkCheckpointTrigger() // Check if leader should create checkpoint
+			}
 		}
+	}
+}
+
+func (n *Node) checkRaftConsensusState() {
+	if n.raftConsensus == nil {
+		return
+	}
+	isLeader := n.raftConsensus.IsLeader()
+	n.mu.Lock()
+	if n.isLeader != isLeader {
+		n.isLeader = isLeader
+		if isLeader {
+			n.lastCheckpointAt = time.Time{}
+			n.logger.Infof("Became Raft leader epoch=%d", n.currentEpoch)
+		} else {
+			n.logger.Infof("Lost Raft leadership epoch=%d", n.currentEpoch)
+		}
+	}
+	n.mu.Unlock()
+}
+
+func (n *Node) checkRaftCheckpointTrigger() {
+	if n.raftConsensus == nil {
+		return
+	}
+
+	n.mu.Lock()
+	if !n.isLeader {
+		n.mu.Unlock()
+		return
+	}
+	pendingCount := len(n.pendingReports)
+	if pendingCount == 0 {
+		n.mu.Unlock()
+		return
+	}
+
+	checkpointInterval := n.getCheckpointInterval()
+	now := time.Now()
+	shouldPropose := false
+	if n.lastCheckpointAt.IsZero() || now.Sub(n.lastCheckpointAt) >= checkpointInterval {
+		shouldPropose = true
+		n.lastCheckpointAt = now
+	}
+	n.mu.Unlock()
+
+	if shouldPropose {
+		n.proposeCheckpointRaft()
+	}
+}
+
+// checkCometBFTCheckpointTrigger checks if checkpoint should be proposed for CometBFT
+func (n *Node) checkCometBFTCheckpointTrigger() {
+	if n.cometbftConsensus == nil {
+		return
+	}
+
+	n.mu.Lock()
+	checkpointInterval := n.getCheckpointInterval()
+	now := time.Now()
+	shouldPropose := false
+
+	// CometBFT creates periodic checkpoints even without execution reports
+	// This records blockchain state for RootLayer submission
+	if n.lastCheckpointAt.IsZero() || now.Sub(n.lastCheckpointAt) >= checkpointInterval {
+		shouldPropose = true
+		n.lastCheckpointAt = now
+		n.logger.Debug("CometBFT checkpoint trigger",
+			"pending_reports", len(n.pendingReports),
+			"interval", checkpointInterval)
+	}
+	n.mu.Unlock()
+
+	if shouldPropose {
+		n.proposeCheckpointCometBFT()
 	}
 }
 
 // checkConsensusState checks and updates consensus state
 func (n *Node) checkConsensusState() {
+	if n.raftConsensus != nil {
+		n.checkRaftConsensusState()
+		return
+	}
 	n.mu.Lock()
 	state := n.fsm.GetState()
 	n.recordMetrics(state)
@@ -686,6 +1183,11 @@ func (n *Node) checkConsensusState() {
 
 // proposeCheckpoint creates and broadcasts a new checkpoint proposal
 func (n *Node) proposeCheckpoint() {
+	if n.raftConsensus != nil {
+		n.proposeCheckpointRaft()
+		return
+	}
+
 	// Build checkpoint header first (without lock, as it needs to acquire RLock)
 	header := n.buildCheckpointHeader()
 
@@ -717,16 +1219,82 @@ func (n *Node) proposeCheckpoint() {
 		return
 	}
 
-	// Broadcast proposal
-	if err := n.broadcastProposal(header); err != nil {
-		n.logger.Errorf("Failed to broadcast proposal error=%v", err)
-		return
-	}
+	// Proposals are now handled by Raft - no separate broadcast needed
+	// Raft will replicate the checkpoint to all followers
 
 	// Fix: Record leader activity when proposing checkpoint
 	n.leaderTracker.RecordActivity(header.Epoch, time.Now())
 
 	n.logger.Infof("Proposed checkpoint epoch=%d fsm_state=%s", header.Epoch, n.fsm.GetState())
+}
+
+func (n *Node) proposeCheckpointRaft() {
+	if n.raftConsensus == nil || !n.raftConsensus.IsLeader() {
+		return
+	}
+
+	header := n.buildCheckpointHeader()
+
+	sig, err := n.signCheckpoint(header)
+	if err != nil {
+		n.logger.Errorf("Failed to sign checkpoint error=%v", err)
+		return
+	}
+
+	n.mu.Lock()
+	if n.signatures == nil {
+		n.signatures = make(map[string]*pb.Signature)
+	}
+	// Reset signatures for the new checkpoint
+	n.signatures = map[string]*pb.Signature{
+		n.id: sig,
+	}
+	bitmap := n.createSignersBitmapLocked()
+
+	if header.Signatures == nil {
+		header.Signatures = &pb.CheckpointSignatures{}
+	}
+	header.Signatures.EcdsaSignatures = [][]byte{sig.Der}
+	header.Signatures.SignersBitmap = bitmap
+	header.Signatures.SignatureCount = 1
+	if validator := n.validatorSet.GetValidator(n.id); validator != nil {
+		header.Signatures.TotalWeight = validator.Weight
+	} else {
+		header.Signatures.TotalWeight = 1
+	}
+
+	n.currentCheckpoint = header
+	n.lastCheckpointAt = time.Now()
+	n.mu.Unlock()
+
+	if err := n.raftConsensus.ApplyCheckpoint(header, n.id); err != nil {
+		n.logger.Errorf("Failed to replicate checkpoint via Raft error=%v", err)
+		return
+	}
+	n.logger.Infof("Replicated checkpoint via Raft epoch=%d", header.Epoch)
+}
+
+// proposeCheckpointCometBFT proposes a checkpoint to CometBFT consensus
+func (n *Node) proposeCheckpointCometBFT() {
+	if n.cometbftConsensus == nil {
+		return
+	}
+
+	// Build checkpoint header
+	header := n.buildCheckpointHeader()
+
+	n.mu.Lock()
+	n.currentCheckpoint = header
+	n.mu.Unlock()
+
+	// Submit to CometBFT - it will handle consensus, signature collection, and RootLayer submission
+	if err := n.cometbftConsensus.ProposeCheckpoint(header); err != nil {
+		n.logger.Errorf("Failed to propose checkpoint to CometBFT error=%v", err)
+		return
+	}
+
+	n.logger.Infof("Proposed checkpoint to CometBFT epoch=%d pending_reports=%d",
+		header.Epoch, len(n.pendingReports))
 }
 
 // buildCheckpointHeader creates a new checkpoint header
@@ -741,7 +1309,9 @@ func (n *Node) buildCheckpointHeader() *pb.CheckpointHeader {
 
 	// Compute merkle roots
 	stateRoot := n.computeStateRoot()
-	agentRoot := n.computeAgentRoot()
+	// DEPRECATED: AgentRoot not used in validation/RootLayer submission
+	// Registry component removed, returning zero hash for backwards compatibility
+	agentRoot := make([]byte, 32) // Zero hash placeholder
 	eventRoot := n.computeEventRoot()
 
 	header := &pb.CheckpointHeader{
@@ -802,30 +1372,16 @@ func (n *Node) computeStateRoot() []byte {
 	return crypto.ComputeStateRoot(validatorIDs, balances)
 }
 
-// computeAgentRoot computes the agent merkle root
-func (n *Node) computeAgentRoot() []byte {
-	// Get agents from registry
-	agents := []string{}
-	statuses := []string{}
-
-	if n.agentRegistry != nil {
-		agentList := n.agentRegistry.ListAgents()
-		for _, agent := range agentList {
-			agents = append(agents, agent.ID)
-
-			// Map status to string
-			statusStr := "inactive"
-			if agent.Status == pb.AgentStatus_AGENT_STATUS_ACTIVE {
-				statusStr = "active"
-			} else if agent.Status == pb.AgentStatus_AGENT_STATUS_UNHEALTHY {
-				statusStr = "unhealthy"
-			}
-			statuses = append(statuses, statusStr)
-		}
-	}
-
-	return crypto.ComputeAgentRoot(agents, statuses)
-}
+// DELETED: computeAgentRoot() function removed
+// Reason: AgentRoot is not validated or consumed by any component.
+// The field is kept in CheckpointHeader for backwards compatibility but set to zero hash.
+// Old implementation relied on registry component which has been deprecated.
+//
+// Historical context:
+// - Previously computed merkle root from registry.ListAgents()
+// - Used in CheckpointHeader.Roots.AgentRoot
+// - Never validated by RootLayer, consensus, or chain manager
+// - Registry discovery replaced by static configuration (raft-peers, gossip, cometbft)
 
 // computeEventRoot computes the event/report merkle root
 func (n *Node) computeEventRoot() []byte {
@@ -922,9 +1478,8 @@ func (n *Node) finalizeCheckpoint() {
 
 	n.mu.Unlock()
 
-	// Broadcast finalized checkpoint to all validators
-	// This helps followers sync their state even if they missed some signatures
-	go n.broadcastFinalized(headerCopy)
+	// Finalized checkpoints are now propagated via Raft - no broadcast needed
+	// All nodes will be notified through Raft log replication
 
 	// Submit to RootLayer if we are the leader
 	if isLeader {
@@ -936,6 +1491,10 @@ func (n *Node) finalizeCheckpoint() {
 // ONLY creates checkpoints when there are pending execution reports (on-demand checkpointing)
 // Fix Problem 8: Removed double unlock bug by avoiding manual unlock/lock inside defer scope
 func (n *Node) checkCheckpointTrigger() {
+	if n.raftConsensus != nil {
+		n.checkRaftCheckpointTrigger()
+		return
+	}
 	n.mu.Lock()
 
 	// Only leaders should create checkpoints
@@ -1030,46 +1589,53 @@ func (n *Node) recordMetrics(state consensus.State) {
 }
 
 func (n *Node) startValidatorRegistry() {
-	if n.agentRegistry == nil || n.config.RegistryEndpoint == "" {
-		return
-	}
+	// DEPRECATED: Registry component removed
+	// Validator discovery now uses static configuration (raft-peers, gossip-seeds, cometbft-persistent-peers)
+	// No-op: registry registration and heartbeat are no longer needed
+	n.logger.Debug("Registry registration skipped (registry component deprecated)")
+	return
 
-	info := &registry.ValidatorInfo{
-		ID:       n.id,
-		Endpoint: n.config.RegistryEndpoint,
-		LastSeen: time.Now(),
-		Status:   pb.AgentStatus_AGENT_STATUS_ACTIVE,
-	}
-
-	if err := n.agentRegistry.RegisterValidator(info); err != nil {
-		n.logger.Warnf("Failed to register validator in registry error=%v", err)
-		return
-	}
-
-	ctx, cancel := context.WithCancel(n.ctx)
-	n.validatorHB = cancel
-	go n.validatorHeartbeat(ctx)
+	// OLD IMPLEMENTATION (registry-based, now unused):
+	// if n.agentRegistry == nil || n.config.RegistryEndpoint == "" {
+	// 	return
+	// }
+	// info := &registry.ValidatorInfo{
+	// 	ID:       n.id,
+	// 	Endpoint: n.config.RegistryEndpoint,
+	// 	LastSeen: time.Now(),
+	// 	Status:   pb.AgentStatus_AGENT_STATUS_ACTIVE,
+	// }
+	// if err := n.agentRegistry.RegisterValidator(info); err != nil {
+	// 	n.logger.Warnf("Failed to register validator in registry error=%v", err)
+	// 	return
+	// }
+	// ctx, cancel := context.WithCancel(n.ctx)
+	// n.validatorHB = cancel
+	// go n.validatorHeartbeat(ctx)
 }
 
 func (n *Node) validatorHeartbeat(ctx context.Context) {
-	interval := n.config.RegistryHeartbeatInterval
-	if interval <= 0 {
-		interval = 30 * time.Second
-	}
+	// DEPRECATED: Registry component removed
+	// No-op: heartbeat no longer sent to registry
+	return
 
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := n.agentRegistry.UpdateValidatorHeartbeat(n.id); err != nil {
-				n.logger.Warnf("Failed to update validator heartbeat error=%v", err)
-			}
-		}
-	}
+	// OLD IMPLEMENTATION (registry-based, now unused):
+	// interval := n.config.RegistryHeartbeatInterval
+	// if interval <= 0 {
+	// 	interval = 30 * time.Second
+	// }
+	// ticker := time.NewTicker(interval)
+	// defer ticker.Stop()
+	// for {
+	// 	select {
+	// 	case <-ctx.Done():
+	// 		return
+	// 	case <-ticker.C:
+	// 		if err := n.agentRegistry.UpdateValidatorHeartbeat(n.id); err != nil {
+	// 			n.logger.Warnf("Failed to update validator heartbeat error=%v", err)
+	// 		}
+	// 	}
+	// }
 }
 
 type httpExecutionReport struct {
@@ -1299,12 +1865,7 @@ func (n *Node) saveCheckpoint(header *pb.CheckpointHeader) error {
 	return nil
 }
 
-func (n *Node) broadcastProposal(header *pb.CheckpointHeader) error {
-	if n.broadcaster != nil {
-		return n.broadcaster.BroadcastProposal(header)
-	}
-	return fmt.Errorf("no broadcaster configured")
-}
+// broadcastProposal removed - proposals are now handled by Raft
 
 // computeReportsRoot is deprecated - use computeEventRoot instead
 func (n *Node) computeReportsRoot() []byte {
@@ -1413,17 +1974,26 @@ func (n *Node) clearReportsForIntent(intentKey string) {
 	defer n.mu.Unlock()
 
 	removed := 0
+	var removedKeys []string
 	for reportID, report := range n.pendingReports {
 		// Check if this report belongs to the Intent group
 		key := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
 		if key == intentKey {
 			delete(n.pendingReports, reportID)
 			delete(n.reportScores, reportID)
+			removedKeys = append(removedKeys, reportID)
 			removed++
 		}
 	}
 
-	n.logger.Infof("Cleared %d execution reports for Intent group %s", removed, intentKey)
+	// Clean up reportReceivedAt timestamp for this intent (prevent memory leak)
+	delete(n.reportReceivedAt, intentKey)
+
+	if n.raftConsensus != nil && len(removedKeys) > 0 {
+		n.raftConsensus.ClearPending(removedKeys)
+	}
+
+	n.logger.Infof("Cleared %d execution reports for Intent group %s (including timestamp)", removed, intentKey)
 }
 
 // submitToRootLayer submits the finalized checkpoint to RootLayer
@@ -1464,6 +2034,9 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 	groupedReports := n.groupReportsByIntent(pendingReports)
 	n.logger.Infof("Grouped %d execution reports into %d Intent groups for epoch %d", len(pendingReports), len(groupedReports), header.Epoch)
 
+	// NOTE: We use checkpoint signatures (from Raft consensus) instead of per-Intent signatures
+	// The checkpoint signatures cover all Intents in the batch, which is what ValidationBatchGroup expects
+
 	// IMPORTANT: Wait for RootLayer state synchronization before submitting ValidationBundles
 	//
 	// RATIONALE:
@@ -1503,7 +2076,9 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 		n.logger.Infof("Processing Intent group %s with %d reports epoch=%d", intentKey, len(reports), header.Epoch)
 
 		// Build ValidationBundle for this Intent
-		bundle := n.buildValidationBundleForIntent(header, reports, signatures)
+		// NOTE: Pass nil for signatures - we use gossip-collected ValidationBundle signatures (65-byte ETH format)
+		// instead of checkpoint signatures (DER format). Checkpoint signatures are only for Raft consensus.
+		bundle := n.buildValidationBundleForIntent(header, reports, nil)
 		if bundle == nil {
 			n.logger.Errorf("Failed to build ValidationBundle for Intent group %s epoch=%d", intentKey, header.Epoch)
 			continue
@@ -1530,6 +2105,127 @@ func (n *Node) submitToRootLayerWithData(header *pb.CheckpointHeader, pendingRep
 	}
 }
 
+// submitValidationBundlesForEpoch submits ValidationBundle batch for all Intents in an epoch after gossip threshold reached
+// This is called when ValidationBundle signatures reach threshold via gossip (not from checkpoint)
+//
+// IMPORTANT: Since all Intents in the same epoch share ONE batch signature (signed over items_hash),
+// we must submit ALL Intents together as a ValidationBatchGroup, not individually.
+func (n *Node) submitValidationBundlesForEpoch(epoch uint64) {
+	n.mu.Lock()
+
+	// Get current checkpoint header
+	header := n.currentCheckpoint
+	if header == nil || header.Epoch != epoch {
+		n.logger.Warnf("No matching checkpoint for epoch=%d (current epoch=%d)", epoch, n.currentEpoch)
+		n.mu.Unlock()
+		return
+	}
+	headerCopy := proto.Clone(header).(*pb.CheckpointHeader)
+
+	// ===== CRITICAL: Use epochIntents instead of pendingReports =====
+	// Get Intent keys from epochIntents (these were recorded during signature collection)
+	intentKeys, exists := n.epochIntents[epoch]
+	if !exists || len(intentKeys) == 0 {
+		n.logger.Warnf("No Intent keys found in epochIntents for epoch=%d", epoch)
+		n.mu.Unlock()
+		return
+	}
+
+	n.logger.Infof("Found %d Intents in epochIntents for epoch=%d", len(intentKeys), epoch)
+
+	// Check ExecutionReport availability for each Intent
+	// Collect reports for Intents that have reports available
+	// Note: pendingReports is indexed by reportKey (intentID:assignmentID:agentID:timestamp)
+	// but epochIntents stores intentKey (intentID:assignmentID:agentID)
+	// We need to find reports that match the intentKey prefix
+	availableReports := make(map[string]*pb.ExecutionReport)
+	missingIntents := make([]string, 0)
+
+	for _, intentKey := range intentKeys {
+		found := false
+		for reportKey, report := range n.pendingReports {
+			// Check if reportKey starts with intentKey (reports have timestamp suffix)
+			if len(reportKey) > len(intentKey) && reportKey[:len(intentKey)] == intentKey && reportKey[len(intentKey)] == ':' {
+				availableReports[reportKey] = proto.Clone(report).(*pb.ExecutionReport)
+				found = true
+				break // Only need one report per intent
+			}
+		}
+		if !found {
+			missingIntents = append(missingIntents, intentKey)
+		}
+	}
+
+	n.mu.Unlock()
+
+	// ===== ExecutionReport Completeness Check =====
+	totalIntents := len(intentKeys)
+	availableCount := len(availableReports)
+	missingCount := len(missingIntents)
+	completeness := float64(availableCount) / float64(totalIntents) * 100
+
+	n.logger.Infof("Epoch %d Intent completeness: %d/%d (%.1f%%) available, %d missing",
+		epoch, availableCount, totalIntents, completeness, missingCount)
+
+	if missingCount > 0 {
+		n.logger.Warnf("Missing ExecutionReports for %d Intents in epoch %d: %v", missingCount, epoch, missingIntents)
+	}
+
+	// Strategy: If <50% reports available, delay submission (too early)
+	// If ≥50%, proceed with available reports only
+	if completeness < 50.0 {
+		n.logger.Warnf("Only %.1f%% reports available for epoch %d (<50%%), delaying submission to allow more reports to arrive",
+			completeness, epoch)
+		return
+	}
+
+	if len(availableReports) == 0 {
+		n.logger.Warnf("No ExecutionReports available for epoch=%d, cannot submit", epoch)
+		return
+	}
+
+	// Group available reports by Intent
+	groupedReports := n.groupReportsByIntent(availableReports)
+	n.logger.Infof("Submitting ValidationBundle batch via gossip threshold epoch=%d intents=%d (%.1f%% complete)",
+		epoch, len(groupedReports), completeness)
+
+	// Wait for RootLayer state sync (same as checkpoint submission)
+	syncDelay := 15 * time.Second
+	n.logger.Infof("Waiting %v for RootLayer state synchronization before submitting ValidationBundles epoch=%d",
+		syncDelay, epoch)
+	time.Sleep(syncDelay)
+
+	// Build ValidationBundles for Intents with available reports
+	bundles := make([]*rootpb.ValidationBundle, 0, len(groupedReports))
+	bundleIntentKeys := make([]string, 0, len(groupedReports))
+
+	for key, reps := range groupedReports {
+		bundle := n.buildValidationBundleForIntent(headerCopy, reps, nil)
+		if bundle == nil {
+			n.logger.Errorf("Failed to build ValidationBundle intent_key=%s epoch=%d", key, epoch)
+			continue
+		}
+		bundles = append(bundles, bundle)
+		bundleIntentKeys = append(bundleIntentKeys, key)
+	}
+
+	if len(bundles) == 0 {
+		n.logger.Warnf("No ValidationBundles to submit for epoch=%d", epoch)
+		return
+	}
+
+	// Submit entire batch using batch logic
+	successfulIntents, failedIntents := n.submitValidationBundleBatch(headerCopy, bundles, bundleIntentKeys)
+
+	// Clear successfully submitted Intent reports
+	for _, key := range successfulIntents {
+		n.clearReportsForIntent(key)
+	}
+
+	n.logger.Infof("ValidationBundle batch submission complete via gossip epoch=%d total=%d successful=%d failed=%d",
+		epoch, len(bundles), len(successfulIntents), len(failedIntents))
+}
+
 // submitValidationBundleBatch submits multiple ValidationBundles to RootLayer in a single batch call
 // Returns lists of successful and failed intent keys
 func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles []*rootpb.ValidationBundle, intentKeys []string) (successfulIntents []string, failedIntents []string) {
@@ -1540,52 +2236,62 @@ func (n *Node) submitValidationBundleBatch(header *pb.CheckpointHeader, bundles 
 
 	// Check if RootLayer client supports batch submission
 	type batchSubmitter interface {
-		SubmitValidationBundleBatch(ctx context.Context, bundles []*rootpb.ValidationBundle, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error)
+		SubmitValidationBundleBatch(ctx context.Context, groups []*rootpb.ValidationBatchGroup, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error)
 	}
 
 	batchClient, supportsBatch := n.rootlayerClient.(batchSubmitter)
 
-	if supportsBatch {
-		// Use batch submission API
-		batchID := fmt.Sprintf("epoch-%d-%d", header.Epoch, time.Now().Unix())
-		n.logger.Infof("Submitting %d ValidationBundles in batch batch_id=%s epoch=%d", len(bundles), batchID, header.Epoch)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		resp, err := batchClient.SubmitValidationBundleBatch(ctx, bundles, batchID, true)
-		if err != nil {
-			// Batch submission failed - fall back to individual submission
-			n.logger.Warnf("Batch submission failed, falling back to individual submission error=%v", err)
-			return n.submitIndividualValidationBundles(header, bundles, intentKeys)
-		}
-
-		// Process batch response
-		n.logger.Infof("Batch submission completed batch_id=%s total=%d success=%d failed=%d",
-			batchID, len(bundles), resp.Success, resp.Failed)
-
-		// Collect results
-		successfulIntents = make([]string, 0, resp.Success)
-		failedIntents = make([]string, 0, resp.Failed)
-
-		for i, result := range resp.Results {
-			if i >= len(intentKeys) {
-				break
-			}
-			if result.Ok {
-				successfulIntents = append(successfulIntents, intentKeys[i])
-			} else {
-				failedIntents = append(failedIntents, intentKeys[i])
-				n.logger.Warnf("Intent %s failed in batch: %s", bundles[i].IntentId, result.Msg)
-			}
-		}
-
-		return successfulIntents, failedIntents
+	// ===== CRITICAL: Batch submission is MANDATORY for epoch-based model =====
+	if !supportsBatch {
+		panic("FATAL: RootLayer client MUST support batch submission for epoch-based ValidationBundle model")
 	}
 
-	// Fallback: Client doesn't support batch submission
-	n.logger.Warn("RootLayer client doesn't support batch submission, using individual submission")
-	return n.submitIndividualValidationBundles(header, bundles, intentKeys)
+	// Convert ValidationBundles to ValidationBatchGroup using epoch-level signatures
+	// Note: Signatures are injected from epochValidationSignatures[epoch]
+	group := n.convertToValidationBatchGroup(header, bundles)
+	if group == nil {
+		panic("FATAL: Failed to convert ValidationBundles to ValidationBatchGroup - epoch-level signatures missing")
+	}
+
+	batchID := fmt.Sprintf("epoch-%d-%d", header.Epoch, time.Now().Unix())
+	n.logger.Infof("Submitting ValidationBatchGroup batch_id=%s epoch=%d items=%d",
+		batchID, header.Epoch, len(group.Items))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	resp, err := batchClient.SubmitValidationBundleBatch(ctx, []*rootpb.ValidationBatchGroup{group}, batchID, true)
+	if err != nil {
+		// ===== CRITICAL: No fallback for epoch-based model =====
+		// Batch submission failure is a fatal error because individual submissions
+		// cannot work with epoch-level signatures (signature covers all Intents via items_hash)
+		n.logger.Errorf("FATAL: Batch submission failed and cannot fallback to individual submission (epoch-based model) error=%v", err)
+		panic(fmt.Sprintf("FATAL: ValidationBatchGroup submission failed for epoch %d: %v", header.Epoch, err))
+	}
+
+	// Process batch response
+	n.logger.Infof("Batch submission completed batch_id=%s items=%d success=%d failed=%d",
+		batchID, len(group.Items), resp.Success, resp.Failed)
+
+	// Collect results
+	successfulIntents = make([]string, 0, resp.Success)
+	failedIntents = make([]string, 0, resp.Failed)
+
+	for i, result := range resp.Results {
+		if i >= len(intentKeys) {
+			break
+		}
+		if result.Ok {
+			successfulIntents = append(successfulIntents, intentKeys[i])
+		} else {
+			failedIntents = append(failedIntents, intentKeys[i])
+			if i < len(group.Items) {
+				n.logger.Warnf("Intent %s failed in batch: %s", group.Items[i].IntentId, result.Msg)
+			}
+		}
+	}
+
+	return successfulIntents, failedIntents
 }
 
 // submitIndividualValidationBundles submits ValidationBundles one by one (fallback method)
@@ -1686,72 +2392,9 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		return nil
 	}
 
-	// Generate ValidationBundle signature using SDK (EIP-191 standard)
-	var validationSigs []*rootpb.ValidationSignature
-
-	if n.sdkClient != nil {
-		// Prepare data for SDK ValidationBundle signing
-		intentIDHash := common.HexToHash(intentID)
-		assignmentIDHash := common.HexToHash(assignmentID)
-		subnetIDHash := common.HexToHash(n.config.SubnetID)
-		agentAddr := common.HexToAddress(agentID)
-
-		// Calculate result hash from checkpoint header
-		resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
-
-		// Get execution reports root as proof hash
-		var proofHash [32]byte
-		if header.Roots != nil && len(header.Roots.EventRoot) > 0 {
-			copy(proofHash[:], header.Roots.EventRoot)
-		}
-
-		// Parse root hash from parent checkpoint hash
-		var rootHash [32]byte
-		if len(header.ParentCpHash) > 0 {
-			copy(rootHash[:], header.ParentCpHash)
-		}
-
-		// Create SDK ValidationBundle structure for signing
-		bundle := sdk.ValidationBundle{
-			IntentID:     intentIDHash,
-			AssignmentID: assignmentIDHash,
-			SubnetID:     subnetIDHash,
-			Agent:        agentAddr,
-			ResultHash:   resultHash,
-			ProofHash:    proofHash,
-			RootHeight:   header.Epoch,
-			RootHash:     rootHash,
-		}
-
-		// Compute digest using SDK
-		digest, err := n.sdkClient.Validation.ComputeDigest(bundle)
-		if err != nil {
-			n.logger.Errorf("Failed to compute ValidationBundle digest: %v", err)
-		} else {
-			// Sign digest using SDK (EIP-191 standard)
-			signature, err := n.sdkClient.Validation.SignDigest(digest)
-			if err != nil {
-				n.logger.Errorf("Failed to sign ValidationBundle digest: %v", err)
-			} else {
-				validatorAddr := n.sdkClient.Signer.Address()
-				validationSigs = append(validationSigs, &rootpb.ValidationSignature{
-					Validator: validatorAddr.Hex(),
-					Signature: signature,
-				})
-				n.logger.Infof("Generated EIP-191 ValidationBundle signature validator=%s signature_len=%d",
-					validatorAddr.Hex(), len(signature))
-			}
-		}
-	} else {
-		// Fallback: Use checkpoint signatures if SDK not available
-		n.logger.Warn("SDK client not available, using checkpoint signatures as fallback (NOT EIP-191 compliant)")
-		for validatorID, sig := range signatures {
-			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
-				Validator: validatorID,
-				Signature: sig.Der,
-			})
-		}
-	}
+	// NEW: Signatures will be injected by convertToValidationBatchGroup
+	// This function only builds the ValidationBundle skeleton without signatures
+	n.logger.Debugf("Building ValidationBundle skeleton (signatures will be injected later) intent_id=%s", intentID)
 
 	// Calculate result hash for ValidationBundle
 	resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
@@ -1762,15 +2405,25 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		proofHash = header.Roots.EventRoot
 	}
 
-	// Format RootHash with proper handling for epoch 0 (genesis)
-	// Use hex.EncodeToString to safely convert []byte to hex string
+	// Format RootHash with consensus-aware handling
+	// See docs/consensus_data_format_compatibility.md for details
 	var rootHashStr string
+	n.logger.Infof("buildValidationBundleForIntent: ParentCpHash length = %d bytes", len(header.ParentCpHash))
+
 	if len(header.ParentCpHash) == 0 {
 		// Epoch 0 has no parent - use zero hash
 		rootHashStr = "0x0000000000000000000000000000000000000000000000000000000000000000"
+		n.logger.Infof("Using zero hash for epoch 0")
+	} else if len(header.ParentCpHash) > 32 {
+		// CometBFT mode: ParentCpHash contains serialized CheckpointHeader (protobuf)
+		// Hash it to get a standard 32-byte value for RootLayer
+		hashBytes := sha256.Sum256(header.ParentCpHash)
+		rootHashStr = "0x" + hex.EncodeToString(hashBytes[:])
+		n.logger.Infof("CometBFT mode: hashed ParentCpHash (%d bytes) to 32-byte root_hash: %s", len(header.ParentCpHash), rootHashStr)
 	} else {
-		// Safely encode bytes to hex string
+		// Raft mode: ParentCpHash is already a 32-byte hash, use directly
 		rootHashStr = "0x" + hex.EncodeToString(header.ParentCpHash)
+		n.logger.Infof("Raft mode: using ParentCpHash directly (%d bytes): %s", len(header.ParentCpHash), rootHashStr)
 	}
 
 	bundle := &rootpb.ValidationBundle{
@@ -1783,15 +2436,15 @@ func (n *Node) buildValidationBundleForIntent(header *pb.CheckpointHeader, repor
 		ExecutedAt:   header.Timestamp,
 		ResultHash:   resultHash[:],
 		ProofHash:    proofHash,
-		Signatures:   validationSigs,
-		SignerBitmap: header.Signatures.SignersBitmap,
-		TotalWeight:  header.Signatures.TotalWeight,
+		Signatures:   nil, // Signatures will be injected by convertToValidationBatchGroup
+		SignerBitmap: nil, // Will be set by convertToValidationBatchGroup
+		TotalWeight:  0,   // Will be calculated by convertToValidationBatchGroup
 		AggregatorId: n.id,
 		CompletedAt:  time.Now().Unix(),
 	}
 
-	n.logger.Infof("ValidationBundle constructed for Intent group intent_id=%s assignment_id=%s agent_id=%s epoch=%d signatures=%d",
-		bundle.IntentId, bundle.AssignmentId, bundle.AgentId, header.Epoch, len(bundle.Signatures))
+	n.logger.Infof("ValidationBundle skeleton constructed for Intent group intent_id=%s assignment_id=%s agent_id=%s epoch=%d (signatures=nil, will be injected later)",
+		bundle.IntentId, bundle.AssignmentId, bundle.AgentId, header.Epoch)
 
 	return bundle
 }
@@ -1854,6 +2507,11 @@ func (c *Config) Validate() error {
 	}
 	// Apply defaults from unified config
 	c.applyDefaults()
+	if c.Raft != nil && c.Raft.Enable {
+		if _, err := c.buildRaftConsensusConfig(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1872,6 +2530,9 @@ func (c *Config) applyDefaults() {
 	if c.Limits == nil {
 		c.Limits = config.DefaultLimitsConfig()
 	}
+	if c.Raft == nil {
+		c.Raft = &RaftConfig{}
+	}
 
 	// Apply legacy fields from unified config if not set
 	if c.ProposeTimeout == 0 {
@@ -1886,16 +2547,141 @@ func (c *Config) applyDefaults() {
 	if c.CheckpointInterval == 0 {
 		c.CheckpointInterval = c.Timeouts.CheckpointInterval
 	}
-	if c.NATSUrl == "" {
-		c.NATSUrl = c.Network.NATSUrl
-	}
 	if c.SubnetID == "" {
 		c.SubnetID = c.Identity.SubnetID
 	}
-
-	if c.RegistryHeartbeatInterval <= 0 {
-		c.RegistryHeartbeatInterval = 30 * time.Second
+	if c.Raft.DataDir == "" {
+		if c.StoragePath != "" {
+			c.Raft.DataDir = filepath.Join(c.StoragePath, "raft")
+		} else {
+			c.Raft.DataDir = "./data/raft"
+		}
 	}
+	if c.Raft.BindAddress == "" {
+		c.Raft.BindAddress = "127.0.0.1:7000"
+	}
+	if c.Raft.HeartbeatTimeout == 0 {
+		c.Raft.HeartbeatTimeout = 1 * time.Second
+	}
+	if c.Raft.ElectionTimeout == 0 {
+		c.Raft.ElectionTimeout = 1 * time.Second
+	}
+	if c.Raft.CommitTimeout == 0 {
+		c.Raft.CommitTimeout = 50 * time.Millisecond
+	}
+	if c.Raft.MaxPool <= 0 {
+		c.Raft.MaxPool = 3
+	}
+
+	// REMOVED: Registry component deprecated
+	// if c.RegistryHeartbeatInterval <= 0 {
+	// 	c.RegistryHeartbeatInterval = 30 * time.Second
+	// }
+}
+
+func (c *Config) buildRaftConsensusConfig() (consensus.RaftConfig, error) {
+	if c.Raft == nil || !c.Raft.Enable {
+		return consensus.RaftConfig{}, fmt.Errorf("raft not enabled")
+	}
+	if c.Raft.DataDir == "" {
+		return consensus.RaftConfig{}, fmt.Errorf("raft data_dir is required when raft is enabled")
+	}
+	if c.Raft.BindAddress == "" {
+		return consensus.RaftConfig{}, fmt.Errorf("raft bind_address is required when raft is enabled")
+	}
+	peers := make([]consensus.RaftPeer, 0, len(c.Raft.Peers))
+	for _, peer := range c.Raft.Peers {
+		if peer.ID == "" || peer.Address == "" {
+			return consensus.RaftConfig{}, fmt.Errorf("raft peer configuration requires both id and address")
+		}
+		peers = append(peers, consensus.RaftPeer{
+			ID:      peer.ID,
+			Address: peer.Address,
+		})
+	}
+	return consensus.RaftConfig{
+		NodeID:           c.ValidatorID,
+		DataDir:          c.Raft.DataDir,
+		BindAddress:      c.Raft.BindAddress,
+		AdvertiseAddress: c.Raft.AdvertiseAddress,
+		Bootstrap:        c.Raft.Bootstrap,
+		Peers:            peers,
+		HeartbeatTimeout: c.Raft.HeartbeatTimeout,
+		ElectionTimeout:  c.Raft.ElectionTimeout,
+		CommitTimeout:    c.Raft.CommitTimeout,
+		MaxPool:          c.Raft.MaxPool,
+	}, nil
+}
+
+// buildCometBFTConfig builds CometBFT consensus configuration from Config
+func (c *Config) buildCometBFTConfig() (*cometbft.Config, error) {
+	if c.CometBFT == nil || !c.CometBFT.Enable {
+		return nil, fmt.Errorf("cometbft not enabled")
+	}
+	if c.CometBFT.HomeDir == "" {
+		return nil, fmt.Errorf("cometbft home_dir is required when cometbft is enabled")
+	}
+
+	// Use Subnet ID as ChainID if not specified
+	// CometBFT requires chain_id to be max 50 characters, so use last 12 hex digits of subnet ID
+	chainID := c.CometBFT.ChainID
+	if chainID == "" {
+		// Use last 12 chars of subnet ID to create a shorter chain ID
+		subnetIDStr := c.SubnetID
+		if len(subnetIDStr) > 12 {
+			chainID = "subnet-" + subnetIDStr[len(subnetIDStr)-12:]
+		} else {
+			chainID = "subnet-" + subnetIDStr
+		}
+	}
+
+	// Set default moniker if not specified
+	moniker := c.CometBFT.Moniker
+	if moniker == "" {
+		moniker = c.ValidatorID
+	}
+
+	// Parse seeds and peers
+	var seeds []string
+	if c.CometBFT.Seeds != "" {
+		seeds = strings.Split(c.CometBFT.Seeds, ",")
+	}
+	var peers []string
+	if c.CometBFT.PersistentPeers != "" {
+		peers = strings.Split(c.CometBFT.PersistentPeers, ",")
+	}
+
+	// Build P2P and RPC listen addresses
+	p2pListenAddr := fmt.Sprintf("tcp://0.0.0.0:%d", c.CometBFT.P2PPort)
+	rpcListenAddr := fmt.Sprintf("tcp://127.0.0.1:%d", c.CometBFT.RPCPort)
+
+	return &cometbft.Config{
+		HomeDir:           c.CometBFT.HomeDir,
+		Moniker:           moniker,
+		ChainID:           chainID,
+		P2PListenAddress:  p2pListenAddr,
+		RPCListenAddress:  rpcListenAddr,
+		Seeds:             seeds,
+		PersistentPeers:   peers,
+		GenesisValidators: c.CometBFT.GenesisValidators,
+		ECDSASigner:       nil, // Will be set by Node after initialization
+		RootLayerClient:   nil, // Will be set by Node after initialization
+		LogFormat:         "plain",
+		// Use default values for other fields
+		TimeoutPropose:            3 * time.Second,
+		TimeoutPrevote:            1 * time.Second,
+		TimeoutPrecommit:          1 * time.Second,
+		TimeoutCommit:             5 * time.Second,
+		CreateEmptyBlocks:         true,
+		CreateEmptyBlocksInterval: 0,
+		MaxBlockSizeBytes:         22020096, // 21MB
+		MempoolSize:               5000,
+		MempoolRecheck:            true,
+		MempoolBroadcast:          true,
+		StateSyncEnable:           false,
+		DBBackend:                 "goleveldb",
+		LogLevel:                  "error", // Reduce CometBFT consensus logs
+	}, nil
 }
 
 // computeCheckpointHash computes the canonical hash of a checkpoint header
@@ -1914,4 +2700,633 @@ func (n *Node) getCheckpointInterval() time.Duration {
 		return n.config.Timeouts.CheckpointInterval
 	}
 	return 30 * time.Second
+}
+
+// signAndGossipValidationBundles makes all validators sign ValidationBundles and gossip signatures.
+// In epoch-based mode we sign once per epoch (max MaxIntentsPerEpoch intents, FIFO order).
+func (n *Node) signAndGossipValidationBundles(header *pb.CheckpointHeader, groupedReports map[string][]*pb.ExecutionReport) {
+	// Determine consensus mode
+	isCometBFT := n.cometbftConsensus != nil
+	isRaft := n.raftConsensus != nil
+
+	// SDK client is always required for signing
+	if n.sdkClient == nil {
+		n.logger.Warn("SDK client not available, skipping ValidationBundle signing")
+		return
+	}
+
+	// Gossip manager is only required for Raft mode
+	if isRaft && n.gossipManager == nil {
+		n.logger.Warn("Gossip manager not available (Raft mode), skipping ValidationBundle signature gossip")
+		return
+	}
+
+	if header == nil {
+		n.logger.Warn("Checkpoint header is nil, skipping ValidationBundle signing")
+		return
+	}
+
+	n.logger.Infof("signAndGossipValidationBundles: mode=CometBFT:%v Raft:%v epoch=%d",
+		isCometBFT, isRaft, header.Epoch)
+
+	epoch := header.Epoch
+	totalIntents := len(groupedReports)
+
+	type intentMeta struct {
+		key       string
+		timestamp int64
+	}
+
+	intents := make([]intentMeta, 0, totalIntents)
+
+	// Lock to safely read reportReceivedAt map
+	n.mu.RLock()
+	for intentKey := range groupedReports {
+		// Use validator reception time instead of agent-provided timestamp for FIFO
+		// This prevents malicious agents from manipulating order by setting fake timestamps
+		receivedAt, exists := n.reportReceivedAt[intentKey]
+		if !exists {
+			n.logger.Warnf("No reception timestamp found for intent %s, using zero", intentKey)
+			receivedAt = 0
+		}
+
+		intents = append(intents, intentMeta{
+			key:       intentKey,
+			timestamp: receivedAt,
+		})
+	}
+	n.mu.RUnlock()
+
+	if len(intents) == 0 {
+		n.logger.Warnf("Epoch %d has no grouped execution reports to sign", epoch)
+		return
+	}
+
+	sort.SliceStable(intents, func(i, j int) bool {
+		ti := intents[i].timestamp
+		tj := intents[j].timestamp
+
+		switch {
+		case ti == 0 && tj == 0:
+			return intents[i].key < intents[j].key
+		case ti == 0:
+			return false
+		case tj == 0:
+			return true
+		case ti == tj:
+			return intents[i].key < intents[j].key
+		default:
+			return ti < tj
+		}
+	})
+
+	if len(intents) > MaxIntentsPerEpoch {
+		n.logger.Warnf("Epoch %d has %d Intents, limiting to oldest %d (FIFO). Remaining %d will wait",
+			epoch, len(intents), MaxIntentsPerEpoch, len(intents)-MaxIntentsPerEpoch)
+		intents = intents[:MaxIntentsPerEpoch]
+	}
+
+	intentKeys := make([]string, 0, len(intents))
+	for _, meta := range intents {
+		intentKeys = append(intentKeys, meta.key)
+	}
+
+	n.logger.Infof("Validator signing ValidationBundle for epoch=%d (selected_intents=%d total_grouped=%d)",
+		epoch, len(intentKeys), totalIntents)
+
+	items := make([]sdk.ValidationItem, 0, len(intentKeys))
+	for _, intentKey := range intentKeys {
+		reports := groupedReports[intentKey]
+		if len(reports) == 0 {
+			continue
+		}
+
+		firstReport := reports[0]
+		intentID := firstReport.IntentId
+		assignmentID := firstReport.AssignmentId
+		agentID := firstReport.AgentId
+
+		intentHash := common.HexToHash(intentID)
+		assignmentHash := common.HexToHash(assignmentID)
+		agentAddr := common.HexToAddress(agentID)
+
+		resultHash := sha256.Sum256([]byte(fmt.Sprintf("%v", header)))
+
+		var proofHash [32]byte
+		if header.Roots != nil && len(header.Roots.EventRoot) > 0 {
+			copy(proofHash[:], header.Roots.EventRoot)
+		}
+
+		items = append(items, sdk.ValidationItem{
+			IntentID:     ([32]byte)(intentHash),
+			AssignmentID: ([32]byte)(assignmentHash),
+			Agent:        agentAddr,
+			ResultHash:   resultHash,
+			ProofHash:    proofHash,
+		})
+
+		n.logger.Infof("Prepared ValidationItem epoch=%d intent_key=%s intent_id=%s assignment_id=%s agent_id=%s",
+			epoch, intentKey, intentID, assignmentID, agentID)
+	}
+
+	if len(items) == 0 {
+		n.logger.Warnf("Epoch %d produced no ValidationItems after filtering", epoch)
+		return
+	}
+
+	itemsHash, err := n.sdkClient.Validation.ComputeItemsHash(items)
+	if err != nil {
+		n.logger.Errorf("Failed to compute items_hash for epoch=%d: %v", epoch, err)
+		return
+	}
+
+	var rootHash [32]byte
+	if len(header.ParentCpHash) > 0 {
+		copy(rootHash[:], header.ParentCpHash)
+	}
+
+	batch := sdk.ValidationBatch{
+		SubnetID:   ([32]byte)(common.HexToHash(n.config.SubnetID)),
+		ItemsHash:  itemsHash,
+		RootHeight: epoch,
+		RootHash:   rootHash,
+		Items:      items,
+	}
+
+	digest, err := n.sdkClient.Validation.ComputeBatchDigest(batch)
+	if err != nil {
+		n.logger.Errorf("Failed to compute ValidationBatch digest for epoch=%d: %v", epoch, err)
+		return
+	}
+
+	signature, err := n.sdkClient.Validation.SignDigest(digest)
+	if err != nil {
+		n.logger.Errorf("Failed to sign ValidationBatch digest for epoch=%d: %v", epoch, err)
+		return
+	}
+
+	validatorAddr := n.sdkClient.Signer.Address().Hex()
+
+	n.logger.Infof("Signed ValidationBatch epoch=%d items=%d items_hash=0x%x digest=0x%x",
+		epoch, len(items), itemsHash, digest)
+
+	n.mu.Lock()
+	n.epochIntents[epoch] = append([]string(nil), intentKeys...)
+	n.mu.Unlock()
+
+	vbSig := &pb.ValidationBundleSignature{
+		IntentId:         "",
+		AssignmentId:     "",
+		AgentId:          "",
+		Epoch:            epoch,
+		ValidatorAddress: validatorAddr,
+		Signature:        signature,
+		Timestamp:        time.Now().Unix(),
+		BundleDigestHash: digest[:],
+	}
+
+	thresholdReached, _ := n.storeEpochValidationSignature(vbSig)
+	if thresholdReached {
+		// Check if submission has already been triggered for this epoch
+		n.mu.Lock()
+		alreadyTriggered := n.epochSubmissionTriggered[epoch]
+		shouldTrigger := false
+
+		if isRaft {
+			// Raft mode: only leader submits (原逻辑完全不变)
+			shouldTrigger = !alreadyTriggered && n.raftConsensus != nil && n.raftConsensus.IsLeader()
+		} else if isCometBFT {
+			// CometBFT mode: any node can submit (RootLayer will handle deduplication)
+			shouldTrigger = !alreadyTriggered
+		}
+
+		if shouldTrigger {
+			n.epochSubmissionTriggered[epoch] = true
+			n.mu.Unlock()
+			n.logger.Infof("Epoch %d signature threshold satisfied locally, triggering submission (mode: CometBFT=%v Raft=%v)",
+				epoch, isCometBFT, isRaft)
+			go n.submitValidationBundlesForEpoch(epoch)
+		} else {
+			n.mu.Unlock()
+			if alreadyTriggered {
+				n.logger.Debugf("Submission already triggered for epoch=%d (from local signing), skipping duplicate", epoch)
+			}
+		}
+	}
+
+	// Broadcast signature based on consensus mode
+	if isCometBFT {
+		// CometBFT mode: broadcast via CometBFT transaction
+		if err := n.broadcastValidationSignatureToCometBFT(vbSig); err != nil {
+			n.logger.Errorf("Failed to broadcast ValidationBundle signature to CometBFT epoch=%d validator=%s: %v",
+				epoch, validatorAddr, err)
+			return
+		}
+		n.logger.Infof("Broadcasted ValidationBundle signature via CometBFT epoch=%d validator=%s intents=%d",
+			epoch, validatorAddr, len(intentKeys))
+	} else if isRaft {
+		// Raft mode: broadcast via Gossip (原逻辑完全不变)
+		if err := n.gossipManager.BroadcastValidationBundleSignature(vbSig); err != nil {
+			n.logger.Errorf("Failed to gossip epoch-level ValidationBundle signature epoch=%d validator=%s: %v",
+				epoch, validatorAddr, err)
+			return
+		}
+		n.logger.Infof("Broadcasted epoch-level ValidationBundle signature epoch=%d validator=%s intents=%d",
+			epoch, validatorAddr, len(intentKeys))
+	}
+}
+
+// handleValidationSignatureFromCometBFT handles ValidationBundle signatures received via CometBFT
+func (n *Node) handleValidationSignatureFromCometBFT(vbSig *pb.ValidationBundleSignature) {
+	if vbSig == nil {
+		n.logger.Warn("Received nil ValidationBundleSignature from CometBFT")
+		return
+	}
+
+	if vbSig.ValidatorAddress == "" || len(vbSig.Signature) == 0 {
+		n.logger.Warn("Invalid ValidationBundle signature from CometBFT: missing validator or signature",
+			"epoch", vbSig.Epoch)
+		return
+	}
+
+	// CometBFT mode only uses epoch-level signatures (IntentId, AssignmentId, AgentId are empty)
+	isEpochFormat := vbSig.IntentId == "" && vbSig.AssignmentId == "" && vbSig.AgentId == ""
+	if !isEpochFormat {
+		n.logger.Warn("Received non-epoch-level signature in CometBFT mode (unexpected)",
+			"epoch", vbSig.Epoch,
+			"validator", vbSig.ValidatorAddress)
+		return
+	}
+
+	n.logger.Infof("Received epoch-level ValidationBundle signature via CometBFT epoch=%d validator=%s",
+		vbSig.Epoch, vbSig.ValidatorAddress)
+
+	// Store signature and check if threshold is reached
+	thresholdReached, signatureCount := n.storeEpochValidationSignature(vbSig)
+
+	if thresholdReached {
+		n.logger.Infof("Epoch-level ValidationBundle signatures reached threshold epoch=%d collected=%d required=%d (CometBFT)",
+			vbSig.Epoch,
+			signatureCount,
+			n.validatorSet.RequiredSignatures())
+
+		// Check if submission has already been triggered for this epoch
+		n.mu.Lock()
+		alreadyTriggered := n.epochSubmissionTriggered[vbSig.Epoch]
+		shouldTrigger := !alreadyTriggered // In CometBFT mode, any node can submit
+
+		if shouldTrigger {
+			n.epochSubmissionTriggered[vbSig.Epoch] = true
+			n.mu.Unlock()
+			n.logger.Infof("Triggering ValidationBundle batch submission for epoch=%d (CometBFT mode)", vbSig.Epoch)
+			go n.submitValidationBundlesForEpoch(vbSig.Epoch)
+		} else {
+			n.mu.Unlock()
+			n.logger.Debugf("Submission already triggered for epoch=%d, skipping duplicate trigger", vbSig.Epoch)
+		}
+	}
+}
+
+// broadcastValidationSignatureToCometBFT broadcasts ValidationBundle signature via CometBFT with retry logic
+func (n *Node) broadcastValidationSignatureToCometBFT(vbSig *pb.ValidationBundleSignature) error {
+	if n.cometbftConsensus == nil {
+		return fmt.Errorf("CometBFT consensus not initialized")
+	}
+
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err := n.cometbftConsensus.BroadcastValidationBundleSignature(vbSig)
+		if err == nil {
+			n.logger.Debugf("Successfully broadcasted ValidationBundleSignature on attempt %d epoch=%d",
+				attempt, vbSig.Epoch)
+			return nil
+		}
+
+		n.logger.Warnf("Failed to broadcast ValidationBundleSignature (attempt %d/%d) epoch=%d: %v",
+			attempt, maxRetries, vbSig.Epoch, err)
+
+		if attempt < maxRetries {
+			// Exponential backoff: 1s, 2s, 4s
+			backoff := time.Second * time.Duration(1<<(attempt-1))
+			time.Sleep(backoff)
+			continue
+		}
+
+		// Final failure after all retries
+		return fmt.Errorf("failed to broadcast ValidationBundleSignature after %d attempts: %w", maxRetries, err)
+	}
+
+	return nil
+}
+
+// handleExecutionReportCommitted handles execution reports committed via CometBFT
+func (n *Node) handleExecutionReportCommitted(report *pb.ExecutionReport, reportKey string) {
+	if report == nil || reportKey == "" {
+		return
+	}
+	n.mu.Lock()
+	if _, exists := n.pendingReports[reportKey]; !exists {
+		n.pendingReports[reportKey] = report
+		score := n.scoreReport(report)
+		n.reportScores[reportKey] = score
+
+		// Track reception time using the SAME key format as groupReportsByIntent
+		// Key format: intentID:assignmentID:agentID
+		intentKey := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
+		n.reportReceivedAt[intentKey] = time.Now().Unix() // Track validator reception time for FIFO
+
+		// Persist execution report to storage (CometBFT mode)
+		reportBytes, err := proto.Marshal(report)
+		if err != nil {
+			n.logger.Error("Failed to marshal execution report", "error", err, "report_id", reportKey)
+		} else {
+			if err := n.store.SaveExecutionReport(reportKey, reportBytes); err != nil {
+				n.logger.Error("Failed to save execution report to storage", "error", err, "report_id", reportKey)
+			} else {
+				n.logger.Infof("Saved execution report to storage report_id=%s", reportKey)
+			}
+		}
+	}
+	n.mu.Unlock()
+	n.logger.Infof("Stored execution report from CometBFT callback intent=%s assignment=%s reportKey=%s", report.IntentId, report.AssignmentId, reportKey)
+}
+
+// handleCheckpointFinalized handles checkpoints that have reached finality with threshold signatures
+func (n *Node) handleCheckpointFinalized(header *pb.CheckpointHeader, signatures []*pb.Signature) {
+	if header == nil {
+		return
+	}
+
+	n.logger.Info("Checkpoint finalized with threshold signatures",
+		"epoch", header.Epoch,
+		"signature_count", len(signatures))
+
+	// Clean up old epoch data to prevent memory leaks
+	go n.cleanupOldEpochData(header.Epoch)
+
+	// TODO: Submit to RootLayer if configured
+	// This will be implemented when we add checkpoint submission support to RootLayer client
+}
+
+// ecdsaSignerAdapter adapts crypto.Signer to cometbft.ECDSASigner interface
+// Legacy adapters removed - now using adapters from internal/consensus/cometbft/rootlayer_adapter.go
+
+// convertToValidationBatchGroup converts ValidationBundles to ValidationBatchGroup
+func (n *Node) convertToValidationBatchGroup(
+	header *pb.CheckpointHeader,
+	bundles []*rootpb.ValidationBundle,
+) *rootpb.ValidationBatchGroup {
+	if len(bundles) == 0 {
+		return nil
+	}
+
+	// Use first bundle for shared metadata
+	firstBundle := bundles[0]
+	epoch := header.Epoch
+
+	// ===== DEFENSIVE CHECK: All bundles should have nil Signatures (阶段5保证) =====
+	for i, bundle := range bundles {
+		if bundle.Signatures != nil && len(bundle.Signatures) > 0 {
+			n.logger.Errorf("FATAL: ValidationBundle[%d] has non-nil Signatures (len=%d). Bundles should not contain signatures at this stage!",
+				i, len(bundle.Signatures))
+			panic(fmt.Sprintf("FATAL: ValidationBundle[%d] has non-nil Signatures. This violates epoch-based signature model.", i))
+		}
+	}
+
+	// ===== GET EPOCH-LEVEL SIGNATURES =====
+	n.mu.RLock()
+	epochSigs, exists := n.epochValidationSignatures[epoch]
+	n.mu.RUnlock()
+
+	var validationSigs []*rootpb.ValidationSignature
+	if !exists || len(epochSigs) == 0 {
+		n.logger.Warnf("No epoch-level signatures found for epoch %d, checking fallback (per-Intent signatures)", epoch)
+
+		// Fallback: Try to aggregate from per-Intent signatures (backward compatibility)
+		n.mu.RLock()
+		aggregated := make(map[string]*pb.ValidationBundleSignature)
+		for _, intentSigs := range n.validationBundleSignatures {
+			for validator, sig := range intentSigs {
+				if sig.Epoch == epoch {
+					aggregated[validator] = sig
+					break // Only need one signature per validator per epoch
+				}
+			}
+		}
+		n.mu.RUnlock()
+
+		if len(aggregated) > 0 {
+			n.logger.Warnf("Found %d signatures via fallback (per-Intent map) for epoch %d", len(aggregated), epoch)
+			for validatorAddr, vbSig := range aggregated {
+				validationSigs = append(validationSigs, &rootpb.ValidationSignature{
+					Validator: validatorAddr,
+					Signature: vbSig.Signature,
+				})
+			}
+		} else {
+			n.logger.Errorf("No signatures found for epoch %d (neither epoch-level nor per-Intent fallback)", epoch)
+			return nil
+		}
+	} else {
+		// Convert epoch-level signatures to ValidationSignature list
+		n.logger.Infof("Converting %d epoch-level signatures to ValidationSignature list for epoch %d", len(epochSigs), epoch)
+		for validatorAddr, vbSig := range epochSigs {
+			validationSigs = append(validationSigs, &rootpb.ValidationSignature{
+				Validator: validatorAddr,
+				Signature: vbSig.Signature,
+			})
+		}
+	}
+
+	// Convert each ValidationBundle to ValidationItem
+	items := make([]*rootpb.ValidationItem, 0, len(bundles))
+	for _, bundle := range bundles {
+		items = append(items, &rootpb.ValidationItem{
+			IntentId:     bundle.IntentId,
+			AssignmentId: bundle.AssignmentId,
+			AgentId:      bundle.AgentId,
+			ExecutedAt:   bundle.ExecutedAt,
+			ResultHash:   bundle.ResultHash,
+			ProofHash:    bundle.ProofHash,
+		})
+	}
+
+	// Compute items_hash using SDK (required for ValidationBatch v2.3+)
+	var itemsHash []byte
+	if n.sdkClient != nil && len(items) > 0 {
+		// Convert rootpb.ValidationItem to sdk.ValidationItem for hash computation
+		sdkItems := make([]sdk.ValidationItem, len(items))
+		for i, item := range items {
+			intentID := common.HexToHash(item.IntentId)
+			assignmentID := common.HexToHash(item.AssignmentId)
+			agentAddr := common.HexToAddress(item.AgentId)
+
+			var resultHash [32]byte
+			if len(item.ResultHash) >= 32 {
+				copy(resultHash[:], item.ResultHash[:32])
+			}
+
+			var proofHash [32]byte
+			if len(item.ProofHash) >= 32 {
+				copy(proofHash[:], item.ProofHash[:32])
+			}
+
+			sdkItems[i] = sdk.ValidationItem{
+				IntentID:     intentID,
+				AssignmentID: assignmentID,
+				Agent:        agentAddr,
+				ResultHash:   resultHash,
+				ProofHash:    proofHash,
+			}
+		}
+
+		// Compute items_hash
+		computedHash, err := n.sdkClient.Validation.ComputeItemsHash(sdkItems)
+		if err != nil {
+			n.logger.Errorf("Failed to compute items_hash: %v", err)
+		} else {
+			itemsHash = computedHash[:]
+			n.logger.Infof("Computed items_hash for ValidationBatchGroup: 0x%x (items_count=%d)", itemsHash, len(items))
+		}
+	} else {
+		n.logger.Warn("SDK client not available or no items, cannot compute items_hash")
+	}
+
+	// Create ValidationBatchGroup with epoch-level signatures (injected from epochValidationSignatures)
+	// Note: SignerBitmap and TotalWeight are computed by RootLayer client during submission
+	group := &rootpb.ValidationBatchGroup{
+		SubnetId:     firstBundle.SubnetId,
+		RootHeight:   firstBundle.RootHeight,
+		RootHash:     firstBundle.RootHash,
+		AggregatorId: firstBundle.AggregatorId,
+		CompletedAt:  firstBundle.CompletedAt,
+		Signatures:   validationSigs, // Injected epoch-level signatures
+		SignerBitmap: nil,            // Will be computed during submission
+		TotalWeight:  0,              // Will be computed during submission
+		Items:        items,
+		ItemsHash:    itemsHash, // Computed items_hash for batch validation
+	}
+
+	n.logger.Infof("✅ Created ValidationBatchGroup with epoch-level signatures epoch=%d intents=%d signatures=%d items_hash=0x%x",
+		epoch, len(items), len(validationSigs), itemsHash)
+
+	return group
+}
+
+// cleanupOldEpochData removes epoch-level signature and intent data for epochs older than keepRecentEpochs
+// This prevents memory leaks by cleaning up data that is no longer needed
+// Should be called after a checkpoint is finalized
+func (n *Node) cleanupOldEpochData(finalizedEpoch uint64) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// Calculate cutoff epoch (keep only recent epochs)
+	var cutoffEpoch uint64
+	if finalizedEpoch > keepRecentEpochs {
+		cutoffEpoch = finalizedEpoch - keepRecentEpochs
+	} else {
+		// If finalizedEpoch <= keepRecentEpochs, keep all epochs
+		n.logger.Debugf("Finalized epoch %d <= keepRecentEpochs %d, skipping cleanup", finalizedEpoch, keepRecentEpochs)
+		return
+	}
+
+	// Clean up epoch-level validation signatures
+	cleanedSigs := 0
+	for epoch := range n.epochValidationSignatures {
+		if epoch < cutoffEpoch {
+			delete(n.epochValidationSignatures, epoch)
+			cleanedSigs++
+		}
+	}
+
+	// Clean up epoch intents
+	cleanedIntents := 0
+	for epoch := range n.epochIntents {
+		if epoch < cutoffEpoch {
+			delete(n.epochIntents, epoch)
+			cleanedIntents++
+		}
+	}
+
+	// Clean up epoch submission triggered flags (prevent memory leak)
+	cleanedSubmissions := 0
+	for epoch := range n.epochSubmissionTriggered {
+		if epoch < cutoffEpoch {
+			delete(n.epochSubmissionTriggered, epoch)
+			cleanedSubmissions++
+		}
+	}
+
+	if cleanedSigs > 0 || cleanedIntents > 0 || cleanedSubmissions > 0 {
+		n.logger.Infof("Cleaned up old epoch data finalized_epoch=%d cutoff_epoch=%d cleaned_sig_epochs=%d cleaned_intent_epochs=%d cleaned_submission_flags=%d",
+			finalizedEpoch, cutoffEpoch, cleanedSigs, cleanedIntents, cleanedSubmissions)
+	}
+}
+
+// CometBFTConfig configures the CometBFT consensus engine.
+type CometBFTConfig struct {
+	Enable            bool             // Enable CometBFT consensus
+	HomeDir           string           // CometBFT home directory
+	Moniker           string           // Node moniker
+	ChainID           string           // Chain ID (default: subnet ID)
+	P2PPort           int              // P2P listen port
+	RPCPort           int              // RPC listen port
+	ProxyPort         int              // ABCI proxy app port
+	Seeds             string           // Comma-separated seed nodes (node_id@host:port)
+	PersistentPeers   string           // Comma-separated persistent peers
+	GenesisFile       string           // Path to genesis.json
+	PrivValidatorKey  string           // Path to priv_validator_key.json
+	NodeKey           string           // Path to node_key.json
+	GenesisValidators map[string]int64 // Validator set (validator_id -> voting_power)
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// storeEpochValidationSignature records an epoch-level ValidationBundle signature and returns true when the threshold is met.
+func (n *Node) storeEpochValidationSignature(vbSig *pb.ValidationBundleSignature) (bool, int) {
+	if vbSig == nil {
+		return false, 0
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.epochValidationSignatures == nil {
+		n.epochValidationSignatures = make(map[uint64]map[string]*pb.ValidationBundleSignature)
+	}
+
+	if n.epochIntents[vbSig.Epoch] == nil {
+		n.logger.Debugf("Epoch %d signature received before intents recorded", vbSig.Epoch)
+	}
+
+	signatures := n.epochValidationSignatures[vbSig.Epoch]
+	if signatures == nil {
+		signatures = make(map[string]*pb.ValidationBundleSignature)
+		n.epochValidationSignatures[vbSig.Epoch] = signatures
+	}
+
+	if existing, exists := signatures[vbSig.ValidatorAddress]; exists {
+		if !bytesEqual(existing.Signature, vbSig.Signature) {
+			n.logger.Warnf("Validator %s submitted conflicting epoch signature for epoch=%d; keeping existing signature",
+				vbSig.ValidatorAddress, vbSig.Epoch)
+		}
+		sigCount := len(signatures)
+		return n.validatorSet.CheckThreshold(sigCount), sigCount
+	}
+
+	signatures[vbSig.ValidatorAddress] = vbSig
+
+	sigCount := len(signatures)
+	required := n.validatorSet.RequiredSignatures()
+
+	n.logger.Infof("Stored epoch-level ValidationBundle signature epoch=%d validator=%s collected=%d required=%d",
+		vbSig.Epoch, vbSig.ValidatorAddress, sigCount, required)
+
+	return n.validatorSet.CheckThreshold(sigCount), sigCount
 }

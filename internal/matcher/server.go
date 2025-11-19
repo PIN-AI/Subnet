@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +14,7 @@ import (
 
 	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
 	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/blockchain"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
@@ -34,7 +33,8 @@ type Server struct {
 	rootlayerClient rootlayer.Client
 	verifier        *blockchain.ParticipantVerifier
 	allowUnverified bool
-	sdkClient       *sdk.Client // SDK client for on-chain operations
+	sdkClient       *sdk.Client          // SDK client for on-chain operations
+	strategy        BidMatchingStrategy  // Bid matching strategy for bid selection
 
 	// Intent and bid management
 	mu              sync.RWMutex
@@ -46,10 +46,6 @@ type Server struct {
 	// Assignment confirmation tracking
 	pendingAssignments map[string]*PendingAssignment // assignment_id -> pending assignment
 	assignmentAgents   map[string]string             // assignment_id -> agent_id
-
-	// Batch assignment submission
-	assignmentBatchBuffer []*rootpb.Assignment // Buffer for batch submission to RootLayer
-	assignmentBatchMu     sync.Mutex           // Separate mutex for batch buffer
 
 	// Stream management
 	intentStreams map[string]chan *pb.MatcherIntentUpdate // stream_id -> channel
@@ -94,13 +90,22 @@ type PendingAssignment struct {
 	Intent     *rootpb.Intent
 }
 
-// NewServer creates a new Matcher server with window management
+// NewServer creates a new Matcher server with default lowest-price strategy
 func NewServer(cfg *Config, logger logging.Logger) (*Server, error) {
+	return NewServerWithStrategy(cfg, logger, NewLowestPriceBidStrategy())
+}
+
+// NewServerWithStrategy creates a new Matcher server with a custom matching strategy
+// This allows advanced users to provide their own strategy implementation
+func NewServerWithStrategy(cfg *Config, logger logging.Logger, strategy BidMatchingStrategy) (*Server, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
 	if logger == nil {
 		logger = logging.NewDefaultLogger()
+	}
+	if strategy == nil {
+		strategy = NewLowestPriceBidStrategy()
 	}
 
 	// Validate configuration
@@ -195,14 +200,14 @@ func NewServer(cfg *Config, logger logging.Logger) (*Server, error) {
 		signer:                signer,
 		rootlayerClient:       rootlayerClient,
 		sdkClient:             sdkClient,
+		strategy:              strategy,
 		intents:               make(map[string]*IntentWithWindow),
 		bidsByIntent:          make(map[string][]*pb.Bid),
 		matchingResults:       make(map[string]*pb.MatchingResult),
-		assignments:           make(map[string]*rootpb.Assignment),
-		pendingAssignments:    make(map[string]*PendingAssignment),
-		assignmentAgents:      make(map[string]string),
-		assignmentBatchBuffer: make([]*rootpb.Assignment, 0, 100), // Pre-allocate buffer for batch submission
-		intentStreams:         make(map[string]chan *pb.MatcherIntentUpdate),
+		assignments:        make(map[string]*rootpb.Assignment),
+		pendingAssignments: make(map[string]*PendingAssignment),
+		assignmentAgents:   make(map[string]string),
+		intentStreams:      make(map[string]chan *pb.MatcherIntentUpdate),
 		agentTasks:            make(map[string]chan *pb.ExecutionTask),
 		taskStreams:           make(map[string]chan *pb.ExecutionTask),
 	}
@@ -239,11 +244,8 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start intent pulling from RootLayer
 	go s.pullIntentsFromRootLayer(ctx)
 
-	// Start batch assignment submission loop
-	go s.batchAssignmentSubmissionLoop(ctx)
-
 	s.started = true
-	s.logger.Info("Matcher service started with bidding window management, batch assignment submission, and RootLayer integration")
+	s.logger.Info("Matcher service started with bidding window management and RootLayer integration")
 	return nil
 }
 
@@ -285,9 +287,9 @@ func (s *Server) Stop() error {
 // AddIntent adds a new intent and starts its bidding window
 func (s *Server) AddIntent(intent *rootpb.Intent) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	if _, exists := s.intents[intent.IntentId]; exists {
+		s.mu.Unlock()
 		return fmt.Errorf("intent %s already exists", intent.IntentId)
 	}
 
@@ -306,6 +308,10 @@ func (s *Server) AddIntent(intent *rootpb.Intent) error {
 
 	s.logger.Infof("Added intent %s with bidding window %d seconds",
 		intent.IntentId, s.cfg.BiddingWindowSec)
+
+	// Unlock before broadcasting to avoid deadlock
+	// (broadcastIntentUpdate needs to acquire read lock)
+	s.mu.Unlock()
 
 	// Notify all streams about new intent
 	s.broadcastIntentUpdate(intent.IntentId, "NEW_INTENT")
@@ -366,20 +372,21 @@ func (s *Server) performMatching(intentID string) {
 		return
 	}
 
-	s.logger.Infof("Performing matching for intent %s with %d bids", intentID, len(bids))
+	s.logger.Infof("Performing matching for intent %s with %d bids using strategy: %s",
+		intentID, len(bids), s.strategy.Name())
 
-	// Sort bids by price (ascending)
-	sort.Slice(bids, func(i, j int) bool {
-		return bids[i].Price < bids[j].Price
-	})
+	// Use strategy to select winner and runner-ups
+	winner, runnerUps, err := s.strategy.SelectWinner(window.Intent, bids)
+	if err != nil {
+		s.logger.Errorf("Matching strategy failed for intent %s: %v", intentID, err)
+		window.Matched = true
+		return
+	}
 
-	// Select winner (lowest price)
-	winner := bids[0]
-
-	// Select runner-ups (next 2 lowest)
-	runnerUpIDs := []string{}
-	for i := 1; i < len(bids) && i < 3; i++ {
-		runnerUpIDs = append(runnerUpIDs, bids[i].BidId)
+	// Extract runner-up IDs
+	runnerUpIDs := make([]string, 0, len(runnerUps))
+	for _, bid := range runnerUps {
+		runnerUpIDs = append(runnerUpIDs, bid.BidId)
 	}
 
 	// Sign the matching result
@@ -506,8 +513,22 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 		s.logger.Infof("Assignment %s submitted to blockchain, tx: %s", assignmentID, chainTxHash)
 	}
 
-	// Step 2: Submit to RootLayer (async) - can be retried or synced from chain later
-	go s.submitAssignmentToRootLayer(rootAssignment)
+	// Step 2: Submit to RootLayer (required for validators to query assignment)
+	// This is CRITICAL - validators need to query assignment from RootLayer when submitting validation results
+	if s.rootlayerClient != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := s.rootlayerClient.SubmitAssignment(ctx, rootAssignment); err != nil {
+			s.logger.Errorf("Failed to submit assignment to RootLayer: %v", err)
+			// Continue anyway - agent can still execute, but validation may fail
+			// TODO: Consider retry mechanism or abort strategy
+		} else {
+			s.logger.Infof("Assignment %s submitted to RootLayer successfully", assignmentID)
+		}
+	} else {
+		s.logger.Warnf("RootLayer client not available, skipping assignment submission to RootLayer")
+	}
 
 	// Step 3: Send task to agent (sync) - agent can also poll for tasks
 	s.sendTaskToAgent(winningBid.AgentId, executionTask)
@@ -521,12 +542,18 @@ func (s *Server) broadcastIntentUpdate(intentID, updateType string) {
 		Timestamp:  time.Now().Unix(),
 	}
 
-	for streamID, ch := range s.intentStreams {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	s.logger.Debugf("Broadcasting intent update: intent_id=%s update_type=%s streams=%d",
+		intentID, updateType, len(s.intentStreams))
+
+	for _, ch := range s.intentStreams {
 		select {
 		case ch <- update:
-			s.logger.Debugf("Sent update to stream %s", streamID)
+			// Successfully sent
 		default:
-			s.logger.Warnf("Stream %s channel full, skipping update", streamID)
+			// Channel full, skip without logging per-stream
 		}
 	}
 }
@@ -546,78 +573,14 @@ func (s *Server) SubmitBid(ctx context.Context, req *pb.SubmitBidRequest) (*pb.S
 		return nil, fmt.Errorf("invalid request: bid is required")
 	}
 
-	bid := req.Bid
-	s.logger.Infof("Received bid %s from agent %s for intent %s",
-		bid.BidId, bid.AgentId, bid.IntentId)
+	s.logger.Infof("Received bid: bid_id=%s agent_id=%s intent_id=%s",
+		req.Bid.BidId, req.Bid.AgentId, req.Bid.IntentId)
 
-	if s.verifier != nil {
-		chainAddr := extractChainAddressFromBid(bid)
-		verified, err := s.verifier.VerifyAgent(ctx, chainAddr)
-		if err != nil {
-			s.logger.Warnf("On-chain agent verification failed for %s: %v", bid.AgentId, err)
-			if !s.allowUnverified {
-				return &pb.SubmitBidResponse{
-					Ack: &pb.BidSubmissionAck{
-						BidId:    bid.BidId,
-						Accepted: false,
-						Reason:   "agent verification failed",
-						Status:   pb.BidStatus_BID_STATUS_REJECTED,
-					},
-				}, nil
-			}
-		} else if !verified {
-			s.logger.Warnf("Agent %s not active on-chain (addr=%s)", bid.AgentId, chainAddr)
-			if !s.allowUnverified {
-				return &pb.SubmitBidResponse{
-					Ack: &pb.BidSubmissionAck{
-						BidId:    bid.BidId,
-						Accepted: false,
-						Reason:   "agent not registered on-chain",
-						Status:   pb.BidStatus_BID_STATUS_REJECTED,
-					},
-				}, nil
-			}
-		}
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Check if intent exists
-	window, exists := s.intents[bid.IntentId]
-	if !exists {
-		return &pb.SubmitBidResponse{
-			Ack: &pb.BidSubmissionAck{
-				BidId:    bid.BidId,
-				Accepted: false,
-				Reason:   "Intent not found",
-				Status:   pb.BidStatus_BID_STATUS_REJECTED,
-			},
-		}, nil
-	}
-
-	// Check if window is still open
-	if window.WindowClosed {
-		return &pb.SubmitBidResponse{
-			Ack: &pb.BidSubmissionAck{
-				BidId:    bid.BidId,
-				Accepted: false,
-				Reason:   "Bidding window closed",
-				Status:   pb.BidStatus_BID_STATUS_REJECTED,
-			},
-		}, nil
-	}
-
-	// Add bid
-	s.bidsByIntent[bid.IntentId] = append(s.bidsByIntent[bid.IntentId], bid)
+	// Delegate to processSingleBid to avoid code duplication
+	ack := s.processSingleBid(ctx, req.Bid)
 
 	return &pb.SubmitBidResponse{
-		Ack: &pb.BidSubmissionAck{
-			BidId:      bid.BidId,
-			Accepted:   true,
-			Status:     pb.BidStatus_BID_STATUS_ACCEPTED,
-			RecordedAt: time.Now().Unix(),
-		},
+		Ack: ack,
 	}, nil
 }
 
@@ -799,7 +762,7 @@ func (s *Server) StreamIntents(req *pb.StreamIntentsRequest, stream pb.MatcherSe
 		close(ch)
 	}()
 
-	s.logger.Infof("Started intent stream %s for subnet %s", streamID, req.SubnetId)
+	s.logger.Infof("Started intent stream: stream_id=%s subnet_id=%s", streamID, req.SubnetId)
 
 	// Send existing intents first
 	s.mu.RLock()
@@ -881,12 +844,9 @@ func (s *Server) RespondToTask(ctx context.Context, req *pb.RespondToTaskRequest
 		s.assignments[resp.TaskId] = pending.Assignment
 		delete(s.pendingAssignments, resp.TaskId)
 
-		// Submit to RootLayer
-		go s.submitAssignmentToRootLayer(pending.Assignment)
-
 		return &pb.RespondToTaskResponse{
 			Success: true,
-			Message: "Task accepted and assignment submitted to RootLayer",
+			Message: "Task accepted",
 		}, nil
 	} else {
 		// Agent rejected the task
@@ -1126,17 +1086,6 @@ func (s *Server) pullIntentsFromRootLayer(ctx context.Context) {
 		retry:
 		}
 	}
-}
-
-// submitAssignmentToRootLayer adds assignment to batch buffer for submission to RootLayer
-func (s *Server) submitAssignmentToRootLayer(assignment *rootpb.Assignment) {
-	s.assignmentBatchMu.Lock()
-	defer s.assignmentBatchMu.Unlock()
-
-	// Add assignment to batch buffer
-	s.assignmentBatchBuffer = append(s.assignmentBatchBuffer, assignment)
-	s.logger.Debugf("Added assignment %s to batch buffer (current size: %d)",
-		assignment.AssignmentId, len(s.assignmentBatchBuffer))
 }
 
 // submitAssignmentToChainSync submits assignment to blockchain synchronously (waits for tx)
@@ -1386,96 +1335,6 @@ func hexStringTo32Bytes(s string) ([32]byte, error) {
 
 	copy(result[:], bytes)
 	return result, nil
-}
-
-// batchAssignmentSubmissionLoop periodically flushes assignment batch buffer to RootLayer
-func (s *Server) batchAssignmentSubmissionLoop(ctx context.Context) {
-	// Batch submission interval - submit every 5 seconds or when buffer reaches 10 assignments
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	const maxBatchSize = 10
-
-	for {
-		select {
-		case <-ctx.Done():
-			// Final flush before exit
-			s.flushAssignmentBatch()
-			return
-		case <-ticker.C:
-			// Periodic flush
-			s.flushAssignmentBatch()
-		default:
-			// Check if buffer is full and needs immediate flush
-			s.assignmentBatchMu.Lock()
-			bufferSize := len(s.assignmentBatchBuffer)
-			s.assignmentBatchMu.Unlock()
-
-			if bufferSize >= maxBatchSize {
-				s.flushAssignmentBatch()
-			}
-			time.Sleep(100 * time.Millisecond) // Small sleep to avoid busy loop
-		}
-	}
-}
-
-// flushAssignmentBatch submits all buffered assignments to RootLayer in batch
-func (s *Server) flushAssignmentBatch() {
-	s.assignmentBatchMu.Lock()
-	if len(s.assignmentBatchBuffer) == 0 {
-		s.assignmentBatchMu.Unlock()
-		return
-	}
-
-	// Take all assignments from buffer and clear it
-	assignments := make([]*rootpb.Assignment, len(s.assignmentBatchBuffer))
-	copy(assignments, s.assignmentBatchBuffer)
-	s.assignmentBatchBuffer = s.assignmentBatchBuffer[:0] // Clear buffer
-	s.assignmentBatchMu.Unlock()
-
-	// Check if RootLayer client supports batch submission
-	type batchAssignmentSubmitter interface {
-		PostAssignmentBatch(ctx context.Context, assignments []*rootpb.Assignment) error
-	}
-
-	batchClient, supportsBatch := s.rootlayerClient.(batchAssignmentSubmitter)
-
-	if supportsBatch {
-		// Use batch submission API
-		s.logger.Infof("Submitting %d assignments in batch to RootLayer", len(assignments))
-
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-
-		err := batchClient.PostAssignmentBatch(ctx, assignments)
-		if err != nil {
-			s.logger.Warnf("Assignment batch submission failed, falling back to individual submission error=%v", err)
-			s.submitIndividualAssignments(assignments)
-			return
-		}
-
-		s.logger.Infof("Assignment batch submission completed: %d assignments", len(assignments))
-	} else {
-		// Fallback to individual submission
-		s.logger.Warn("RootLayer client doesn't support batch assignment submission, using individual submission")
-		s.submitIndividualAssignments(assignments)
-	}
-}
-
-// submitIndividualAssignments submits assignments one by one (fallback method)
-func (s *Server) submitIndividualAssignments(assignments []*rootpb.Assignment) {
-	for _, assignment := range assignments {
-		timeout := s.getRootLayerSubmitTimeout()
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-
-		if err := s.rootlayerClient.SubmitAssignment(ctx, assignment); err != nil {
-			s.logger.Errorf("Failed to submit assignment %s individually: %v", assignment.AssignmentId, err)
-		} else {
-			s.logger.Infof("Successfully submitted assignment %s individually", assignment.AssignmentId)
-		}
-
-		cancel()
-	}
 }
 
 // RegisterGRPC registers the service with a gRPC server

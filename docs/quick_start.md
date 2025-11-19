@@ -1,382 +1,663 @@
-# Quick Start
+# 🚀 PinAI Subnet - Quick Start
 
-This guide will help you quickly set up and run PinAI Subnet services for development and testing.
+## 🤔 Which Guide Should I Follow?
 
-## Prerequisites
+**Quick decision table:**
 
-- **Go 1.21+** - [Install Go](https://go.dev/doc/install)
-- **NATS Server** - Message broker for validator communication
-- **Git** - For cloning the repository
+| I want to... | Use this guide | Time |
+|-------------|----------------|------|
+| 🎯 Quick test/demo (first time) | [Docker Deployment](../deployment/README.md) ⭐ Recommended | 5 min |
+| 🔧 Full control over setup | [Manual Deployment](#option-2-traditional-deployment) | 15 min |
+| 📦 Build custom agent | [Agent SDK Docs](https://github.com/PIN-AI/subnet-sdk) | - |
+| 🏭 Deploy to production | [Production Guide](subnet_deployment_guide.md#production-deployment) | - |
+| 🔍 Fix issues | [Troubleshooting](subnet_deployment_guide.md#troubleshooting) | - |
 
-### Install NATS
+> 💡 **New users**: Start with Docker deployment (Option 1 below), then explore customization after you understand the flow.
+
+---
+
+## ⚠️ Important: Complete Blockchain Registration First!
+
+**Before starting any services, you must:**
+
+1. **Create Subnet** → Get Subnet ID and Contract Address
+2. **Register Components** → Register Validator, Matcher, Agent to Subnet
+3. **Configure .env** → Fill in registration information
+4. **Start Services** → Use any method below
+
+### 📝 Important: Environment Variables
+
+The project uses environment variables for configuration. There are two types:
+
+**1. Fixed Values (Protocol-wide, already configured):**
+- Smart contract addresses (`PIN_BASE_SEPOLIA_*`)
+- Network endpoints (`ROOTLAYER_GRPC`, `ROOTLAYER_HTTP`)
+- RPC URL (`CHAIN_RPC_URL`)
+- These are **automatically loaded from `.env`** or use **built-in defaults**
+
+**2. User-Specific Values (YOU must configure):**
+- Private keys (`TEST_PRIVATE_KEY`, `VALIDATOR_KEYS`)
+- Public keys (`VALIDATOR_PUBKEYS`)
+- Subnet information (`SUBNET_ID` - after creation)
+
+> ✅ **Good news**: Scripts now automatically load `.env` and provide defaults for fixed addresses!
+> ⚠️ **Action required**: You only need to fill in your **private keys and subnet info** in `.env`
+
+### 🔑 Step 1: Generate Validator Keys
+
+**What are these keys?**
+- Each validator needs an **ECDSA key pair** (private key + public key) for signing consensus messages
+- The private key (64 hex characters) is kept secret and used for signing
+- The public key (130 hex characters) is derived from the private key and shared with other validators
+
+**Generate keys for 3 validators:**
 
 ```bash
-# macOS
-brew install nats-server
-
-# Linux
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.0/nats-server-v2.10.0-linux-amd64.tar.gz | tar xz
-sudo mv nats-server-v2.10.0-linux-amd64/nats-server /usr/local/bin/
-
-# Start NATS
-nats-server &
-```
-
-## Setup
-
-### 1. Build Binaries
-
-```bash
-# Build all binaries
+# 1. Build the derive-pubkey tool
 make build
 
-# This creates:
-# - bin/registry
-# - bin/matcher
-# - bin/validator
-# - bin/simple-agent
+# 2. Generate private keys (using OpenSSL)
+PRIVKEY1=$(openssl rand -hex 32)
+PRIVKEY2=$(openssl rand -hex 32)
+PRIVKEY3=$(openssl rand -hex 32)
+
+# 3. Derive public keys from private keys
+PUBKEY1=$(./bin/derive-pubkey "$PRIVKEY1")
+PUBKEY2=$(./bin/derive-pubkey "$PRIVKEY2")
+PUBKEY3=$(./bin/derive-pubkey "$PRIVKEY3")
+
+# 4. Display the keys for verification
+echo "Validator 1:"
+echo "  Private: $PRIVKEY1"
+echo "  Public:  $PUBKEY1"
+echo ""
+echo "Validator 2:"
+echo "  Private: $PRIVKEY2"
+echo "  Public:  $PUBKEY2"
+echo ""
+echo "Validator 3:"
+echo "  Private: $PRIVKEY3"
+echo "  Public:  $PUBKEY3"
+
+# 5. Create .env file and save keys
+cp .env.example .env
+echo "VALIDATOR_KEYS=$PRIVKEY1,$PRIVKEY2,$PRIVKEY3" >> .env
+echo "VALIDATOR_PUBKEYS=$PUBKEY1,$PUBKEY2,$PUBKEY3" >> .env
+
+# 6. Generate separate matcher key (SECURITY: never reuse validator keys!)
+MATCHER_KEY=$(openssl rand -hex 32)
+echo "TEST_PRIVATE_KEY=$MATCHER_KEY" >> .env
 ```
 
-### 2. Configure Environment
+**Example output:**
+```
+Validator 1:
+  Private: EXAMPLE_PRIVATE_KEY_DO_NOT_USE_1234567890ABCDEF1234567890ABCDEF
+  Public:  0482ea12c5481d481c7f9d7c1a2047401c6e2f855e4cee4d8df0aa197514f3456528ba6c55092b20b51478fd8cf62cde37f206621b3dd47c2be3d5c35e4889bf94
+
+Validator 2:
+  Private: abc123...
+  Public:  04def456...
+
+Validator 3:
+  Private: 789ghi...
+  Public:  04jkl012...
+```
+
+**Key Format Requirements:**
+- ✅ Private key: Exactly **64 hexadecimal characters** (0-9, a-f)
+- ✅ Public key: Exactly **130 hexadecimal characters** starting with `04`
+- ✅ No `0x` prefix needed
+- ❌ Don't use keys with real funds - these are test-only keys!
+
+**Troubleshooting:**
+- If `derive-pubkey` says "command not found": Run `make build` first
+- If you get "Error decoding private key": Check that your private key is exactly 64 hex characters
+- If public key doesn't start with `04`: The key derivation failed, regenerate the private key
+
+**Security Notes:**
+- ⚠️ **NEVER commit private keys to git** (`.env` is in `.gitignore`)
+- ⚠️ **Use test-only keys with NO real funds**
+- ⚠️ Store keys securely - losing them means losing validator access
+- ⚠️ Each validator must have a **unique** private key
+
+---
+
+### 📦 Step 2: Create Subnet and Save Information
+
+**Create your subnet on the blockchain:**
 
 ```bash
-# Copy the example environment file
+# Create subnet (script auto-loads .env with fixed contract addresses)
+./scripts/create-subnet.sh --name "My Test Subnet"
+```
+
+**What happens:**
+1. Script connects to Base Sepolia blockchain
+2. Deploys a new subnet contract
+3. Returns Subnet ID and Contract Address
+4. **Automatically saves info to `subnet-info-YYYYMMDD-HHMMSS.txt`**
+
+**Example output:**
+```
+🎉 Subnet created successfully!
+   Subnet ID: 0x0000000000000000000000000000000000000000000000000000000000000006
+   Contract Address: 0x4cA582Ef4D2B9a474cf3fEf91231d373DeE5cA87
+   Transaction: 0xabc123...
+   View on Basescan: https://sepolia.basescan.org/tx/0xabc123...
+
+📄 Subnet info saved to: ./subnet-info-20250117-143025.txt
+```
+
+**⚠️ IMPORTANT - Save This File!**
+
+The `subnet-info-*.txt` file contains **critical information** you'll need later:
+- ✅ Subnet ID (for .env configuration)
+- ✅ Contract Address (for participant registration)
+- ✅ Registration command template
+- ✅ Transaction hash (for verification)
+
+**Managing subnet info files:**
+
+```bash
+# View the most recent subnet info
+cat subnet-info-*.txt | tail -20
+
+# List all subnet info files
+ls -lt subnet-info-*.txt
+
+# Copy to .env for reference
+SUBNET_INFO=$(ls -t subnet-info-*.txt | head -1)
+grep "Subnet ID:" "$SUBNET_INFO"
+grep "Contract Address:" "$SUBNET_INFO"
+
+# Organize multiple subnets
+mkdir -p subnets/
+mv subnet-info-*.txt subnets/
+ls subnets/
+```
+
+**Best practices:**
+- 📌 Don't delete these files - you'll need them for registration
+- 📌 Back up to a safe location (not in git!)
+- 📌 Name your subnets clearly during creation for easy identification
+- 📌 Keep one file per subnet deployment
+
+---
+
+### Quick Registration Process:
+
+**Complete workflow from keys to running subnet:**
+
+```bash
+# 1. Build tools
+make build
+
+# 2. Generate validator keys and create .env
 cp .env.example .env
 
-# Edit .env and set your test private key
-# IMPORTANT: Use a test-only key with NO real funds!
-vi .env
+PRIVKEY1=$(openssl rand -hex 32)
+PRIVKEY2=$(openssl rand -hex 32)
+PRIVKEY3=$(openssl rand -hex 32)
+PUBKEY1=$(./bin/derive-pubkey "$PRIVKEY1")
+PUBKEY2=$(./bin/derive-pubkey "$PRIVKEY2")
+PUBKEY3=$(./bin/derive-pubkey "$PRIVKEY3")
+
+# Generate separate matcher key (SECURITY: never reuse validator keys!)
+MATCHER_KEY=$(openssl rand -hex 32)
+
+# Save keys to .env
+echo "TEST_PRIVATE_KEY=$MATCHER_KEY" >> .env
+echo "VALIDATOR_KEYS=$PRIVKEY1,$PRIVKEY2,$PRIVKEY3" >> .env
+echo "VALIDATOR_PUBKEYS=$PUBKEY1,$PUBKEY2,$PUBKEY3" >> .env
+
+# 3. Create Subnet
+./scripts/create-subnet.sh --name "My Test Subnet"
+# 📝 Save the output: Subnet ID and Contract Address
+# Example output:
+#   Subnet ID: 0x0000...0006
+#   Contract Address: 0x4cA582Ef4D2B9a474cf3fEf91231d373DeE5cA87
+
+# 4. Update .env with subnet information
+nano .env
+# Add these lines from step 3 output:
+#   SUBNET_ID=0x0000...0006
+#   SUBNET_CONTRACT=0x4cA582Ef4D2B9a474cf3fEf91231d373DeE5cA87
+
+# 5. Register all components (Validator, Matcher, Agent)
+# Note: This single command registers ALL components at once
+PRIVATE_KEY="$MATCHER_KEY" ./scripts/register.sh
+
+# Or use environment from .env:
+# ./scripts/register.sh  # Auto-loads SUBNET_CONTRACT from .env
+
+# 6. Start services
+./scripts/start-subnet.sh
 ```
 
-Required environment variables in `.env`:
+**What register.sh does:**
+- ✅ Registers **Validator** (stakes 0.01 ETH)
+- ✅ Registers **Matcher** (stakes 0.01 ETH)
+- ✅ Registers **Agent** (stakes 0.01 ETH)
+- All in a **single execution** using the same private key
 
-**Test Environment Example:**
+**Alternative: Manual registration with specific key**
+```bash
+# If you want to use a different key or subnet contract:
+./scripts/register.sh \
+  --subnet 0x4cA582Ef... \
+  --key your_private_key_here \
+  --domain your-subnet.example.com
+```
+
+📚 **Detailed Registration Docs**: [`docs/scripts_guide.md`](docs/scripts_guide.md)
+
+---
+
+## Option 1: Docker Deployment (Recommended! ⭐)
+
+**Simplest approach, production-ready 3-node cluster by default**
 
 ```bash
-# Test private key (REQUIRED)
-# ⚠️ Use a test-only key with NO real funds!
-TEST_PRIVATE_KEY=your_test_private_key_here
+# Start 3-node Raft cluster
+cd docker && ./docker-start.sh
 
-# Test Subnet configuration
+# Or single-node dev mode
+cd docker && ./docker-start-dev.sh
+
+# Stop services
+cd docker && docker compose down
+```
+
+📚 **Detailed Documentation**: [`deployment/README.md`](../deployment/README.md) - Complete configuration, testing, and troubleshooting
+
+**Benefits**:
+- ✅ 5-minute deployment
+- ✅ 3-node by default, production-ready
+- ✅ Automatic fault tolerance (tolerates 1 node failure)
+- ✅ No need to install Go or other dependencies
+- ✅ Fully isolated, clean system environment
+
+---
+
+## Option 2: Traditional Deployment
+
+**Better performance and control**
+
+### Node Cluster
+```bash
+# Set environment variables
+export NUM_VALIDATORS=3
+export VALIDATOR_KEYS=key1,key2,key3
+export VALIDATOR_PUBKEYS=pubkey1,pubkey2,pubkey3
+
+# Start
+./scripts/start-subnet.sh
+```
+
+📚 **Detailed Documentation**: [`docs/scripts_guide.md`](docs/scripts_guide.md)
+
+---
+
+## Option 3: AWS EC2 Deployment
+
+**Production cloud deployment**
+
+```bash
+# SSH to EC2 instance
+ssh -i your-key.pem ubuntu@YOUR_IP
+
+# Clone and enter project
+git clone https://github.com/PIN-AI/Subnet.git
+cd Subnet
+
+# Choose Docker or traditional method (see above)
+```
+
+📚 **Detailed Documentation**: [`docs/environment_setup.md`](docs/environment_setup.md)
+
+---
+
+## 📁 Project Structure
+
+```
+Subnet/
+├── deployment/               # Production deployment files (Docker)
+│   ├── Dockerfile            # Docker image definition
+│   ├── docker-compose.yml    # 3-node cluster config
+│   ├── docker-compose-dev.yml# Single-node config
+│   ├── docker-start.sh       # 3-node startup script
+│   ├── docker-start-dev.sh   # Single-node startup script
+│   └── README.md             # Complete Docker docs (with 3-node details)
+├── scripts/                   # Traditional deployment scripts
+│   └── start-subnet.sh       # Startup script
+├── docs/                      # Documentation
+│   ├── scripts_guide.md      # Scripts usage guide
+│   └── environment_setup.md  # Environment configuration
+└── .env                      # Configuration file (create this)
+```
+
+---
+
+## 🎯 Recommended Choice
+
+| Scenario | Recommended Method | Command |
+|----------|-------------------|---------|
+| **Quick Testing** | Docker single-node | `cd docker && ./docker-start-dev.sh` |
+| **Production** | Docker 3-node | `cd docker && ./docker-start.sh` |
+| **Best Performance** | Traditional 3-node | `./scripts/start-subnet.sh` |
+
+---
+
+## 📋 Configuration Requirements
+
+### Required Environment Variables (.env)
+
+**What you MUST configure in .env:**
+
+```bash
+# ============================================================
+# USER-SPECIFIC VALUES (REQUIRED - FILL IN)
+# ============================================================
+# Matcher/Test private key
+TEST_PRIVATE_KEY=your_key_here
+
+# Validator keys (comma-separated for multi-node, or single key for single-node)
+VALIDATOR_KEYS=key1,key2,key3
+VALIDATOR_PUBKEYS=pubkey1,pubkey2,pubkey3
+
+# Your subnet information (from create-subnet.sh output)
 SUBNET_ID=0x0000000000000000000000000000000000000000000000000000000000000002
 
-# Test RootLayer endpoints
+# ============================================================
+# FIXED VALUES (Already configured in .env.example)
+# ============================================================
+# These are protocol-wide and should NOT be changed:
+# - PIN_BASE_SEPOLIA_INTENT_MANAGER
+# - PIN_BASE_SEPOLIA_SUBNET_FACTORY
+# - PIN_BASE_SEPOLIA_STAKING_MANAGER
+# - PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER
+# - ROOTLAYER_GRPC=3.17.208.238:9001
+# - ROOTLAYER_HTTP=http://3.17.208.238:8081/api/v1
+# - CHAIN_RPC_URL=https://sepolia.base.org
+```
+
+**Format 2: Individual variables**
+```bash
+# Matcher key
+TEST_PRIVATE_KEY=your_key_here
+
+# Validator keys (3 nodes need 3 keys)
+VALIDATOR_KEY_1=your_key_1
+VALIDATOR_PUBKEY_1=your_pubkey_1
+VALIDATOR_KEY_2=your_key_2
+VALIDATOR_PUBKEY_2=your_pubkey_2
+VALIDATOR_KEY_3=your_key_3
+VALIDATOR_PUBKEY_3=your_pubkey_3
+
+# Subnet configuration
+SUBNET_ID=0x0000000000000000000000000000000000000000000000000000000000000003
 ROOTLAYER_GRPC=3.17.208.238:9001
-ROOTLAYER_HTTP=http://3.17.208.238:8081
-
-# Test blockchain settings (Base Sepolia testnet)
-ENABLE_CHAIN_SUBMIT=true
-CHAIN_RPC_URL=https://sepolia.base.org
-CHAIN_NETWORK=base_sepolia
-
-# Base Sepolia contract addresses
-PIN_BASE_SEPOLIA_INTENT_MANAGER=0xD04d23775D3B8e028e6104E31eb0F6c07206EB46
-PIN_BASE_SEPOLIA_SUBNET_FACTORY=0x493c5B1c7Ee9eDe75bf2e57e5250E695F929A796
-PIN_BASE_SEPOLIA_STAKING_MANAGER=0xAc11AE66c7831A70Bea940b0AE16c967f940cB65
-PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER=0xe947c9C4183D583fB2E500aD05B105Fa01abE57e
+ROOTLAYER_HTTP=http://3.17.208.238:8081/api/v1
 ```
 
-**For Production:**
-Replace all values above with your production configuration. Use secure key management (KMS, Vault, etc.) instead of storing private keys in files.
+> Format 2 exists for legacy Docker/deployment scripts. The `start-subnet.sh` launcher requires the comma-separated Format 1 variables.
 
-## Start Services
+> ⚠️ **Contract Addresses:** Base Sepolia addresses were updated on 2025‑11‑03. Copy the latest values from `.env.example` to avoid using deprecated contracts.
 
-### Pre-flight Checklist
-
-Before starting the runtime, make sure the on-chain prerequisites are complete:
-- Create or select the subnet you want to operate (`./scripts/create-subnet.sh` or your own deployment).
-- Register the matcher, validator, and agent accounts on that subnet (`./scripts/register.sh`). Without registration, on-chain submissions from these services will fail.
-
-### Option 1: One-Click Startup (Recommended)
+**Key Source**:
+Keys must be those generated and registered in steps 3-4 of the "Quick Registration Process". Do not randomly generate new keys!
 
 ```bash
-# Start all services with one command
-./start-subnet.sh
+# Example: If you used these keys during registration
+VALIDATOR_KEYS=abc123...,def456...,ghi789...
+VALIDATOR_PUBKEYS=0x123...,0x456...,0x789...
 ```
 
-The launcher will ask you to confirm that subnet creation and participant registration are done. Set `SKIP_REGISTRATION_PROMPT=1` if you need to bypass the prompt in automated environments.
+---
 
-This script will:
-- Check and start NATS if needed
-- Start Registry service (gRPC: 8091, HTTP: 8101)
-- Start Matcher service (gRPC: 8090)
-- Start Validator service (gRPC: 9200)
-- Generate necessary configuration files
-- Save process IDs for easy management
+## 🆘 Quick Help
 
-Logs are saved to `subnet-logs/` directory.
-
-### Option 2: Manual Startup
-
+### Docker Method
 ```bash
-# 1. Start Registry
-./bin/registry -grpc ":8091" -http ":8101" > subnet-logs/registry.log 2>&1 &
+# View logs
+cd docker && docker compose logs -f
 
-# 2. Start Matcher (requires config file)
-cat > /tmp/matcher-config.yaml <<EOF
-subnet_id: "$SUBNET_ID"
-identity:
-  matcher_id: "matcher-main"
-  subnet_id: "$SUBNET_ID"
-rootlayer:
-  grpc_endpoint: "$ROOTLAYER_GRPC"
-  http_endpoint: "$ROOTLAYER_HTTP"
-registry:
-  grpc_address: "localhost:8091"
-  http_address: "http://localhost:8101"
-network:
-  grpc_port: 8090
-enable_chain_submit: true
-chain_rpc_url: "$CHAIN_RPC_URL"
-chain_network: "$CHAIN_NETWORK"
-intent_manager_addr: "$PIN_BASE_SEPOLIA_INTENT_MANAGER"
-private_key: "$TEST_PRIVATE_KEY"
-EOF
+# View status
+docker compose ps
 
-./bin/matcher --config /tmp/matcher-config.yaml > subnet-logs/matcher.log 2>&1 &
+# Restart services
+docker compose restart
 
-# 3. Start Validator
-./bin/validator \
-    -id "validator-main" \
-    -grpc 9200 \
-    -nats "nats://127.0.0.1:4222" \
-    -subnet-id "$SUBNET_ID" \
-    -key "$TEST_PRIVATE_KEY" \
-    -rootlayer-endpoint "$ROOTLAYER_GRPC" \
-    -registry-grpc "localhost:8091" \
-    -registry-http "localhost:8101" \
-    -chain-rpc-url "$CHAIN_RPC_URL" \
-    -chain-network "$CHAIN_NETWORK" \
-    -intent-manager-addr "$PIN_BASE_SEPOLIA_INTENT_MANAGER" \
-    -enable-chain-submit \
-    -enable-rootlayer \
-    > subnet-logs/validator.log 2>&1 &
+# Stop and clean up
+docker compose down -v
 ```
 
-## Verify Services
-
-Check that all services are running:
-
+### Traditional Method
 ```bash
-# Check processes
-ps aux | grep -E 'registry|matcher|validator'
-
-# Check Registry HTTP endpoint
-curl http://localhost:8101/health
-
-# Check logs
-tail -f subnet-logs/registry.log
-tail -f subnet-logs/matcher.log
-tail -f subnet-logs/validator.log
-```
-
-You should see:
-- Registry: "Registry service started on :8091 (gRPC) and :8101 (HTTP)"
-- Matcher: "Matcher service started successfully"
-- Validator: "Validator started, ID: validator-main"
-
-## Send Test Intents
-
-### Option 1: Interactive Script
-
-```bash
-./send-intent.sh
-```
-
-This provides an interactive menu:
-1. Submit custom Intent
-2. Submit E2E test Intent
-3. Submit demo Intent
-4. View configuration
-5. Exit
-
-### Option 2: Run E2E Test
-
-```bash
-# Full end-to-end test
-./scripts/e2e-test.sh --no-interactive
-
-# Or use the convenience script
-./run-e2e.sh --no-interactive
-```
-
-The E2E test will:
-1. Submit an Intent to RootLayer
-2. Matcher fetches and assigns the Intent
-3. Test agent executes the task
-4. Validator validates the result
-5. Validator submits ValidationBundle to RootLayer
-6. Verify the receipt
-
-### Option 3: Manual Intent Submission
-
-```bash
-# Using the submit-intent-signed tool
-SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000002" \
-ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1" \
-INTENT_TYPE="test-intent" \
-PARAMS_JSON='{"task":"My test task"}' \
-AMOUNT_WEI="100000000000000" \
-./bin/submit-intent-signed
-```
-
-## View Logs
-
-```bash
-# Follow all logs
+# View logs
 tail -f subnet-logs/*.log
 
-# View specific service logs
-tail -f subnet-logs/registry.log
-tail -f subnet-logs/matcher.log
-tail -f subnet-logs/validator.log
-
-# Search for errors
-grep -i error subnet-logs/*.log
+# Stop services
+pkill -f 'bin/matcher|bin/validator|bin/simple-agent'
 ```
 
-## Stop Services
+---
 
-### Option 1: Stop Script (Graceful)
+## 📋 Log Files and Debugging
 
-```bash
-./stop-subnet.sh
+### Log Directory Structure
+
+After starting the subnet, logs are stored in the `./subnet-logs/` directory:
+
+```
+subnet-logs/
+├── matcher.log           # Matcher service logs (intent ingestion, bid matching)
+├── validator-1.log       # Validator 1 logs (consensus, validation, checkpoint)
+├── validator-2.log       # Validator 2 logs
+├── validator-3.log       # Validator 3 logs
+├── agent.log             # Agent logs (task execution, result submission)
+└── rootlayer.log         # RootLayer mock logs (if using mock-rootlayer)
 ```
 
-This will gracefully stop all services with SIGTERM first, then SIGKILL if needed.
+**Note**: Docker deployments store logs internally. Use `docker compose logs -f [service]` instead.
 
-### Option 2: Kill Processes
+### Viewing Specific Logs
 
 ```bash
-pkill -f 'bin/registry'
-pkill -f 'bin/matcher'
-pkill -f 'bin/validator'
+# Watch all logs (verbose)
+tail -f subnet-logs/*.log
+
+# Watch specific service
+tail -f subnet-logs/matcher.log      # Matcher only
+tail -f subnet-logs/validator-1.log  # Validator 1 only
+tail -f subnet-logs/agent.log        # Agent only
+
+# Watch multiple specific services
+tail -f subnet-logs/matcher.log subnet-logs/validator-1.log
+
+# Search for specific events
+grep "intent_id" subnet-logs/matcher.log          # Find intent processing
+grep "ValidationBundle" subnet-logs/validator-*.log  # Find consensus activity
+grep "Executing task" subnet-logs/agent.log       # Find agent task execution
+
+# Docker logs (container-based)
+docker compose logs -f                   # All services
+docker compose logs -f validator-1       # Specific validator
+docker compose logs -f matcher agent     # Multiple services
+docker compose logs --tail=100 validator-1  # Last 100 lines
 ```
 
-### Option 3: Stop Individual Services
+### Key Log Patterns
 
-If using `start-subnet.sh`, it creates PID files:
+**What to look for in each log:**
+
+| Service | Log File | Key Events |
+|---------|----------|------------|
+| **Matcher** | `matcher.log` | `Received intent`, `Received bid`, `Selected winner`, `Created assignment` |
+| **Validator** | `validator-*.log` | `Processed execution report`, `Creating ValidationBundle`, `Submitting ValidationBundle`, `Checkpoint submitted` |
+| **Agent** | `agent.log` | `Received task`, `Executing task`, `Submitting execution report`, `Task completed` |
+
+**Example: Tracing an intent through the system:**
 
 ```bash
-# Stop individual services
-kill $(cat subnet-logs/registry.pid)
-kill $(cat subnet-logs/matcher.pid)
-kill $(cat subnet-logs/validator.pid)
+# 1. Check matcher received the intent
+grep "Received intent" subnet-logs/matcher.log | tail -1
+
+# 2. Check bids were received and winner selected
+grep "Selected winner" subnet-logs/matcher.log | tail -1
+
+# 3. Check agent received the task
+grep "Received task" subnet-logs/agent.log | tail -1
+
+# 4. Check agent submitted execution report
+grep "Submitting execution report" subnet-logs/agent.log | tail -1
+
+# 5. Check validators processed the report
+grep "Processed execution report" subnet-logs/validator-*.log | tail -3
+
+# 6. Check consensus and bundle submission
+grep "ValidationBundle" subnet-logs/validator-*.log | tail -5
 ```
 
-## Troubleshooting
+### Log Levels
 
-### Services Won't Start
-
-1. **Check NATS is running**:
-   ```bash
-   ps aux | grep nats-server
-   # If not running: nats-server &
-   ```
-
-2. **Check port availability**:
-   ```bash
-   lsof -i :8090  # Matcher
-   lsof -i :8091  # Registry gRPC
-   lsof -i :8101  # Registry HTTP
-   lsof -i :9200  # Validator
-   lsof -i :4222  # NATS
-   ```
-
-3. **Check environment variables**:
-   ```bash
-   source .env
-   echo $TEST_PRIVATE_KEY
-   echo $SUBNET_ID
-   ```
-
-4. **Check logs for errors**:
-   ```bash
-   grep -i error subnet-logs/*.log
-   ```
-
-### Intent Submission Fails
-
-1. **Check RootLayer connectivity**:
-   ```bash
-   curl http://3.17.208.238:8081/health
-   nc -zv 3.17.208.238 9001
-   ```
-
-2. **Verify private key format**:
-   - Should be hex without `0x` prefix in most places
-   - Check `.env` file has correct format
-
-3. **Check Matcher logs**:
-   ```bash
-   tail -f subnet-logs/matcher.log | grep -i intent
-   ```
-
-### Validator Not Processing Reports
-
-1. **Check NATS connection**:
-   ```bash
-   tail -f subnet-logs/validator.log | grep -i nats
-   ```
-
-2. **Verify validator registered**:
-   ```bash
-   curl http://localhost:8101/validators
-   ```
-
-3. **Check consensus state**:
-   ```bash
-   tail -f subnet-logs/validator.log | grep -i consensus
-   ```
-
-## Next Steps
-
-- Read the [Architecture Overview](architecture.md) to understand the system design
-- See [Production Deployment](production_deployment.md) for production setup
-- Explore [Testing Guide](testing_guide.md) for comprehensive testing
-- Review [API Documentation](api_reference.md) for integration
-
-## Development Workflow
+Logs use standard levels: `DEBUG`, `INFO`, `WARN`, `ERROR`
 
 ```bash
-# 1. Make code changes
-vi internal/matcher/server.go
+# Filter by log level
+grep "ERROR" subnet-logs/*.log           # Show only errors
+grep "WARN\|ERROR" subnet-logs/*.log     # Show warnings and errors
+grep "INFO.*intent" subnet-logs/matcher.log  # Info logs about intents
+```
 
-# 2. Rebuild binaries
+### Common Debugging Scenarios
+
+**1. Intent not being processed:**
+```bash
+# Check if matcher received it
+grep "Received intent" subnet-logs/matcher.log
+
+# Check if any bids came in
+grep "Received bid" subnet-logs/matcher.log
+
+# Check for errors
+grep "ERROR" subnet-logs/matcher.log
+```
+
+**2. Agent not receiving tasks:**
+```bash
+# Check if agent is connected
+grep "Connected to matcher" subnet-logs/agent.log
+
+# Check matcher assigned the task
+grep "Created assignment" subnet-logs/matcher.log
+```
+
+**3. Validation not completing:**
+```bash
+# Check if validators received reports
+grep "execution report" subnet-logs/validator-*.log
+
+# Check consensus progress
+grep "ValidationBundle" subnet-logs/validator-*.log
+
+# Check for errors
+grep "ERROR" subnet-logs/validator-*.log
+```
+
+### Log Retention
+
+**Default behavior:**
+- Logs are appended to existing files
+- No automatic rotation (files grow indefinitely)
+
+**Managing log size:**
+```bash
+# Check log sizes
+du -h subnet-logs/
+
+# Clear old logs (stops services first!)
+pkill -f 'bin/matcher|bin/validator|bin/simple-agent'
+rm -rf subnet-logs/*.log
+./scripts/start-subnet.sh
+
+# Archive logs
+mkdir -p logs-archive/$(date +%Y%m%d)
+cp subnet-logs/*.log logs-archive/$(date +%Y%m%d)/
+> subnet-logs/*.log  # Truncate current logs
+```
+
+📚 **Detailed flow tracing**: See [`docs/subnet_deployment_guide.md`](subnet_deployment_guide.md#intent-execution-flow--observability) for complete intent execution flow with log examples.
+
+---
+
+## 📚 Detailed Documentation
+
+- **Docker Deployment**: [`deployment/README.md`](../deployment/README.md) - Complete Docker usage guide (with 3-node cluster details)
+- **Scripts Guide**: [`docs/scripts_guide.md`](docs/scripts_guide.md) - All scripts documentation
+- **Environment Setup**: [`docs/environment_setup.md`](docs/environment_setup.md) - Dependency installation
+- **Architecture**: [`docs/architecture.md`](docs/architecture.md) - System architecture
+
+---
+
+## 🎉 Get Started
+
+**Complete workflow (including registration)**:
+
+```bash
+# 0. Build tools
 make build
 
-# 3. Stop services
-./stop-subnet.sh
+# 1. Create Subnet (scripts auto-load .env with fixed addresses)
+./scripts/create-subnet.sh --name "My Subnet"
+# 📝 Save the Subnet ID and Contract Address from output
 
-# 4. Restart services
-./start-subnet.sh
+# 2. Register components (scripts auto-load .env)
+./scripts/register.sh --subnet <SUBNET_CONTRACT> --key <KEY>
 
-# 5. Test changes
-./send-intent.sh
+# 3. Generate validator keys and configure .env
+# See "Step 1: Generate Validator Keys" section above for detailed instructions
+cp .env.example .env
 
-# 6. Check logs
-tail -f subnet-logs/*.log
+# Generate validator keys
+PRIVKEY1=$(openssl rand -hex 32)
+PRIVKEY2=$(openssl rand -hex 32)
+PRIVKEY3=$(openssl rand -hex 32)
+PUBKEY1=$(./bin/derive-pubkey "$PRIVKEY1")
+PUBKEY2=$(./bin/derive-pubkey "$PRIVKEY2")
+PUBKEY3=$(./bin/derive-pubkey "$PRIVKEY3")
+
+# Generate separate matcher key (SECURITY: never reuse validator keys!)
+MATCHER_KEY=$(openssl rand -hex 32)
+
+# Save to .env
+echo "TEST_PRIVATE_KEY=$MATCHER_KEY" >> .env
+echo "VALIDATOR_KEYS=$PRIVKEY1,$PRIVKEY2,$PRIVKEY3" >> .env
+echo "VALIDATOR_PUBKEYS=$PUBKEY1,$PUBKEY2,$PUBKEY3" >> .env
+
+# Then manually add subnet info from step 1:
+nano .env
+# Fill in:
+#   - SUBNET_ID (from step 1)
+# Note: Keys are already set above, fixed addresses are pre-configured!
+
+# 4. Start (Docker 3-node)
+cd docker && ./docker-start.sh
+
+# 5. View logs
+docker compose logs -f
 ```
 
-## Common Development Commands
+✅ **Simplified Configuration**:
+- Scripts automatically load `.env` and provide defaults for fixed contract addresses
+- You only need to configure your **private keys and subnet info**
+- No need to manually set `PIN_BASE_SEPOLIA_*` addresses anymore!
 
-```bash
-# Run tests
-make test
+⚠️ **Important**: You must complete blockchain registration (Create Subnet + Register components) before starting services!
 
-# Run with race detector
-go test -race ./...
+That's it! 🚀
 
-# Generate protobuf code
-make proto
+---
 
-# Format code
-go fmt ./...
-gofmt -w .
-
-# Lint code
-golangci-lint run
-
-# Clean build artifacts
-make clean
-```
+Need help? Check `deployment/README.md` or detailed docs in the `docs/` directory.

@@ -1,0 +1,32 @@
+# Matcher Configuration for Docker Deployment
+# Environment variables are substituted at runtime
+
+identity:
+  subnet_id: "${SUBNET_ID}"
+  matcher_id: "matcher-main"
+
+network:
+  grpc_port: 8090
+  http_port: 8091
+
+rootlayer:
+  grpc_endpoint: "${ROOTLAYER_GRPC}"
+  http_endpoint: "${ROOTLAYER_HTTP}"
+  enable: true
+
+matching:
+  bid_window_seconds: 10
+  selection_delay_seconds: 3
+
+# Private key for signing (top-level, read by matcher)
+private_key: "${TEST_PRIVATE_KEY}"
+
+signer:
+  type: "ecdsa"
+  private_key: "${TEST_PRIVATE_KEY}"
+
+enable_chain_submit: ${ENABLE_CHAIN_SUBMIT:-true}
+chain_rpc_url: "${CHAIN_RPC_URL:-https://sepolia.base.org}"
+chain_network: "${CHAIN_NETWORK:-base_sepolia}"
+intent_manager_addr: "${INTENT_MANAGER_ADDR}"
+

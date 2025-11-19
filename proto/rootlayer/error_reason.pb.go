@@ -21,150 +21,150 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Intent业务专用错误码
-// 错误码分段：
-// 4000-4999: 请求验证错误 (Bad Request)
-// 5000-5999: 业务逻辑错误 (Unprocessable Entity)
-// 6000-6999: 资源限制错误 (Conflict/Too Many Requests)
-// 7000-7999: 系统错误 (Internal Server Error)
+// Intent-specific error codes
+// Error code ranges:
+// 4000-4999: Request validation errors (Bad Request)
+// 5000-5999: Business logic errors (Unprocessable Entity)
+// 6000-6999: Resource limit errors (Conflict/Too Many Requests)
+// 7000-7999: System errors (Internal Server Error)
 type IntentErrorReason int32
 
 const (
-	// 成功状态
+	// Success status
 	IntentErrorReason_INTENT_SUCCESS IntentErrorReason = 0
-	// Intent基础验证错误 4000-4099
-	IntentErrorReason_INTENT_INVALID_REQUEST          IntentErrorReason = 4000 // 请求格式无效
-	IntentErrorReason_INTENT_INVALID_PARAMETERS       IntentErrorReason = 4001 // 参数无效
-	IntentErrorReason_INTENT_MISSING_REQUIRED_FIELD   IntentErrorReason = 4002 // 缺少必填字段
-	IntentErrorReason_INTENT_INVALID_FIELD_FORMAT     IntentErrorReason = 4003 // 字段格式错误
-	IntentErrorReason_INTENT_INVALID_UUID             IntentErrorReason = 4004 // UUID格式错误
-	IntentErrorReason_INTENT_INVALID_ADDRESS          IntentErrorReason = 4005 // 以太坊地址格式错误
-	IntentErrorReason_INTENT_INVALID_TIMESTAMP        IntentErrorReason = 4006 // 时间戳格式错误
-	IntentErrorReason_INTENT_INVALID_SIGNATURE_FORMAT IntentErrorReason = 4007 // 签名格式错误
-	IntentErrorReason_INTENT_INVALID_CHAIN_ID         IntentErrorReason = 4008 // 链ID无效
-	IntentErrorReason_INTENT_INVALID_TOKEN_ADDRESS    IntentErrorReason = 4009 // Token地址无效
-	// Intent业务验证错误 4100-4199
-	IntentErrorReason_INTENT_EXPIRED_DEADLINE    IntentErrorReason = 4100 // 截止时间已过期
-	IntentErrorReason_INTENT_INVALID_BUDGET      IntentErrorReason = 4101 // 预算金额无效
-	IntentErrorReason_INTENT_BUDGET_TOO_LOW      IntentErrorReason = 4102 // 预算金额过低
-	IntentErrorReason_INTENT_BUDGET_TOO_HIGH     IntentErrorReason = 4103 // 预算金额过高
-	IntentErrorReason_INTENT_DEADLINE_TOO_EARLY  IntentErrorReason = 4104 // 截止时间过早
-	IntentErrorReason_INTENT_DEADLINE_TOO_LATE   IntentErrorReason = 4105 // 截止时间过晚
-	IntentErrorReason_INTENT_INVALID_INTENT_TYPE IntentErrorReason = 4106 // Intent类型无效
-	IntentErrorReason_INTENT_UNSUPPORTED_CHAIN   IntentErrorReason = 4107 // 不支持的链
-	IntentErrorReason_INTENT_UNSUPPORTED_TOKEN   IntentErrorReason = 4108 // 不支持的Token
-	IntentErrorReason_INTENT_PARAMS_TOO_LARGE    IntentErrorReason = 4109 // 参数数据过大
-	// 签名验证错误 4200-4299
-	IntentErrorReason_INTENT_SIGNATURE_VERIFICATION_FAILED IntentErrorReason = 4200 // 签名验证失败
-	IntentErrorReason_INTENT_INVALID_SIGNATURE             IntentErrorReason = 4201 // 签名无效
-	IntentErrorReason_INTENT_SIGNATURE_MISMATCH            IntentErrorReason = 4202 // 签名不匹配
-	IntentErrorReason_INTENT_SIGNER_MISMATCH               IntentErrorReason = 4203 // 签名者不匹配
-	IntentErrorReason_INTENT_SIGNATURE_REPLAY              IntentErrorReason = 4204 // 签名重放攻击
-	IntentErrorReason_INTENT_SIGNATURE_EXPIRED             IntentErrorReason = 4205 // 签名已过期
-	IntentErrorReason_INTENT_INVALID_SIGNATURE_TYPE        IntentErrorReason = 4206 // 签名类型无效
-	IntentErrorReason_INTENT_EIP712_VALIDATION_FAILED      IntentErrorReason = 4207 // EIP-712验证失败
-	IntentErrorReason_INTENT_EIP191_VALIDATION_FAILED      IntentErrorReason = 4208 // EIP-191验证失败
-	// 子网验证错误 4300-4399
-	IntentErrorReason_INTENT_SUBNET_NOT_FOUND               IntentErrorReason = 4300 // 子网不存在
-	IntentErrorReason_INTENT_SUBNET_INACTIVE                IntentErrorReason = 4301 // 子网不活跃
-	IntentErrorReason_INTENT_SUBNET_OVERLOADED              IntentErrorReason = 4302 // 子网过载
-	IntentErrorReason_INTENT_SUBNET_UNSUPPORTED             IntentErrorReason = 4303 // 子网不支持此类型Intent
-	IntentErrorReason_INTENT_SUBNET_INSUFFICIENT_VALIDATORS IntentErrorReason = 4304 // 子网验证者不足
-	IntentErrorReason_INTENT_SUBNET_MAINTENANCE             IntentErrorReason = 4305 // 子网维护中
-	// Intent状态相关错误 5000-5099
-	IntentErrorReason_INTENT_ALREADY_EXISTS             IntentErrorReason = 5000 // Intent已存在
-	IntentErrorReason_INTENT_NOT_FOUND                  IntentErrorReason = 5001 // Intent不存在
-	IntentErrorReason_INTENT_INVALID_STATUS             IntentErrorReason = 5002 // Intent状态无效
-	IntentErrorReason_INTENT_STATUS_TRANSITION_INVALID  IntentErrorReason = 5003 // 状态转换无效
-	IntentErrorReason_INTENT_ALREADY_PROCESSED          IntentErrorReason = 5004 // Intent已被处理
-	IntentErrorReason_INTENT_ALREADY_EXPIRED            IntentErrorReason = 5005 // Intent已过期
-	IntentErrorReason_INTENT_ALREADY_COMPLETED          IntentErrorReason = 5006 // Intent已完成
-	IntentErrorReason_INTENT_ALREADY_FAILED             IntentErrorReason = 5007 // Intent已失败
-	IntentErrorReason_INTENT_CANNOT_CANCEL              IntentErrorReason = 5008 // 无法取消Intent
-	IntentErrorReason_INTENT_PROCESSING_DEADLINE_PASSED IntentErrorReason = 5009 // 处理截止时间已过
-	// 竞价相关错误 5100-5199
-	IntentErrorReason_INTENT_BIDDING_NOT_STARTED  IntentErrorReason = 5100 // 竞价未开始
-	IntentErrorReason_INTENT_BIDDING_ENDED        IntentErrorReason = 5101 // 竞价已结束
-	IntentErrorReason_INTENT_NO_VALID_BIDS        IntentErrorReason = 5102 // 无有效竞价
-	IntentErrorReason_INTENT_BID_TOO_LOW          IntentErrorReason = 5103 // 竞价过低
-	IntentErrorReason_INTENT_BID_TOO_HIGH         IntentErrorReason = 5104 // 竞价过高
-	IntentErrorReason_INTENT_BIDDER_NOT_QUALIFIED IntentErrorReason = 5105 // 竞价者不符合条件
-	IntentErrorReason_INTENT_BID_ALREADY_EXISTS   IntentErrorReason = 5106 // 竞价已存在
-	IntentErrorReason_INTENT_INSUFFICIENT_STAKE   IntentErrorReason = 5107 // 质押不足
-	// 执行相关错误 5200-5299
-	IntentErrorReason_INTENT_EXECUTION_NOT_STARTED      IntentErrorReason = 5200 // 执行未开始
-	IntentErrorReason_INTENT_EXECUTION_FAILED           IntentErrorReason = 5201 // 执行失败
-	IntentErrorReason_INTENT_EXECUTION_TIMEOUT          IntentErrorReason = 5202 // 执行超时
-	IntentErrorReason_INTENT_EXECUTION_REJECTED         IntentErrorReason = 5203 // 执行被拒绝
-	IntentErrorReason_INTENT_EXECUTION_PARAMS_INVALID   IntentErrorReason = 5204 // 执行参数无效
-	IntentErrorReason_INTENT_EXECUTION_INSUFFICIENT_GAS IntentErrorReason = 5205 // Gas不足
-	IntentErrorReason_INTENT_EXECUTION_NETWORK_ERROR    IntentErrorReason = 5206 // 网络错误
-	IntentErrorReason_INTENT_EXECUTION_CONTRACT_ERROR   IntentErrorReason = 5207 // 合约执行错误
-	// 验证相关错误 5300-5399
-	IntentErrorReason_INTENT_VALIDATION_PENDING           IntentErrorReason = 5300 // 验证待处理
-	IntentErrorReason_INTENT_VALIDATION_FAILED            IntentErrorReason = 5301 // 验证失败
-	IntentErrorReason_INTENT_VALIDATION_TIMEOUT           IntentErrorReason = 5302 // 验证超时
-	IntentErrorReason_INTENT_INSUFFICIENT_VALIDATORS      IntentErrorReason = 5303 // 验证者不足
-	IntentErrorReason_INTENT_VALIDATION_CONSENSUS_FAILED  IntentErrorReason = 5304 // 验证共识失败
-	IntentErrorReason_INTENT_VALIDATION_SIGNATURE_INVALID IntentErrorReason = 5305 // 验证签名无效
-	// 系统容量限制 6000-6099
-	IntentErrorReason_INTENT_RATE_LIMIT_EXCEEDED      IntentErrorReason = 6000 // 速率限制
-	IntentErrorReason_INTENT_QUEUE_FULL               IntentErrorReason = 6001 // 队列已满
-	IntentErrorReason_INTENT_MAX_CONCURRENT_LIMIT     IntentErrorReason = 6002 // 并发限制
-	IntentErrorReason_INTENT_DAILY_LIMIT_EXCEEDED     IntentErrorReason = 6003 // 日限制超出
-	IntentErrorReason_INTENT_USER_QUOTA_EXCEEDED      IntentErrorReason = 6004 // 用户配额超出
-	IntentErrorReason_INTENT_SUBNET_CAPACITY_EXCEEDED IntentErrorReason = 6005 // 子网容量超出
-	IntentErrorReason_INTENT_GLOBAL_CAPACITY_EXCEEDED IntentErrorReason = 6006 // 全局容量超出
-	// 资源冲突 6100-6199
-	IntentErrorReason_INTENT_RESOURCE_LOCKED         IntentErrorReason = 6100 // 资源被锁定
-	IntentErrorReason_INTENT_RESOURCE_BUSY           IntentErrorReason = 6101 // 资源忙碌
-	IntentErrorReason_INTENT_DEPENDENCY_CONFLICT     IntentErrorReason = 6102 // 依赖冲突
-	IntentErrorReason_INTENT_CONCURRENT_MODIFICATION IntentErrorReason = 6103 // 并发修改
-	IntentErrorReason_INTENT_VERSION_CONFLICT        IntentErrorReason = 6104 // 版本冲突
-	// 数据库错误 7000-7099
-	IntentErrorReason_INTENT_DATABASE_ERROR                IntentErrorReason = 7000 // 数据库错误
-	IntentErrorReason_INTENT_DATABASE_CONNECTION_FAILED    IntentErrorReason = 7001 // 数据库连接失败
-	IntentErrorReason_INTENT_DATABASE_TIMEOUT              IntentErrorReason = 7002 // 数据库超时
-	IntentErrorReason_INTENT_DATABASE_CONSTRAINT_VIOLATION IntentErrorReason = 7003 // 数据库约束违反
-	IntentErrorReason_INTENT_DATABASE_TRANSACTION_FAILED   IntentErrorReason = 7004 // 事务失败
-	IntentErrorReason_INTENT_DATABASE_MIGRATION_ERROR      IntentErrorReason = 7005 // 迁移错误
-	// 缓存错误 7100-7199
-	IntentErrorReason_INTENT_CACHE_ERROR             IntentErrorReason = 7100 // 缓存错误
-	IntentErrorReason_INTENT_CACHE_CONNECTION_FAILED IntentErrorReason = 7101 // 缓存连接失败
-	IntentErrorReason_INTENT_CACHE_TIMEOUT           IntentErrorReason = 7102 // 缓存超时
-	IntentErrorReason_INTENT_CACHE_EVICTION_ERROR    IntentErrorReason = 7103 // 缓存清理错误
-	// 区块链集成错误 7200-7299
-	IntentErrorReason_INTENT_BLOCKCHAIN_ERROR                 IntentErrorReason = 7200 // 区块链错误
-	IntentErrorReason_INTENT_BLOCKCHAIN_CONNECTION_FAILED     IntentErrorReason = 7201 // 区块链连接失败
-	IntentErrorReason_INTENT_BLOCKCHAIN_TIMEOUT               IntentErrorReason = 7202 // 区块链超时
-	IntentErrorReason_INTENT_BLOCKCHAIN_TRANSACTION_FAILED    IntentErrorReason = 7203 // 交易失败
-	IntentErrorReason_INTENT_BLOCKCHAIN_GAS_ESTIMATION_FAILED IntentErrorReason = 7204 // Gas估算失败
-	IntentErrorReason_INTENT_BLOCKCHAIN_INSUFFICIENT_BALANCE  IntentErrorReason = 7205 // 余额不足
-	IntentErrorReason_INTENT_BLOCKCHAIN_NONCE_ERROR           IntentErrorReason = 7206 // Nonce错误
-	IntentErrorReason_INTENT_BLOCKCHAIN_NETWORK_CONGESTION    IntentErrorReason = 7207 // 网络拥堵
-	// gRPC/网络错误 7300-7399
-	IntentErrorReason_INTENT_GRPC_ERROR             IntentErrorReason = 7300 // gRPC错误
-	IntentErrorReason_INTENT_GRPC_CONNECTION_FAILED IntentErrorReason = 7301 // gRPC连接失败
-	IntentErrorReason_INTENT_GRPC_TIMEOUT           IntentErrorReason = 7302 // gRPC超时
-	IntentErrorReason_INTENT_GRPC_UNAVAILABLE       IntentErrorReason = 7303 // gRPC服务不可用
-	IntentErrorReason_INTENT_NETWORK_ERROR          IntentErrorReason = 7304 // 网络错误
-	IntentErrorReason_INTENT_NETWORK_TIMEOUT        IntentErrorReason = 7305 // 网络超时
-	// 系统内部错误 7400-7499
-	IntentErrorReason_INTENT_INTERNAL_ERROR        IntentErrorReason = 7400 // 内部错误
-	IntentErrorReason_INTENT_CONFIGURATION_ERROR   IntentErrorReason = 7401 // 配置错误
-	IntentErrorReason_INTENT_SERVICE_UNAVAILABLE   IntentErrorReason = 7402 // 服务不可用
-	IntentErrorReason_INTENT_MEMORY_ERROR          IntentErrorReason = 7403 // 内存错误
-	IntentErrorReason_INTENT_FILE_SYSTEM_ERROR     IntentErrorReason = 7404 // 文件系统错误
-	IntentErrorReason_INTENT_SERIALIZATION_ERROR   IntentErrorReason = 7405 // 序列化错误
-	IntentErrorReason_INTENT_DESERIALIZATION_ERROR IntentErrorReason = 7406 // 反序列化错误
-	IntentErrorReason_INTENT_ENCRYPTION_ERROR      IntentErrorReason = 7407 // 加密错误
-	IntentErrorReason_INTENT_DECRYPTION_ERROR      IntentErrorReason = 7408 // 解密错误
-	// 第三方服务错误 7500-7599
-	IntentErrorReason_INTENT_EXTERNAL_SERVICE_ERROR       IntentErrorReason = 7500 // 外部服务错误
-	IntentErrorReason_INTENT_EXTERNAL_SERVICE_TIMEOUT     IntentErrorReason = 7501 // 外部服务超时
-	IntentErrorReason_INTENT_EXTERNAL_SERVICE_UNAVAILABLE IntentErrorReason = 7502 // 外部服务不可用
-	IntentErrorReason_INTENT_API_RATE_LIMITED             IntentErrorReason = 7503 // 外部API限流
-	IntentErrorReason_INTENT_API_AUTHENTICATION_FAILED    IntentErrorReason = 7504 // 外部API认证失败
+	// Intent basic validation errors 4000-4099
+	IntentErrorReason_INTENT_INVALID_REQUEST          IntentErrorReason = 4000 // Request format invalid
+	IntentErrorReason_INTENT_INVALID_PARAMETERS       IntentErrorReason = 4001 // Parameters invalid
+	IntentErrorReason_INTENT_MISSING_REQUIRED_FIELD   IntentErrorReason = 4002 // Missing required field
+	IntentErrorReason_INTENT_INVALID_FIELD_FORMAT     IntentErrorReason = 4003 // Field format error
+	IntentErrorReason_INTENT_INVALID_UUID             IntentErrorReason = 4004 // UUID format error
+	IntentErrorReason_INTENT_INVALID_ADDRESS          IntentErrorReason = 4005 // Ethereum address format error
+	IntentErrorReason_INTENT_INVALID_TIMESTAMP        IntentErrorReason = 4006 // Timestamp format error
+	IntentErrorReason_INTENT_INVALID_SIGNATURE_FORMAT IntentErrorReason = 4007 // Signature format error
+	IntentErrorReason_INTENT_INVALID_CHAIN_ID         IntentErrorReason = 4008 // Chain ID invalid
+	IntentErrorReason_INTENT_INVALID_TOKEN_ADDRESS    IntentErrorReason = 4009 // Token address invalid
+	// Intent business validation errors 4100-4199
+	IntentErrorReason_INTENT_EXPIRED_DEADLINE    IntentErrorReason = 4100 // Deadline expired
+	IntentErrorReason_INTENT_INVALID_BUDGET      IntentErrorReason = 4101 // Budget amount invalid
+	IntentErrorReason_INTENT_BUDGET_TOO_LOW      IntentErrorReason = 4102 // Budget amount too low
+	IntentErrorReason_INTENT_BUDGET_TOO_HIGH     IntentErrorReason = 4103 // Budget amount too high
+	IntentErrorReason_INTENT_DEADLINE_TOO_EARLY  IntentErrorReason = 4104 // Deadline too early
+	IntentErrorReason_INTENT_DEADLINE_TOO_LATE   IntentErrorReason = 4105 // Deadline too late
+	IntentErrorReason_INTENT_INVALID_INTENT_TYPE IntentErrorReason = 4106 // Intent type invalid
+	IntentErrorReason_INTENT_UNSUPPORTED_CHAIN   IntentErrorReason = 4107 // Unsupported chain
+	IntentErrorReason_INTENT_UNSUPPORTED_TOKEN   IntentErrorReason = 4108 // Unsupported token
+	IntentErrorReason_INTENT_PARAMS_TOO_LARGE    IntentErrorReason = 4109 // Parameters data too large
+	// Signature validation errors 4200-4299
+	IntentErrorReason_INTENT_SIGNATURE_VERIFICATION_FAILED IntentErrorReason = 4200 // Signature verification failed
+	IntentErrorReason_INTENT_INVALID_SIGNATURE             IntentErrorReason = 4201 // Signature invalid
+	IntentErrorReason_INTENT_SIGNATURE_MISMATCH            IntentErrorReason = 4202 // Signature mismatch
+	IntentErrorReason_INTENT_SIGNER_MISMATCH               IntentErrorReason = 4203 // Signer mismatch
+	IntentErrorReason_INTENT_SIGNATURE_REPLAY              IntentErrorReason = 4204 // Signature replay attack
+	IntentErrorReason_INTENT_SIGNATURE_EXPIRED             IntentErrorReason = 4205 // Signature expired
+	IntentErrorReason_INTENT_INVALID_SIGNATURE_TYPE        IntentErrorReason = 4206 // Signature type invalid
+	IntentErrorReason_INTENT_EIP712_VALIDATION_FAILED      IntentErrorReason = 4207 // EIP-712 validation failed
+	IntentErrorReason_INTENT_EIP191_VALIDATION_FAILED      IntentErrorReason = 4208 // EIP-191 validation failed
+	// Subnet validation errors 4300-4399
+	IntentErrorReason_INTENT_SUBNET_NOT_FOUND               IntentErrorReason = 4300 // Subnet not found
+	IntentErrorReason_INTENT_SUBNET_INACTIVE                IntentErrorReason = 4301 // Subnet inactive
+	IntentErrorReason_INTENT_SUBNET_OVERLOADED              IntentErrorReason = 4302 // Subnet overloaded
+	IntentErrorReason_INTENT_SUBNET_UNSUPPORTED             IntentErrorReason = 4303 // Subnet doesn't support this intent type
+	IntentErrorReason_INTENT_SUBNET_INSUFFICIENT_VALIDATORS IntentErrorReason = 4304 // Subnet insufficient validators
+	IntentErrorReason_INTENT_SUBNET_MAINTENANCE             IntentErrorReason = 4305 // Subnet under maintenance
+	// Intent status related errors 5000-5099
+	IntentErrorReason_INTENT_ALREADY_EXISTS             IntentErrorReason = 5000 // Intent already exists
+	IntentErrorReason_INTENT_NOT_FOUND                  IntentErrorReason = 5001 // Intent not found
+	IntentErrorReason_INTENT_INVALID_STATUS             IntentErrorReason = 5002 // Intent status invalid
+	IntentErrorReason_INTENT_STATUS_TRANSITION_INVALID  IntentErrorReason = 5003 // Status transition invalid
+	IntentErrorReason_INTENT_ALREADY_PROCESSED          IntentErrorReason = 5004 // Intent already processed
+	IntentErrorReason_INTENT_ALREADY_EXPIRED            IntentErrorReason = 5005 // Intent already expired
+	IntentErrorReason_INTENT_ALREADY_COMPLETED          IntentErrorReason = 5006 // Intent already completed
+	IntentErrorReason_INTENT_ALREADY_FAILED             IntentErrorReason = 5007 // Intent already failed
+	IntentErrorReason_INTENT_CANNOT_CANCEL              IntentErrorReason = 5008 // Cannot cancel intent
+	IntentErrorReason_INTENT_PROCESSING_DEADLINE_PASSED IntentErrorReason = 5009 // Processing deadline passed
+	// Bidding related errors 5100-5199
+	IntentErrorReason_INTENT_BIDDING_NOT_STARTED  IntentErrorReason = 5100 // Bidding not started
+	IntentErrorReason_INTENT_BIDDING_ENDED        IntentErrorReason = 5101 // Bidding ended
+	IntentErrorReason_INTENT_NO_VALID_BIDS        IntentErrorReason = 5102 // No valid bids
+	IntentErrorReason_INTENT_BID_TOO_LOW          IntentErrorReason = 5103 // Bid too low
+	IntentErrorReason_INTENT_BID_TOO_HIGH         IntentErrorReason = 5104 // Bid too high
+	IntentErrorReason_INTENT_BIDDER_NOT_QUALIFIED IntentErrorReason = 5105 // Bidder not qualified
+	IntentErrorReason_INTENT_BID_ALREADY_EXISTS   IntentErrorReason = 5106 // Bid already exists
+	IntentErrorReason_INTENT_INSUFFICIENT_STAKE   IntentErrorReason = 5107 // Insufficient stake
+	// Execution related errors 5200-5299
+	IntentErrorReason_INTENT_EXECUTION_NOT_STARTED      IntentErrorReason = 5200 // Execution not started
+	IntentErrorReason_INTENT_EXECUTION_FAILED           IntentErrorReason = 5201 // Execution failed
+	IntentErrorReason_INTENT_EXECUTION_TIMEOUT          IntentErrorReason = 5202 // Execution timeout
+	IntentErrorReason_INTENT_EXECUTION_REJECTED         IntentErrorReason = 5203 // Execution rejected
+	IntentErrorReason_INTENT_EXECUTION_PARAMS_INVALID   IntentErrorReason = 5204 // Execution parameters invalid
+	IntentErrorReason_INTENT_EXECUTION_INSUFFICIENT_GAS IntentErrorReason = 5205 // Insufficient gas
+	IntentErrorReason_INTENT_EXECUTION_NETWORK_ERROR    IntentErrorReason = 5206 // Network error
+	IntentErrorReason_INTENT_EXECUTION_CONTRACT_ERROR   IntentErrorReason = 5207 // Contract execution error
+	// Validation related errors 5300-5399
+	IntentErrorReason_INTENT_VALIDATION_PENDING           IntentErrorReason = 5300 // Validation pending
+	IntentErrorReason_INTENT_VALIDATION_FAILED            IntentErrorReason = 5301 // Validation failed
+	IntentErrorReason_INTENT_VALIDATION_TIMEOUT           IntentErrorReason = 5302 // Validation timeout
+	IntentErrorReason_INTENT_INSUFFICIENT_VALIDATORS      IntentErrorReason = 5303 // Insufficient validators
+	IntentErrorReason_INTENT_VALIDATION_CONSENSUS_FAILED  IntentErrorReason = 5304 // Validation consensus failed
+	IntentErrorReason_INTENT_VALIDATION_SIGNATURE_INVALID IntentErrorReason = 5305 // Validation signature invalid
+	// System capacity limits 6000-6099
+	IntentErrorReason_INTENT_RATE_LIMIT_EXCEEDED      IntentErrorReason = 6000 // Rate limit
+	IntentErrorReason_INTENT_QUEUE_FULL               IntentErrorReason = 6001 // Queue full
+	IntentErrorReason_INTENT_MAX_CONCURRENT_LIMIT     IntentErrorReason = 6002 // Concurrent limit
+	IntentErrorReason_INTENT_DAILY_LIMIT_EXCEEDED     IntentErrorReason = 6003 // Daily limit exceeded
+	IntentErrorReason_INTENT_USER_QUOTA_EXCEEDED      IntentErrorReason = 6004 // User quota exceeded
+	IntentErrorReason_INTENT_SUBNET_CAPACITY_EXCEEDED IntentErrorReason = 6005 // Subnet capacity exceeded
+	IntentErrorReason_INTENT_GLOBAL_CAPACITY_EXCEEDED IntentErrorReason = 6006 // Global capacity exceeded
+	// Resource conflicts 6100-6199
+	IntentErrorReason_INTENT_RESOURCE_LOCKED         IntentErrorReason = 6100 // Resource locked
+	IntentErrorReason_INTENT_RESOURCE_BUSY           IntentErrorReason = 6101 // Resource busy
+	IntentErrorReason_INTENT_DEPENDENCY_CONFLICT     IntentErrorReason = 6102 // Dependency conflict
+	IntentErrorReason_INTENT_CONCURRENT_MODIFICATION IntentErrorReason = 6103 // Concurrent modification
+	IntentErrorReason_INTENT_VERSION_CONFLICT        IntentErrorReason = 6104 // Version conflict
+	// Database errors 7000-7099
+	IntentErrorReason_INTENT_DATABASE_ERROR                IntentErrorReason = 7000 // Database error
+	IntentErrorReason_INTENT_DATABASE_CONNECTION_FAILED    IntentErrorReason = 7001 // Database connection failed
+	IntentErrorReason_INTENT_DATABASE_TIMEOUT              IntentErrorReason = 7002 // Database timeout
+	IntentErrorReason_INTENT_DATABASE_CONSTRAINT_VIOLATION IntentErrorReason = 7003 // Database constraint violation
+	IntentErrorReason_INTENT_DATABASE_TRANSACTION_FAILED   IntentErrorReason = 7004 // Transaction failed
+	IntentErrorReason_INTENT_DATABASE_MIGRATION_ERROR      IntentErrorReason = 7005 // Migration error
+	// Cache errors 7100-7199
+	IntentErrorReason_INTENT_CACHE_ERROR             IntentErrorReason = 7100 // Cache error
+	IntentErrorReason_INTENT_CACHE_CONNECTION_FAILED IntentErrorReason = 7101 // Cache connection failed
+	IntentErrorReason_INTENT_CACHE_TIMEOUT           IntentErrorReason = 7102 // Cache timeout
+	IntentErrorReason_INTENT_CACHE_EVICTION_ERROR    IntentErrorReason = 7103 // Cache eviction error
+	// Blockchain integration errors 7200-7299
+	IntentErrorReason_INTENT_BLOCKCHAIN_ERROR                 IntentErrorReason = 7200 // Blockchain error
+	IntentErrorReason_INTENT_BLOCKCHAIN_CONNECTION_FAILED     IntentErrorReason = 7201 // Blockchain connection failed
+	IntentErrorReason_INTENT_BLOCKCHAIN_TIMEOUT               IntentErrorReason = 7202 // Blockchain timeout
+	IntentErrorReason_INTENT_BLOCKCHAIN_TRANSACTION_FAILED    IntentErrorReason = 7203 // Transaction failed
+	IntentErrorReason_INTENT_BLOCKCHAIN_GAS_ESTIMATION_FAILED IntentErrorReason = 7204 // Gas estimation failed
+	IntentErrorReason_INTENT_BLOCKCHAIN_INSUFFICIENT_BALANCE  IntentErrorReason = 7205 // Insufficient balance
+	IntentErrorReason_INTENT_BLOCKCHAIN_NONCE_ERROR           IntentErrorReason = 7206 // Nonce error
+	IntentErrorReason_INTENT_BLOCKCHAIN_NETWORK_CONGESTION    IntentErrorReason = 7207 // Network congestion
+	// gRPC/Network errors 7300-7399
+	IntentErrorReason_INTENT_GRPC_ERROR             IntentErrorReason = 7300 // gRPC error
+	IntentErrorReason_INTENT_GRPC_CONNECTION_FAILED IntentErrorReason = 7301 // gRPC connection failed
+	IntentErrorReason_INTENT_GRPC_TIMEOUT           IntentErrorReason = 7302 // gRPC timeout
+	IntentErrorReason_INTENT_GRPC_UNAVAILABLE       IntentErrorReason = 7303 // gRPC service unavailable
+	IntentErrorReason_INTENT_NETWORK_ERROR          IntentErrorReason = 7304 // Network error
+	IntentErrorReason_INTENT_NETWORK_TIMEOUT        IntentErrorReason = 7305 // Network timeout
+	// System internal errors 7400-7499
+	IntentErrorReason_INTENT_INTERNAL_ERROR        IntentErrorReason = 7400 // Internal error
+	IntentErrorReason_INTENT_CONFIGURATION_ERROR   IntentErrorReason = 7401 // Configuration error
+	IntentErrorReason_INTENT_SERVICE_UNAVAILABLE   IntentErrorReason = 7402 // Service unavailable
+	IntentErrorReason_INTENT_MEMORY_ERROR          IntentErrorReason = 7403 // Memory error
+	IntentErrorReason_INTENT_FILE_SYSTEM_ERROR     IntentErrorReason = 7404 // File system error
+	IntentErrorReason_INTENT_SERIALIZATION_ERROR   IntentErrorReason = 7405 // Serialization error
+	IntentErrorReason_INTENT_DESERIALIZATION_ERROR IntentErrorReason = 7406 // Deserialization error
+	IntentErrorReason_INTENT_ENCRYPTION_ERROR      IntentErrorReason = 7407 // Encryption error
+	IntentErrorReason_INTENT_DECRYPTION_ERROR      IntentErrorReason = 7408 // Decryption error
+	// Third-party service errors 7500-7599
+	IntentErrorReason_INTENT_EXTERNAL_SERVICE_ERROR       IntentErrorReason = 7500 // External service error
+	IntentErrorReason_INTENT_EXTERNAL_SERVICE_TIMEOUT     IntentErrorReason = 7501 // External service timeout
+	IntentErrorReason_INTENT_EXTERNAL_SERVICE_UNAVAILABLE IntentErrorReason = 7502 // External service unavailable
+	IntentErrorReason_INTENT_API_RATE_LIMITED             IntentErrorReason = 7503 // External API rate limited
+	IntentErrorReason_INTENT_API_AUTHENTICATION_FAILED    IntentErrorReason = 7504 // External API authentication failed
 )
 
 // Enum value maps for IntentErrorReason.

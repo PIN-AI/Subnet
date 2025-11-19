@@ -21,8 +21,8 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
    - Tracks pending assignments and runner-up fallback logic
 
 2. **Agent (external SDK)**
-   - Operators run agents via the published SDK (`subnet-sdk/go`, `subnet-sdk/python`)
-   - Agents register with the registry service, subscribe to matcher tasks
+- Operators run agents via the published SDK ([`subnet-sdk/go`](https://github.com/PIN-AI/subnet-sdk/tree/main/go), [`subnet-sdk/python`](https://github.com/PIN-AI/subnet-sdk/tree/main/python))
+   - Agents connect directly to matcher via gRPC to receive tasks
    - Execute workloads with custom business logic
    - Submit execution reports to validators via gRPC
    - **SDK Batch Support**: Python and Go SDKs support batch bid and report submission
@@ -31,17 +31,13 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
    - Exposes gRPC for execution report submission (`proto/subnet/validator.proto`)
    - Validates report signatures and payloads with custom validation logic
    - Persists state in LevelDB for crash recovery (`internal/storage`)
-   - Participates in the threshold consensus FSM (`internal/consensus`)
-   - Broadcasts signatures via NATS messaging layer (`internal/messaging`)
+   - Uses **Raft consensus** for checkpoint replication and leader election (`internal/consensus`)
+   - Propagates checkpoint signatures via **Gossip protocol** (HashiCorp Memberlist)
    - **Batch ValidationBundle Submission**: Aggregates multiple ValidationBundles and submits in batches to RootLayer
    - Dual submission support: Both blockchain and RootLayer simultaneously
    - Automatic fallback from batch to individual submission on errors
 
-4. **Registry (`cmd/registry`, `internal/registry`)**
-   - Tracks agent and validator registrations with health heartbeats
-   - Provides discovery endpoints consumed by agents and validators (`/validators`, `/agents`)
-
-5. **Mock RootLayer (`cmd/mock-rootlayer`)**
+4. **Mock RootLayer (`cmd/mock-rootlayer`)**
    - Supplies intents and accepts matcher or validator updates for local testing
 
 ## Key Features
@@ -75,16 +71,15 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
 
 ## Code Map
 
-- `cmd/` – CLI entry points for matcher, validator, registry, mock rootlayer, and the example simple agent
+- `cmd/` – CLI entry points for matcher, validator, mock rootlayer, and the example simple agent
 - `internal/`
   - `matcher/` – bidding windows, matching engine, assignment manager, task streaming, and **batch assignment submission**
   - `validator/` – gRPC server, auth interceptor, execution report validation, and **batch ValidationBundle submission**
-  - `consensus/` – threshold FSM, leader rotation, NATS broadcaster wrappers, epoch-based checkpointing
+  - `consensus/` – **Raft consensus**, **Gossip signature propagation**, threshold FSM, leader election, epoch-based checkpointing
   - `rootlayer/` – HTTP/gRPC clients with **batch submission support** (CompleteClient)
-  - `registry/` – in-memory registry service with health tracking
   - `storage/` – LevelDB helpers for validator persistence and crash recovery
   - `grpc/` – shared authentication interceptors and signing helpers
-  - `logging/`, `metrics/`, `messaging/`, `types/`, `crypto/` – shared utilities
+  - `logging/`, `metrics/`, `types/`, `crypto/` – shared utilities
 - `proto/` – generated protobufs for subnet and rootlayer services (`make proto` regenerates)
 - `config/` – sample configuration files for matcher and validator nodes
 - `scripts/` – deployment, testing, and E2E test scripts
@@ -94,7 +89,7 @@ RootLayer intents → Matcher (batch pulls) → Agent (SDK) → Validator → Ro
 
 ```bash
 cd Subnet
-make build       # builds matcher, validator, registry, mock rootlayer, simple agent
+make build       # builds matcher, validator, mock rootlayer, simple agent
 make test        # runs Go unit tests across modules
 make proto       # regenerates protobuf stubs from ../pin_protocol
 ```
@@ -103,12 +98,13 @@ For iterative work you can also run `go test ./...` or build specific binaries f
 
 ## Runtime Expectations
 
-- **NATS Messaging**: Validators rely on NATS for signature gossip (default `nats://127.0.0.1:4222`)
-- **Execution Reports**: Accepted over gRPC and revalidated before entering the threshold FSM
+- **Raft Consensus**: Validators use Raft for checkpoint replication and leader election (no external dependencies required)
+- **Gossip Protocol**: Checkpoint signatures are propagated via HashiCorp Memberlist gossip (peer-to-peer, no message broker needed)
+- **Execution Reports**: Accepted over gRPC and revalidated before entering consensus
 - **RootLayer Connectivity**: Matcher and validator require connectivity to RootLayer endpoints (gRPC: `3.17.208.238:9001`, HTTP: `http://3.17.208.238:8081`)
 - **Batch Operations**: Both Matcher and Validator use `CompleteClient` for batch submission support
 - **Dual Submission**: Validators can submit to both blockchain (Base Sepolia) and RootLayer simultaneously
-- **Agent SDK**: Production agents should use `/subnet-sdk` (Go/Python); `cmd/simple-agent` is for demo only
+- **Agent SDK**: Production agents should use the external repo [`PIN-AI/subnet-sdk`](https://github.com/PIN-AI/subnet-sdk) (Go/Python); `cmd/simple-agent` is for demo only
 
 ## Batch Submission Flow
 
@@ -147,16 +143,16 @@ Intent matching → Winner selection → Assignment creation
 ## Testing
 
 ### E2E Testing
-Run the comprehensive E2E test suite:
+Run the comprehensive E2E test:
 ```bash
-# Simple E2E test
-./run-e2e.sh --no-interactive
+# Start all services
+./scripts/start-subnet.sh
 
-# Batch operations E2E test
-./run-batch-e2e.sh --intent-count 10 --no-interactive
+# In another terminal, send test intent
+./scripts/send-intent.sh
 ```
 
-See `docs/batch_test.md` for detailed batch testing documentation.
+See [docs/subnet_deployment_guide.md](subnet_deployment_guide.md#intent-execution-flow--observability) for the full E2E workflow and log guide.
 
 ### Unit Testing
 ```bash
@@ -188,7 +184,7 @@ rootlayer:
 
 ## Supporting Notes
 
-- See `docs/batch_test.md` for comprehensive batch operations testing guide
-- `docs/jetstream_evaluation.md` captures NATS JetStream trade-offs for durable messaging
+- Operational runbooks live in `docs/subnet_deployment_guide.md` (keys, testing, troubleshooting)
+- **Historical Note**: System previously evaluated NATS JetStream for messaging but now uses Raft+Gossip for consensus
 - Proto files under `proto/rootlayer` and `proto/subnet` are authoritative; regenerate with `make proto` when protocol changes
-- Both Chinese (`*.zh.md`) and English documentation available in `docs/`
+- Documentation is maintained in English under `docs/`

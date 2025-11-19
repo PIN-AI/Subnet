@@ -1,3 +1,6 @@
+//go:build scripts
+// +build scripts
+
 package main
 
 import (
@@ -17,13 +20,13 @@ import (
 	"strings"
 	"time"
 
+	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
+	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
+	sdkcrypto "github.com/PIN-AI/intent-protocol-contract-sdk/sdk/crypto"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
-	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
-	sdkcrypto "github.com/PIN-AI/intent-protocol-contract-sdk/sdk/crypto"
 )
 
 func main() {
@@ -35,9 +38,9 @@ func main() {
 		network           = flag.String("network", envOr("PIN_NETWORK", "base_sepolia"), "Network name")
 		intentManagerAddr = flag.String("intent-manager", envOr("INTENT_MANAGER_ADDR", envOr("PIN_BASE_SEPOLIA_INTENT_MANAGER", "")), "IntentManager contract address")
 
-		subnetIDHex   = flag.String("subnet", envOr("SUBNET_ID", "0x0000000000000000000000000000000000000000000000000000000000000002"), "Subnet ID (0x64 hex)")
-		intentType    = flag.String("type", envOr("INTENT_TYPE", "e2e-test"), "Intent type")
-		paramsJSON    = flag.String("params", envOr("PARAMS_JSON", `{"task":"test"}`), "Intent params JSON")
+		subnetIDHex = flag.String("subnet", envOr("SUBNET_ID", "0x0000000000000000000000000000000000000000000000000000000000000003"), "Subnet ID (0x64 hex)")
+		intentType  = flag.String("type", envOr("INTENT_TYPE", "e2e-test"), "Intent type")
+		paramsJSON  = flag.String("params", envOr("PARAMS_JSON", `{"task":"test"}`), "Intent params JSON")
 
 		amountWei     = flag.String("amount", envOr("AMOUNT_WEI", "100000000000000"), "Amount in wei")
 		deadlineHours = flag.Int64("deadline-hours", envInt64("DEADLINE_HOURS", 1), "Deadline offset in hours from now")
@@ -160,18 +163,19 @@ func main() {
 
 	// Step 1: Submit to blockchain FIRST (dual submission requirement)
 	log.Printf("\n⛓️  Submitting Intent to blockchain (IntentManager)...")
-	submitParams := sdk.SubmitIntentParams{
-		IntentID:     intentID,
-		SubnetID:     subnetID,
-		IntentType:   *intentType,
-		ParamsHash:   paramsHash,
-		Deadline:     deadline,
-		PaymentToken: common.Address{}, // Zero address = native token
-		Amount:       amount,
-		Value:        amount, // For ETH payment
+
+	// Use batch submission API (SDK v0.0.0-20251031092220)
+	batchParams := sdk.SubmitIntentBatchParams{
+		Items: []sdk.SignedIntent{
+			{
+				Data:      input,
+				Signature: signature,
+			},
+		},
+		TotalEthValue: amount, // Total ETH value for this batch
 	}
 
-	tx, err := client.Intent.SubmitIntent(ctx, submitParams)
+	tx, err := client.Intent.SubmitIntentsBySignatures(ctx, batchParams)
 	if err != nil {
 		log.Fatalf("Failed to submit intent to blockchain: %v", err)
 	}

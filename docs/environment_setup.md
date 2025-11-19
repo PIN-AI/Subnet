@@ -1,5 +1,21 @@
 # Environment Setup Guide
 
+**📍 You are here:** First-Time Setup → Environment Setup
+
+**Prerequisites:** None (this is step 2 of first-time setup)
+
+**Time to complete:** ~10 minutes
+
+**What you'll learn:**
+- Install Go 1.24+
+- Install Docker & Docker Compose
+- Install required tools (openssl, protoc, make)
+
+**Next steps:**
+- ✅ After setup → Choose deployment: [Docker](../deployment/README.md) or [Manual](subnet_deployment_guide.md)
+
+---
+
 Complete guide for setting up your development environment for PinAI Subnet.
 
 ## Table of Contents
@@ -45,7 +61,7 @@ Complete guide for setting up your development environment for PinAI Subnet.
 
 **Version Required**: Go 1.24.0 or later
 
-Go is the primary language for Subnet components (Matcher, Validator, Registry).
+Go is the primary language for Subnet components (Matcher, Validator).
 
 **Why needed**:
 - Compile Subnet binaries
@@ -62,18 +78,7 @@ Used for generating gRPC service definitions.
 - Generate protocol buffer code
 - Compile `.proto` files to Go/Python
 
-### 3. NATS Message Broker
-
-**Version Required**: NATS 2.9.0 or later
-
-Distributed messaging system for validator consensus.
-
-**Why needed**:
-- Validator-to-validator communication
-- Consensus message broadcasting
-- Checkpoint coordination
-
-### 4. Git
+### 3. Git
 
 **Version Required**: Git 2.30.0 or later
 
@@ -91,7 +96,6 @@ Version control system.
 ### For Testing & Development
 
 1. **Docker & Docker Compose**
-   - Quick NATS deployment
    - Containerized testing
    - Version: Docker 20.10+ / Docker Compose 2.0+
 
@@ -102,7 +106,7 @@ Version control system.
 
 3. **jq**
    - JSON parsing in scripts
-   - Registry CLI formatting
+   - Script formatting and output
    - Not required but highly recommended
 
 ### For Blockchain Interaction
@@ -148,9 +152,6 @@ brew install protobuf
 # Verify protoc installation
 protoc --version  # Should show libprotoc 3.20.0 or later
 
-# Install NATS server
-brew install nats-server
-
 # Install optional tools
 brew install curl jq git
 
@@ -191,21 +192,6 @@ unzip protoc-24.4-osx-universal_binary.zip -d $HOME/protoc
 export PATH=$PATH:$HOME/protoc/bin
 ```
 
-**NATS**:
-```bash
-# Download from https://github.com/nats-io/nats-server/releases
-curl -OL https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-darwin-arm64.zip
-
-# Extract
-unzip nats-server-v2.10.7-darwin-arm64.zip
-
-# Move to /usr/local/bin
-sudo mv nats-server-v2.10.7-darwin-arm64/nats-server /usr/local/bin/
-
-# Verify
-nats-server --version
-```
-
 ---
 
 ### Linux (Ubuntu/Debian)
@@ -242,15 +228,6 @@ export PATH="$PATH:$HOME/.local/bin"
 # Verify protoc
 protoc --version
 
-# Install NATS server
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-linux-amd64.tar.gz -o nats-server.tar.gz
-tar -xzf nats-server.tar.gz
-sudo mv nats-server-v2.10.7-linux-amd64/nats-server /usr/local/bin/
-rm -rf nats-server*
-
-# Verify NATS
-nats-server --version
-
 # Install Docker (optional)
 sudo apt install -y docker.io docker-compose
 sudo systemctl start docker
@@ -281,11 +258,6 @@ source ~/.bashrc
 
 # Install Protocol Buffers
 sudo yum install -y protobuf-compiler
-
-# Install NATS
-curl -L https://github.com/nats-io/nats-server/releases/download/v2.10.7/nats-server-v2.10.7-linux-amd64.tar.gz -o nats-server.tar.gz
-tar -xzf nats-server.tar.gz
-sudo mv nats-server-v2.10.7-linux-amd64/nats-server /usr/local/bin/
 
 # Install Docker (Fedora/CentOS 8+)
 sudo dnf install -y docker docker-compose
@@ -359,7 +331,6 @@ make build
 # This creates binaries in ./bin/:
 # - matcher
 # - validator
-# - registry
 # - mock-rootlayer
 # - simple-agent
 ```
@@ -379,23 +350,7 @@ ls -lh bin/
 
 ## Configuration
 
-### 1. Start NATS Server
-
-```bash
-# Start NATS with default configuration
-nats-server
-
-# Or start in background
-nats-server -D
-
-# Or use Docker
-docker run -d --name nats -p 4222:4222 nats:latest
-
-# Verify NATS is running
-curl http://localhost:8222/varz  # NATS monitoring endpoint
-```
-
-### 2. Obtain Testnet ETH
+### 1. Obtain Testnet ETH
 
 For testing on Base Sepolia:
 
@@ -420,56 +375,67 @@ For testing on Base Sepolia:
    chmod 600 .env
    ```
 
-### 3. Configure RootLayer Connection
+### 2. Configure RootLayer Connection
 
 ```bash
 # Set RootLayer endpoints (example - adjust for your deployment)
 export ROOTLAYER_GRPC="3.17.208.238:9001"
-export ROOTLAYER_HTTP="http://3.17.208.238:8081"
+export ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1"
 
 # Or add to your .env file
 echo "ROOTLAYER_GRPC=3.17.208.238:9001" >> .env
-echo "ROOTLAYER_HTTP=http://3.17.208.238:8081" >> .env
+echo "ROOTLAYER_HTTP=http://3.17.208.238:8081/api/v1" >> .env
 ```
 
-### 4. Create Configuration File
+### 3. Create Configuration Files
+
+The subnet uses a hierarchical configuration system:
 
 ```bash
-# Copy example configuration
-cp config/config.example.yaml config/config.yaml
+# Copy configuration templates
+cp config/subnet.yaml.template config/subnet.yaml
+cp config/validator.yaml.template config/validator-1.yaml
+cp config/blockchain.yaml.template config/blockchain.yaml
 
-# Edit with your values
-nano config/config.yaml
-# or
-vim config/config.yaml
+# Edit subnet-wide configuration
+nano config/subnet.yaml
+
+# Edit validator-specific configuration
+nano config/validator-1.yaml
+
+# Edit blockchain configuration (for create-subnet.sh and register.sh)
+nano config/blockchain.yaml
 ```
 
-**Minimal config/config.yaml**:
+**Minimal config/subnet.yaml** (shared across all validators):
 ```yaml
-subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
-
-identity:
-  matcher_id: "matcher-001"
-  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
-
-network:
-  nats_url: "nats://127.0.0.1:4222"
-  matcher_grpc_port: ":8090"
+subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
 
 rootlayer:
-  http_url: "http://3.17.208.238:8081"
+  http_url: "http://3.17.208.238:8081/api/v1"
   grpc_endpoint: "3.17.208.238:9001"
 
 blockchain:
   rpc_url: "https://sepolia.base.org"
   subnet_contract: "0xYOUR_SUBNET_CONTRACT"
 
-agent:
-  matcher:
-    signer:
-      type: "ecdsa"
-      private_key: "YOUR_PRIVATE_KEY"
+consensus:
+  checkpoint_interval: 10
+  signature_threshold_numerator: 2
+  signature_threshold_denominator: 3
 ```
+
+**Minimal config/validator-1.yaml** (validator-specific):
+```yaml
+identity:
+  validator_id: "validator-1"
+
+network:
+  grpc_port: ":9090"
+  http_port: ":9091"
+```
+
+**Note**: Raft peers and Gossip seeds are auto-populated from the `--validator-pubkeys` flag at startup. See `docs/subnet_deployment_guide.md` for complete configuration guide.
 
 ---
 
@@ -485,24 +451,19 @@ go env GOPATH
 # 2. Verify protoc works
 protoc --version
 
-# 3. Verify NATS is accessible
-nc -zv localhost 4222
-# or
-telnet localhost 4222
-
-# 4. Verify binaries run
+# 3. Verify binaries run
 ./bin/matcher --help
 ./bin/validator --help
 
-# 5. Run unit tests
+# 4. Run unit tests
 make test
 # or
 go test ./...
 
-# 6. Build protocol buffers
+# 5. Build protocol buffers
 make proto
 
-# 7. Check Go module status
+# 6. Check Go module status
 go mod verify
 go mod tidy
 ```
@@ -511,12 +472,12 @@ go mod tidy
 
 ```bash
 # Set required environment variables
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000002"
+export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
 export ROOTLAYER_GRPC="3.17.208.238:9001"
-export ROOTLAYER_HTTP="http://3.17.208.238:8081"
+export ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1"
 
 # Run E2E test (non-interactive mode)
-./scripts/e2e-test.sh --no-interactive
+./scripts/start-subnet.sh --no-interactive
 
 # Check for success
 echo $?  # Should be 0
@@ -563,52 +524,6 @@ go mod verify
 
 # Update dependencies
 go mod tidy
-```
-
----
-
-### NATS Issues
-
-**Problem**: `connection refused` to NATS
-
-**Solution**:
-```bash
-# Check if NATS is running
-ps aux | grep nats-server
-
-# Check port 4222
-lsof -i :4222
-# or
-netstat -an | grep 4222
-
-# Start NATS if not running
-nats-server -D
-
-# Or use Docker
-docker run -d --name nats -p 4222:4222 nats:latest
-
-# Check NATS logs
-docker logs nats
-```
-
----
-
-**Problem**: NATS connection timeout
-
-**Solution**:
-```bash
-# Test connection
-nc -zv localhost 4222
-
-# Check firewall
-sudo ufw status  # Ubuntu/Debian
-sudo firewall-cmd --list-all  # CentOS/RHEL
-
-# Allow NATS port
-sudo ufw allow 4222
-# or
-sudo firewall-cmd --add-port=4222/tcp --permanent
-sudo firewall-cmd --reload
 ```
 
 ---
@@ -734,9 +649,10 @@ docker ps
 **Solution**:
 ```bash
 # Find what's using the port
-lsof -i :4222  # NATS
 lsof -i :8090  # Matcher
 lsof -i :9200  # Validator
+lsof -i :7400  # Validator Raft
+lsof -i :7950  # Validator Gossip
 
 # Kill the process
 kill -9 <PID>
@@ -785,9 +701,6 @@ export PIN_BASE_SEPOLIA_SUBNET_FACTORY="0x..."
 ### Optional
 
 ```bash
-# Registry
-export REGISTRY_URL="http://localhost:8092"
-
 # Testing
 export ENABLE_CHAIN_SUBMIT="true"
 export CHAIN_RPC_URL="https://sepolia.base.org"
@@ -811,7 +724,7 @@ After completing environment setup:
 
 3. **Run E2E Test**:
    ```bash
-   ./scripts/e2e-test.sh --help
+   ./scripts/start-subnet.sh --help
    ```
 
 4. **Read Documentation**:
@@ -841,7 +754,7 @@ make build
 go test ./internal/matcher/...
 
 # 4. Test locally
-./scripts/e2e-test.sh
+./scripts/start-subnet.sh
 
 # 5. Check for issues
 go vet ./...
@@ -870,15 +783,7 @@ git commit -m "feat: improve matcher bidding logic"
    export GOGC=50  # More aggressive GC
    ```
 
-3. **NATS tuning**:
-   ```bash
-   # Create nats-server.conf
-   max_connections: 10000
-   max_payload: 10MB
-   write_deadline: "10s"
-   ```
-
-4. **Monitor resources**:
+3. **Monitor resources**:
    ```bash
    # Install monitoring tools
    sudo apt install htop iotop nethogs
@@ -893,7 +798,7 @@ git commit -m "feat: improve matcher bidding logic"
 
 1. **Never commit private keys** to version control
 2. **Use environment variables** for sensitive data
-3. **Set restrictive file permissions**: `chmod 600 config/config.yaml`
+3. **Set restrictive file permissions**: `chmod 600 config/*.yaml`
 4. **Use separate wallets** for testing and production
 5. **Keep dependencies updated**: `go get -u ./...`
 6. **Use firewall rules** to restrict access

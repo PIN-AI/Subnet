@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+
+	pb "subnet/proto/subnet"
 )
 
 // Basic identifiers use strings for MVP; replace with fixed-size types as needed.
@@ -281,6 +283,29 @@ func (vs *ValidatorSet) TotalWeight() uint64 {
 		total += v.Weight
 	}
 	return total
+}
+
+// RequiredWeight calculates the minimum weight needed to meet threshold
+func (vs *ValidatorSet) RequiredWeight() uint64 {
+	totalWeight := vs.TotalWeight()
+	required := (totalWeight * uint64(vs.ThresholdNum)) / uint64(vs.ThresholdDenom)
+	// Round up if there's a remainder
+	if (totalWeight*uint64(vs.ThresholdNum))%uint64(vs.ThresholdDenom) > 0 {
+		required++
+	}
+	return required
+}
+
+// CheckWeightedThreshold checks if the given signatures meet weight-based threshold
+// signatures is a map of validator ID to signature
+func (vs *ValidatorSet) CheckWeightedThreshold(signatures map[string]*pb.Signature) bool {
+	var totalWeight uint64
+	for validatorID := range signatures {
+		if validator := vs.GetValidator(validatorID); validator != nil {
+			totalWeight += validator.Weight
+		}
+	}
+	return totalWeight >= vs.RequiredWeight()
 }
 
 // GetValidator returns a validator by ID or nil if not found

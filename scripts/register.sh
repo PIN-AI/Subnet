@@ -8,6 +8,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# Load .env file if it exists
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    echo "Loading environment from .env file..."
+    set -a
+    source "$PROJECT_ROOT/.env"
+    set +a
+    echo "✓ .env file loaded"
+fi
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -15,12 +24,19 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Default values
-CONFIG_FILE="${PROJECT_ROOT}/config/config.yaml"
+CONFIG_FILE="${PROJECT_ROOT}/config/blockchain.yaml"
 NETWORK="${NETWORK:-base_sepolia}"
 RPC_URL="${RPC_URL:-https://sepolia.base.org}"
 SUBNET_CONTRACT="${SUBNET_CONTRACT}"
 PRIVATE_KEY="${PRIVATE_KEY}"
 DOMAIN="${DOMAIN:-validator.example.com}"
+
+# Fixed smart contract addresses for Base Sepolia (updated 2025-11-03)
+# These are protocol-wide addresses, same for all users
+export PIN_BASE_SEPOLIA_INTENT_MANAGER="${PIN_BASE_SEPOLIA_INTENT_MANAGER:-0xB2f092E696B33b7a95e1f961369Bb59611CAd093}"
+export PIN_BASE_SEPOLIA_SUBNET_FACTORY="${PIN_BASE_SEPOLIA_SUBNET_FACTORY:-0x2b5D7032297Df52ADEd7020c3B825f048Cd2df3E}"
+export PIN_BASE_SEPOLIA_STAKING_MANAGER="${PIN_BASE_SEPOLIA_STAKING_MANAGER:-0x7f887e88014e3AF57526B68b431bA16e6968C015}"
+export PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER="${PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER:-0x6A61BA20D910576A6c0B39175A6CF98358bB4008}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -76,7 +92,7 @@ Usage: $0 [OPTIONS]
 Register Validator, Matcher, and Agent on the subnet.
 
 Options:
-  --config FILE         Path to config file (default: config/config.yaml)
+  --config FILE         Path to config file (default: config/blockchain.yaml)
   --network NAME        Network name (default: base_sepolia)
   --rpc URL             RPC URL (overrides config)
   --subnet ADDRESS      Subnet contract address (overrides config)

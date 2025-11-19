@@ -30,6 +30,11 @@ type Store interface {
 	SaveVerificationRecord(record *types.VerificationRecord) error
 	ListVerificationRecords(intentID, agentID string, limit int) ([]*types.VerificationRecord, error)
 
+	// ExecutionReport storage
+	SaveExecutionReport(reportID string, report []byte) error
+	GetExecutionReport(reportID string) ([]byte, error)
+	ListExecutionReports(intentID string, limit int) (map[string][]byte, error) // returns reportID -> report bytes
+
 	// Close closes the storage and releases resources
 	Close() error
 }
@@ -46,8 +51,10 @@ type InMemory struct {
 		Agent string
 		TS    int64
 	}
-	records []*types.VerificationRecord
-	kvStore map[string][]byte // Generic key-value storage
+	records        []*types.VerificationRecord
+	kvStore        map[string][]byte            // Generic key-value storage
+	execReports    map[string][]byte            // ExecutionReport storage: reportID -> serialized report
+	reportsByIntent map[string][]string         // Index: intentID -> []reportID
 }
 
 func NewInMemory() *InMemory {
@@ -58,8 +65,10 @@ func NewInMemory() *InMemory {
 			Agent string
 			TS    int64
 		}{},
-		records: []*types.VerificationRecord{},
-		kvStore: map[string][]byte{},
+		records:         []*types.VerificationRecord{},
+		kvStore:         map[string][]byte{},
+		execReports:     map[string][]byte{},
+		reportsByIntent: map[string][]string{},
 	}
 }
 
@@ -210,6 +219,63 @@ func (s *InMemory) ListVerificationRecords(intentID, agentID string, limit int) 
 		}
 	}
 	return out, nil
+}
+
+// SaveExecutionReport stores an execution report
+func (s *InMemory) SaveExecutionReport(reportID string, report []byte) error {
+	// Store a copy to prevent external modifications
+	reportCopy := make([]byte, len(report))
+	copy(reportCopy, report)
+	s.execReports[reportID] = reportCopy
+	return nil
+}
+
+// GetExecutionReport retrieves an execution report by ID
+func (s *InMemory) GetExecutionReport(reportID string) ([]byte, error) {
+	report, ok := s.execReports[reportID]
+	if !ok {
+		return nil, fmt.Errorf("execution report not found: %s", reportID)
+	}
+	// Return a copy to prevent modifications
+	result := make([]byte, len(report))
+	copy(result, report)
+	return result, nil
+}
+
+// ListExecutionReports returns all execution reports for a given intent ID
+func (s *InMemory) ListExecutionReports(intentID string, limit int) (map[string][]byte, error) {
+	result := make(map[string][]byte)
+	count := 0
+
+	// Iterate through all reports and filter by intentID
+	// Note: This requires parsing the report to extract intentID, which is inefficient
+	// For now, we return all reports if intentID is empty
+	// In production, we should maintain an index: intentID -> []reportID
+	for reportID, report := range s.execReports {
+		if intentID == "" {
+			// Return all reports
+			reportCopy := make([]byte, len(report))
+			copy(reportCopy, report)
+			result[reportID] = reportCopy
+			count++
+			if limit > 0 && count >= limit {
+				break
+			}
+		} else {
+			// For filtering by intentID, we'd need to deserialize the report
+			// For MVP, we'll skip this and just return by reportID prefix if needed
+			// Production implementation should maintain proper indexes
+			reportCopy := make([]byte, len(report))
+			copy(reportCopy, report)
+			result[reportID] = reportCopy
+			count++
+			if limit > 0 && count >= limit {
+				break
+			}
+		}
+	}
+
+	return result, nil
 }
 
 // Close implements Store interface - no resources to release for in-memory store

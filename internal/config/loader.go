@@ -9,8 +9,12 @@ import (
 )
 
 type ValidatorConfig struct {
-	ID       string `mapstructure:"id"`
-	Endpoint string `mapstructure:"endpoint"`
+	ID            string `mapstructure:"id"`
+	Endpoint      string `mapstructure:"endpoint"`
+	Pubkey        string `mapstructure:"pubkey"`
+	GRPCEndpoint  string `mapstructure:"grpc_endpoint"`
+	RaftAddress   string `mapstructure:"raft_address"`
+	GossipAddress string `mapstructure:"gossip_address"`
 }
 
 type ValidatorSetConfig struct {
@@ -77,6 +81,32 @@ type RecoveryConfig struct {
 	Mode string `mapstructure:"mode"`
 }
 
+// RaftPeerConfig represents a single Raft peer
+type RaftPeerConfig struct {
+	ID      string `mapstructure:"id"`
+	Address string `mapstructure:"address"`
+}
+
+// RaftConfig represents Raft consensus configuration
+type RaftConfig struct {
+	Enable    bool             `mapstructure:"enable"`
+	Bootstrap bool             `mapstructure:"bootstrap"`
+	Bind      string           `mapstructure:"bind"`
+	Advertise string           `mapstructure:"advertise"`
+	DataDir   string           `mapstructure:"data_dir"`
+	Peers     []RaftPeerConfig `mapstructure:"peers"`
+}
+
+// GossipConfig represents Gossip protocol configuration
+type GossipConfig struct {
+	Enable         bool     `mapstructure:"enable"`
+	BindAddress    string   `mapstructure:"bind_address"`
+	BindPort       int      `mapstructure:"bind_port"`
+	Seeds          []string `mapstructure:"seeds"`
+	GossipInterval string   `mapstructure:"gossip_interval"`
+	ProbeInterval  string   `mapstructure:"probe_interval"`
+}
+
 type DemoSigner struct {
 	ID         string `mapstructure:"id"`
 	PrivKeyHex string `mapstructure:"privkey_hex"`
@@ -123,6 +153,8 @@ type AppConfig struct {
 	Validator    map[string]interface{} `mapstructure:"validator"`
 	RootLayer    RootLayerConfig        `mapstructure:"rootlayer"`
 	Blockchain   *BlockchainConfig      `mapstructure:"blockchain"`
+	Raft         RaftConfig             `mapstructure:"raft"`
+	Gossip       GossipConfig           `mapstructure:"gossip"`
 }
 
 type RootLayerConfig struct {
@@ -130,6 +162,7 @@ type RootLayerConfig struct {
 	WSURL              string `mapstructure:"ws_url"`
 	AuthToken          string `mapstructure:"auth_token"`
 	GRPCAddr           string `mapstructure:"grpc_addr"`
+	GRPCEndpoint       string `mapstructure:"grpc_endpoint"` // Alternative field name
 	GRPCTLS            bool   `mapstructure:"grpc_tls"`
 	GRPCDialTimeoutRaw string `mapstructure:"grpc_dial_timeout"`
 	ConnectTimeoutRaw  string `mapstructure:"connect_timeout"`
@@ -239,4 +272,180 @@ func (c ConsensusConfig) CollectTimeout() time.Duration {
 }
 func (c ConsensusConfig) ChallengeWindow() time.Duration {
 	return time.Duration(c.ChallengeWindowMs) * time.Millisecond
+}
+
+// LoadSplit loads configuration from separate subnet.yaml and validator-specific.yaml files.
+// It merges the two configurations with validator-specific settings taking precedence.
+// It also auto-populates Raft peers and Gossip seeds from the validator_set.
+func LoadSplit(subnetConfigPath, validatorConfigPath string) (*AppConfig, error) {
+	// Load subnet configuration (shared)
+	subnetViper := viper.New()
+	subnetViper.SetConfigFile(subnetConfigPath)
+	subnetViper.SetConfigType("yaml")
+	if err := subnetViper.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read subnet config: %w", err)
+	}
+
+	var subnetCfg AppConfig
+	if err := subnetViper.Unmarshal(&subnetCfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal subnet config: %w", err)
+	}
+
+	// Load validator-specific configuration
+	validatorViper := viper.New()
+	validatorViper.SetConfigFile(validatorConfigPath)
+	validatorViper.SetConfigType("yaml")
+	if err := validatorViper.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read validator config: %w", err)
+	}
+
+	var validatorCfg AppConfig
+	if err := validatorViper.Unmarshal(&validatorCfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal validator config: %w", err)
+	}
+
+	// Merge configurations (validator-specific overrides subnet)
+	cfg := mergeConfigs(&subnetCfg, &validatorCfg)
+
+	// Auto-populate Raft peers from validator_set
+	if cfg.Raft.Enable && len(cfg.Raft.Peers) == 0 {
+		cfg.Raft.Peers = make([]RaftPeerConfig, 0, len(cfg.ValidatorSet.Validators))
+		for _, v := range cfg.ValidatorSet.Validators {
+			// Extract raft_address from validator
+			// In subnet.yaml, validators have raft_address field
+			raftAddr := extractValidatorRaftAddress(v.ID, &subnetCfg)
+			if raftAddr != "" {
+				cfg.Raft.Peers = append(cfg.Raft.Peers, RaftPeerConfig{
+					ID:      v.ID,
+					Address: raftAddr,
+				})
+			}
+		}
+	}
+
+	// Auto-populate Gossip seeds from validator_set
+	if cfg.Gossip.Enable && len(cfg.Gossip.Seeds) == 0 {
+		cfg.Gossip.Seeds = make([]string, 0, len(cfg.ValidatorSet.Validators))
+		for _, v := range cfg.ValidatorSet.Validators {
+			// Extract gossip_address from validator
+			gossipAddr := extractValidatorGossipAddress(v.ID, &subnetCfg)
+			if gossipAddr != "" {
+				cfg.Gossip.Seeds = append(cfg.Gossip.Seeds, gossipAddr)
+			}
+		}
+	}
+
+	// Normalize and validate
+	cfg.Agent.normalize()
+	if err := cfg.RootLayer.normalize(); err != nil {
+		return nil, err
+	}
+	if cfg.Blockchain == nil {
+		cfg.Blockchain = DefaultBlockchainConfig()
+	}
+	if err := cfg.Blockchain.Normalize(); err != nil {
+		return nil, err
+	}
+
+	// Validate configuration
+	validator := NewConfigValidator()
+	if err := validator.Validate(cfg); err != nil {
+		return nil, err
+	}
+
+	// Print configuration summary
+	PrintConfigurationSummary(cfg)
+
+	return cfg, nil
+}
+
+// mergeConfigs merges subnet config with validator-specific config.
+// Validator-specific settings take precedence over subnet settings.
+func mergeConfigs(subnet, validator *AppConfig) *AppConfig {
+	merged := *subnet // Start with subnet config
+
+	// Override with validator-specific settings
+	if validator.Identity.ValidatorID != "" {
+		merged.Identity.ValidatorID = validator.Identity.ValidatorID
+	}
+	if validator.Network.ValidatorGRPCPort != "" {
+		merged.Network.ValidatorGRPCPort = validator.Network.ValidatorGRPCPort
+	}
+	if validator.Network.MetricsPort != "" {
+		merged.Network.MetricsPort = validator.Network.MetricsPort
+	}
+	if validator.Storage.LevelDBPath != "" {
+		merged.Storage.LevelDBPath = validator.Storage.LevelDBPath
+	}
+
+	// Merge Raft config
+	if validator.Raft.Enable {
+		merged.Raft.Enable = validator.Raft.Enable
+	}
+	if validator.Raft.Bootstrap {
+		merged.Raft.Bootstrap = validator.Raft.Bootstrap
+	}
+	if validator.Raft.Bind != "" {
+		merged.Raft.Bind = validator.Raft.Bind
+	}
+	if validator.Raft.Advertise != "" {
+		merged.Raft.Advertise = validator.Raft.Advertise
+	}
+	if validator.Raft.DataDir != "" {
+		merged.Raft.DataDir = validator.Raft.DataDir
+	}
+	if len(validator.Raft.Peers) > 0 {
+		merged.Raft.Peers = validator.Raft.Peers
+	}
+
+	// Merge Gossip config
+	if validator.Gossip.Enable {
+		merged.Gossip.Enable = validator.Gossip.Enable
+	}
+	if validator.Gossip.BindAddress != "" {
+		merged.Gossip.BindAddress = validator.Gossip.BindAddress
+	}
+	if validator.Gossip.BindPort != 0 {
+		merged.Gossip.BindPort = validator.Gossip.BindPort
+	}
+	if len(validator.Gossip.Seeds) > 0 {
+		merged.Gossip.Seeds = validator.Gossip.Seeds
+	}
+	if validator.Gossip.GossipInterval != "" {
+		merged.Gossip.GossipInterval = validator.Gossip.GossipInterval
+	}
+	if validator.Gossip.ProbeInterval != "" {
+		merged.Gossip.ProbeInterval = validator.Gossip.ProbeInterval
+	}
+
+	// Merge Metrics config
+	if validator.Metrics.Enabled {
+		merged.Metrics.Enabled = validator.Metrics.Enabled
+	}
+	if validator.Metrics.ListenAddr != "" {
+		merged.Metrics.ListenAddr = validator.Metrics.ListenAddr
+	}
+
+	return &merged
+}
+
+// extractValidatorRaftAddress extracts the raft_address from validator_set in subnet config.
+// The subnet.yaml file should have validators with raft_address field.
+func extractValidatorRaftAddress(validatorID string, cfg *AppConfig) string {
+	for _, v := range cfg.ValidatorSet.Validators {
+		if v.ID == validatorID {
+			return v.RaftAddress
+		}
+	}
+	return ""
+}
+
+// extractValidatorGossipAddress extracts the gossip_address from validator_set in subnet config.
+func extractValidatorGossipAddress(validatorID string, cfg *AppConfig) string {
+	for _, v := range cfg.ValidatorSet.Validators {
+		if v.ID == validatorID {
+			return v.GossipAddress
+		}
+	}
+	return ""
 }

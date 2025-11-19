@@ -1,0 +1,152 @@
+# Authentication Configuration Example
+# This shows how to configure gRPC with signature authentication
+
+# Validator Configuration
+validator:
+  # Server settings
+  server:
+    port: 9090
+    # TLS is disabled for MVP, using signature auth instead
+    use_tls: false
+
+    # Authentication settings
+    authentication:
+      enabled: true
+      # Methods that don't require authentication
+      skip_auth_methods:
+        - "/grpc.health.v1.Health/Check"
+        - "/subnet.ValidatorService/GetStatus"
+
+      # Nonce expiry (prevent replay attacks)
+      nonce_expiry_seconds: 600  # 10 minutes
+
+      # Timestamp tolerance (clock skew)
+      timestamp_tolerance_seconds: 300  # 5 minutes
+
+      # Agent cache settings
+      cache:
+        enabled: true
+        ttl_seconds: 300  # 5 minutes
+        max_entries: 1000
+
+  # RootLayer integration for agent verification
+  rootlayer:
+    endpoint: "https://rootlayer.example.com/api"
+    # Use mock client for testing
+    use_mock: true
+
+    # Minimum stake required for agents
+    min_agent_stake: 100
+
+# Agent Configuration
+agent:
+  # Authentication credentials
+  auth:
+    # Private key in hex format (from RootLayer registration)
+    # In production, use environment variable or secure key management
+    private_key_hex: "${AGENT_PRIVATE_KEY}"
+
+    # Or use key file
+    # private_key_file: "/path/to/private.key"
+
+  # Connection settings
+  connections:
+    # Validator endpoint
+    validator_endpoint: "localhost:9090"
+
+    # Matcher endpoint
+    matcher_endpoint: "localhost:9091"
+
+    # Use TLS (disabled for MVP)
+    use_tls: false
+
+    # Connection timeouts
+    dial_timeout_seconds: 5
+    request_timeout_seconds: 10
+
+    # Retry settings
+    retry:
+      max_attempts: 3
+      backoff_seconds: 2
+
+# Matcher Configuration (similar to validator)
+matcher:
+  server:
+    port: 9091
+    use_tls: false
+
+    authentication:
+      enabled: true
+      # Matcher may have different auth requirements
+      require_minimum_stake: 100
+
+      # Allow specific capabilities
+      allowed_capabilities:
+        - "compute"
+        - "storage"
+        - "inference"
+
+# Development/Testing Settings
+development:
+  # Auto-generate keys for testing
+  auto_generate_keys: true
+
+  # Use mock RootLayer
+  use_mock_rootlayer: true
+
+  # Pre-registered test agents
+  test_agents:
+    - id: "test-agent-1"
+      private_key: "a3f2b1c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2"
+      stake: 1000
+    - id: "test-agent-2"
+      private_key: "b4f3c2d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a3"
+      stake: 500
+
+# Production Settings
+production:
+  # Enforce authentication
+  authentication:
+    required: true
+    strict_mode: true
+
+  # Future: Enable TLS
+  tls:
+    enabled: false  # Will be true in future
+    cert_file: "/path/to/cert.pem"
+    key_file: "/path/to/key.pem"
+    ca_file: "/path/to/ca.pem"
+
+  # Security settings
+  security:
+    # Rate limiting per agent
+    rate_limit:
+      requests_per_second: 10
+      burst: 20
+
+    # IP allowlist (optional)
+    ip_allowlist: []
+    # - "10.0.0.0/8"
+    # - "192.168.0.0/16"
+
+# Monitoring and Logging
+monitoring:
+  # Metrics endpoint
+  metrics:
+    enabled: true
+    port: 9095
+    path: "/metrics"
+
+  # Authentication logging
+  auth_logging:
+    # Log all authentication attempts
+    log_attempts: true
+    # Log successful authentications
+    log_success: true
+    # Log failed authentications (always logged as warnings)
+    log_failures: true
+
+    # Include details in logs (be careful with sensitive data)
+    include_agent_id: true
+    include_method: true
+    include_timestamp: true

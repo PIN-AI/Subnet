@@ -1,0 +1,16 @@
+# Environment files (contains private keys)
+.env
+.env.*
+
+# Runtime data
+data/
+*.log
+
+# Distribution packages
+*.tar.gz
+*-dist-*/
+
+# Temporary files
+tmp/
+temp/
+*.tmp

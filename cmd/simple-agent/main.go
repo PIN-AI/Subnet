@@ -88,16 +88,29 @@ func (a *SimpleAgent) CalculateBid(intent *agentsdk.Intent) *agentsdk.Bid {
 func main() {
 	// Parse flags
 	var (
-		agentID     = flag.String("id", "", "Agent ID (auto-generated if empty)")
-		matcherAddr = flag.String("matcher", "localhost:8090", "Matcher address")
-		agentName   = flag.String("name", "SimpleAgent", "Agent name")
+		agentID       = flag.String("id", "", "Agent ID (auto-generated if empty)")
+		matcherAddr   = flag.String("matcher", "localhost:8090", "Matcher address")
+		validatorAddr = flag.String("validator", "localhost:9090", "Validator gRPC address for execution report submission")
+		agentName     = flag.String("name", "SimpleAgent", "Agent name")
+		subnetID      = flag.String("subnet-id", "0x0000000000000000000000000000000000000000000000000000000000000003", "Subnet ID to subscribe to")
 	)
 	flag.Parse()
 
-	// Create SDK configuration
+	log.Printf("[DEBUG] Starting Simple Agent...")
+	log.Printf("[DEBUG] Flags: id=%s, matcher=%s, validator=%s, name=%s, subnet-id=%s", *agentID, *matcherAddr, *validatorAddr, *agentName, *subnetID)
+
+	// Create SDK configuration with Identity
+	// Use a test Ethereum address for the agent's chain identity
+	testChainAddress := "0xfc5A111b714547fc2D1D796EAAbb68264ed4A132"
+
 	config := &agentsdk.Config{
-		AgentID:     *agentID,
-		MatcherAddr: *matcherAddr,
+		Identity: &agentsdk.IdentityConfig{
+			SubnetID: *subnetID,
+			AgentID:  *agentID,
+		},
+		ChainAddress:  testChainAddress,
+		MatcherAddr:   *matcherAddr,
+		ValidatorAddr: *validatorAddr,
 		Capabilities: []string{
 			"general.processing",
 			"data.transform",
@@ -107,27 +120,41 @@ func main() {
 		LogLevel:           "info",
 	}
 
+	log.Printf("[DEBUG] SDK Config created: SubnetID=%s, AgentID=%s, MatcherAddr=%s, ValidatorAddr=%s", *subnetID, *agentID, *matcherAddr, *validatorAddr)
+
 	// Create SDK instance
+	log.Printf("[DEBUG] Creating SDK instance...")
 	sdk, err := agentsdk.New(config)
 	if err != nil {
 		log.Fatalf("Failed to create SDK: %v", err)
 	}
+	log.Printf("[DEBUG] SDK instance created successfully")
 
 	// Create and register handler
+	log.Printf("[DEBUG] Creating handler...")
 	handler := &SimpleAgent{
 		name: *agentName,
 	}
 	sdk.RegisterHandler(handler)
+	log.Printf("[DEBUG] Handler registered")
+
+	// Register bidding strategy (handler implements BiddingStrategy interface)
+	log.Printf("[DEBUG] Registering bidding strategy...")
+	sdk.RegisterBiddingStrategy(handler)
+	log.Printf("[DEBUG] Bidding strategy registered")
 
 	// Start the agent
+	log.Printf("[DEBUG] Starting SDK...")
 	if err := sdk.Start(); err != nil {
 		log.Fatalf("Failed to start SDK: %v", err)
 	}
+	log.Printf("[DEBUG] SDK started successfully")
 
-	log.Printf("Simple Agent '%s' started successfully", *agentName)
+	log.Printf("✅ Simple Agent '%s' started successfully", *agentName)
 	log.Printf("Agent ID: %s", config.AgentID)
 	log.Printf("Capabilities: %v", config.Capabilities)
 	log.Printf("Connected to matcher at: %s", *matcherAddr)
+	log.Printf("Subnet ID: %s", *subnetID)
 
 	// Set up signal handling
 	sigCh := make(chan os.Signal, 1)

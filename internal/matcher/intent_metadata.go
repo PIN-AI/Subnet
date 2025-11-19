@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 )
 
 // IntentMetadata contains parsed metadata from an intent
