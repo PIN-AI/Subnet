@@ -6,13 +6,161 @@
 
 | I want to... | Use this guide | Time |
 |-------------|----------------|------|
-| 🎯 Quick test/demo (first time) | [Docker Deployment](../deployment/README.md) ⭐ Recommended | 5 min |
-| 🔧 Full control over setup | [Manual Deployment](#option-2-traditional-deployment) | 15 min |
+| 🚀 **Test quickly (1 node)** | [Single Node Quick Start](#single-node-quick-start-5-minutes) ⭐ **Recommended for first-time users** | 5 min |
+| 🐳 Docker deployment (3 nodes) | [Docker Deployment](../deployment/README.md) | 5 min |
+| 🔧 Multi-node setup (3+ nodes) | [Manual Deployment](#option-2-traditional-deployment) | 15 min |
 | 📦 Build custom agent | [Agent SDK Docs](https://github.com/PIN-AI/subnet-sdk) | - |
 | 🏭 Deploy to production | [Production Guide](subnet_deployment_guide.md#production-deployment) | - |
 | 🔍 Fix issues | [Troubleshooting](subnet_deployment_guide.md#troubleshooting) | - |
 
-> 💡 **New users**: Start with Docker deployment (Option 1 below), then explore customization after you understand the flow.
+> 💡 **New users**: Start with the [Single Node Quick Start](#single-node-quick-start-5-minutes) below for fastest testing!
+
+---
+
+## 🚀 Single Node Quick Start (5 minutes)
+
+**Want to test quickly? Copy-paste this complete workflow:**
+
+This creates a single-node subnet with threshold 1/1 - perfect for testing and development.
+
+### ⚠️ **Prerequisites: Get Testnet ETH First!**
+
+**You need Base Sepolia testnet ETH before proceeding:**
+
+- **Required**: At least **0.05 ETH** on Base Sepolia testnet
+- **Why**:
+  - Create subnet: ~0.005 ETH (gas)
+  - Register components: 3 × 0.01 ETH stake + gas = ~0.033 ETH
+
+**Get testnet ETH:**
+
+1. **Option 1: Coinbase Faucet** (Recommended)
+   - Visit: https://www.coinbase.com/faucets/base-ethereum-goerli-faucet
+   - Connect wallet and request testnet ETH
+
+2. **Option 2: Bridge from Sepolia**
+   - Get Sepolia ETH from https://sepoliafaucet.com
+   - Bridge to Base Sepolia: https://bridge.base.org
+
+3. **Verify your balance:**
+   ```bash
+   # Check on block explorer (replace with your address)
+   open https://sepolia.basescan.org/address/0xYourAddress
+   ```
+
+> 💡 **Tip**: Generate your private key first, derive the address, then fund it before proceeding.
+
+---
+
+```bash
+# Navigate to project directory
+cd /path/to/Subnet
+
+# 1. Build tools
+make build
+
+# 2. Generate validator key
+PRIVKEY=$(openssl rand -hex 32)
+PUBKEY=$(./bin/derive-pubkey "$PRIVKEY")
+
+# Get your wallet address
+ADDRESS=$(cast wallet address $PRIVKEY 2>/dev/null || echo "Install foundry to see address")
+echo "Your Address: $ADDRESS"
+echo "⚠️  FUND THIS ADDRESS WITH 0.05+ ETH ON BASE SEPOLIA BEFORE CONTINUING!"
+echo "   Check balance: https://sepolia.basescan.org/address/$ADDRESS"
+read -p "Press Enter after funding..."
+
+echo "Generated validator key:"
+echo "  Private: $PRIVKEY"
+echo "  Public:  $PUBKEY"
+echo ""
+
+# 3. Create subnet with threshold 1/1 (for single node)
+./scripts/create-subnet.sh \
+  --name "Test Subnet Single Node" \
+  --threshold-num 1 \
+  --threshold-denom 1
+
+# 📝 SAVE the output: Subnet ID and Contract Address
+# Example output:
+#   Subnet ID: 0x0000000000000000000000000000000000000000000000000000000000000008
+#   Contract Address: 0x340B34AeE852A64360596eBf14039f76419e0bA7
+
+# 4. Register components (replace with your values from step 3)
+SUBNET_CONTRACT="<paste_contract_address_here>"
+PRIVATE_KEY="$PRIVKEY" ./scripts/register.sh --subnet "$SUBNET_CONTRACT"
+
+# 5. Configure .env
+cat >> .env <<EOF
+
+# Single Node Configuration - $(date)
+NUM_VALIDATORS=1
+VALIDATOR_KEYS=$PRIVKEY
+VALIDATOR_PUBKEYS=$PUBKEY
+TEST_PRIVATE_KEY=$PRIVKEY
+SUBNET_ID=<paste_subnet_id_here>
+SUBNET_CONTRACT=$SUBNET_CONTRACT
+EOF
+
+# 6. Start subnet
+./scripts/start-subnet.sh
+```
+
+**What happens:**
+- ✅ Creates subnet with 1/1 threshold (1 signature needed from 1 validator)
+- ✅ Registers Validator, Matcher, and Agent
+- ✅ Configures single-node environment
+- ✅ Starts all services
+
+**Verify it's running:**
+```bash
+# Check processes
+ps aux | grep -E "bin/(matcher|validator|simple-agent)" | grep -v grep
+
+# View logs
+tail -f subnet-logs/*.log
+```
+
+**Stop services:**
+```bash
+pkill -f 'bin/matcher|bin/validator|bin/simple-agent'
+```
+
+> 💡 **Next steps:** Once you verify single-node works, see [Multi-Node Setup](#option-2-traditional-deployment) for production deployment.
+
+---
+
+## 🎯 Understanding Signature Threshold
+
+**What is signature threshold?**
+The minimum number of validator signatures required to finalize a checkpoint.
+
+**Format:** `numerator/denominator`
+Example: `2/3` means at least `ceil(2/3 * total_validators)` signatures are needed.
+
+| Scenario | Validators | Threshold | Signatures Needed | Use Case |
+|----------|-----------|-----------|-------------------|----------|
+| **Testing** | 1 | **1/1** | 1 (100%) | Development, debugging |
+| **Small Team** | 3 | **2/3** | 2 (67%) | Small production, tolerates 1 failure |
+| **Production** | 3-5 | **3/4** | 3 (75%) | Higher security, Byzantine fault tolerance |
+| **Enterprise** | 7+ | **5/7** | 5 (71%) | Large-scale production |
+
+**Key Rules:**
+- ✅ **Single node (1 validator)**: Must use **1/1** threshold
+- ✅ **Multi-node**: Use **2/3** or **3/4** for fault tolerance
+- ⚠️ Using default 3/4 with 1 validator works mathematically but is misleading
+- ⚠️ Higher threshold = more security but needs more online validators
+
+**Formula:**
+```
+Required signatures = ceil(threshold_num / threshold_denom * total_validators)
+
+Examples:
+- 1/1 with 1 validator = ceil(1/1 * 1) = 1 signature ✅
+- 2/3 with 3 validators = ceil(2/3 * 3) = 2 signatures ✅
+- 3/4 with 4 validators = ceil(3/4 * 4) = 3 signatures ✅
+- 5/7 with 7 validators = ceil(5/7 * 7) = 5 signatures ✅
+```
 
 ---
 
@@ -49,6 +197,8 @@ The project uses environment variables for configuration. There are two types:
 - Each validator needs an **ECDSA key pair** (private key + public key) for signing consensus messages
 - The private key (64 hex characters) is kept secret and used for signing
 - The public key (130 hex characters) is derived from the private key and shared with other validators
+
+> ⚠️ **IMPORTANT**: Before generating keys, decide if you want to use your own funded account or generate new keys and fund them later. You'll need **at least 0.05 ETH on Base Sepolia** to create subnet and register components.
 
 **Generate keys for 3 validators:**
 
@@ -125,16 +275,32 @@ Validator 3:
 
 ### 📦 Step 2: Create Subnet and Save Information
 
+> ⚠️ **COST**: Creating a subnet costs ~0.001-0.005 ETH in gas fees. Ensure your account (from Step 1) has sufficient Base Sepolia ETH.
+
 **Create your subnet on the blockchain:**
 
 ```bash
-# Create subnet (script auto-loads .env with fixed contract addresses)
-./scripts/create-subnet.sh --name "My Test Subnet"
+# For single-node testing (threshold 1/1)
+./scripts/create-subnet.sh \
+  --name "Test Subnet Single Node" \
+  --threshold-num 1 \
+  --threshold-denom 1
+
+# For 3-node deployment (threshold 2/3)
+./scripts/create-subnet.sh \
+  --name "Dev Subnet 3 Nodes" \
+  --threshold-num 2 \
+  --threshold-denom 3
+
+# For production (threshold 3/4) - this is the default
+./scripts/create-subnet.sh --name "Production Subnet"
 ```
+
+> 💡 **Threshold guideline**: Use 1/1 for single node, 2/3 for 3 nodes, 3/4 for production. See [Understanding Threshold](#understanding-signature-threshold) for details.
 
 **What happens:**
 1. Script connects to Base Sepolia blockchain
-2. Deploys a new subnet contract
+2. Deploys a new subnet contract with specified threshold
 3. Returns Subnet ID and Contract Address
 4. **Automatically saves info to `subnet-info-YYYYMMDD-HHMMSS.txt`**
 
@@ -186,6 +352,8 @@ ls subnets/
 ---
 
 ### Quick Registration Process:
+
+> ⚠️ **COST**: Registration requires **0.03 ETH** (3 components × 0.01 ETH stake each) plus gas fees (~0.003 ETH). Total: **~0.033 ETH**
 
 **Complete workflow from keys to running subnet:**
 
@@ -259,14 +427,20 @@ PRIVATE_KEY="$MATCHER_KEY" ./scripts/register.sh
 **Simplest approach, production-ready 3-node cluster by default**
 
 ```bash
-# Start 3-node Raft cluster
-cd docker && ./docker-start.sh
+# IMPORTANT: macOS users must compile Linux binaries first!
+# For Apple Silicon (M1/M2/M3):
+make build-linux-arm64
 
-# Or single-node dev mode
-cd docker && ./docker-start-dev.sh
+# For Intel Mac or x86_64 servers:
+make build-linux-amd64
+
+# Then deploy
+cd deployment
+./scripts/build-images.sh
+./scripts/deploy.sh
 
 # Stop services
-cd docker && docker compose down
+docker compose -f docker/docker-compose.yml down
 ```
 
 📚 **Detailed Documentation**: [`deployment/README.md`](../deployment/README.md) - Complete configuration, testing, and troubleshooting
@@ -277,6 +451,11 @@ cd docker && docker compose down
 - ✅ Automatic fault tolerance (tolerates 1 node failure)
 - ✅ No need to install Go or other dependencies
 - ✅ Fully isolated, clean system environment
+
+**Important for macOS users**:
+- ⚠️ **MUST use `make build-linux-*`** instead of `make build`
+- `make build` produces Mach-O format (macOS only), which cannot run in Docker Linux containers
+- `make build-linux-*` produces ELF format (Linux), which works in Docker
 
 ---
 

@@ -352,17 +352,33 @@ ls -lh bin/
 
 ### 1. Obtain Testnet ETH
 
-For testing on Base Sepolia:
+> ⚠️ **REQUIRED BEFORE PROCEEDING**: You need **at least 0.05 ETH** on Base Sepolia testnet.
+
+**Why you need testnet ETH:**
+- Create subnet: ~0.005 ETH (gas fees)
+- Register Validator: 0.01 ETH stake + ~0.001 ETH gas
+- Register Matcher: 0.01 ETH stake + ~0.001 ETH gas
+- Register Agent: 0.01 ETH stake + ~0.001 ETH gas
+- **Total required**: ≥ **0.05 ETH** on Base Sepolia
+
+**Steps:**
 
 1. **Get a wallet**:
    - Create with MetaMask or use existing wallet
    - Save your private key securely
 
 2. **Get testnet ETH**:
-   - Base Sepolia Faucet: https://www.coinbase.com/faucets/base-ethereum-goerli-faucet
-   - Or bridge from Sepolia to Base Sepolia
+   - **Option 1 (Recommended)**: [Coinbase Faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet)
+   - **Option 2**: Bridge from Sepolia to Base Sepolia using [official bridge](https://bridge.base.org/)
+   - **Option 3**: Request from [Base Discord](https://discord.gg/buildonbase) #faucet channel
 
-3. **Save configuration**:
+3. **Verify balance**:
+   ```bash
+   # Check your balance at Base Sepolia Explorer
+   # https://sepolia.basescan.org/address/YOUR_ADDRESS
+   ```
+
+4. **Save configuration**:
    ```bash
    # Create .env file (DO NOT commit this!)
    cat > .env << 'EOF'
