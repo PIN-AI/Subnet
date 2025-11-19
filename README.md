@@ -65,6 +65,13 @@ The only requirement? **Speak the protocol.** As long as your components impleme
 
 ### 🚀 First-Time Setup (Essential, ~20 min)
 
+> ⚠️ **PREREQUISITE: Get Testnet ETH First!**
+>
+> You need **at least 0.05 ETH** on Base Sepolia testnet before proceeding:
+> - **Why**: Creating subnet + registering components requires ~0.035 ETH (stake + gas)
+> - **Get testnet ETH**: [Coinbase Faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet) or bridge from Sepolia
+> - **Verify**: Check your balance at [Base Sepolia Explorer](https://sepolia.basescan.org/)
+
 1. **[Quick Start](docs/quick_start.md)** – Choose deployment method + registration workflow
 2. **[Environment Setup](docs/environment_setup.md)** – Install Go, Docker, dependencies
 3. **Deploy** (pick one):

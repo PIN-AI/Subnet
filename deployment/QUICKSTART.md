@@ -20,8 +20,15 @@
 # On development machine
 cd /Users/ty/pinai/protocol/Subnet
 
-# Compile binaries
-make build
+# ⚠️ IMPORTANT: Compile LINUX binaries for Docker!
+# For Apple Silicon (M1/M2/M3):
+make build-linux-arm64
+
+# For Intel Mac or x86_64 servers:
+make build-linux-amd64
+
+# ❌ DO NOT USE: make build
+# (produces macOS Mach-O format, won't work in Docker)
 
 # Build Docker image
 cd deployment

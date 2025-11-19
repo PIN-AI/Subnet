@@ -31,6 +31,12 @@ PRIVATE_KEY="${PRIVATE_KEY}"
 SUBNET_NAME="${SUBNET_NAME:-My Test Subnet}"
 AUTO_APPROVE="${AUTO_APPROVE:-true}"
 
+# Signature threshold configuration
+# For single node (NUM_VALIDATORS=1): use 1/1
+# For 3+ nodes: use 2/3 or 3/4
+THRESHOLD_NUM="${THRESHOLD_NUM:-3}"
+THRESHOLD_DENOM="${THRESHOLD_DENOM:-4}"
+
 # Fixed smart contract addresses for Base Sepolia (updated 2025-11-03)
 # These are protocol-wide addresses, same for all users
 export PIN_BASE_SEPOLIA_INTENT_MANAGER="${PIN_BASE_SEPOLIA_INTENT_MANAGER:-0xB2f092E696B33b7a95e1f961369Bb59611CAd093}"
@@ -65,6 +71,14 @@ while [[ $# -gt 0 ]]; do
             AUTO_APPROVE="$2"
             shift 2
             ;;
+        --threshold-num)
+            THRESHOLD_NUM="$2"
+            shift 2
+            ;;
+        --threshold-denom)
+            THRESHOLD_DENOM="$2"
+            shift 2
+            ;;
         --help)
             cat << EOF
 Usage: $0 [OPTIONS]
@@ -78,6 +92,8 @@ Options:
   --key HEX             Private key hex (overrides config)
   --name NAME           Subnet name (default: "My Test Subnet")
   --auto-approve BOOL   Auto approve participants (default: true)
+  --threshold-num NUM   Signature threshold numerator (default: 3)
+  --threshold-denom NUM Signature threshold denominator (default: 4)
   --help                Show this help message
 
 Environment Variables:
@@ -85,16 +101,21 @@ Environment Variables:
   RPC_URL               RPC URL
   PRIVATE_KEY           Private key hex
   SUBNET_NAME           Subnet name
+  THRESHOLD_NUM         Signature threshold numerator
+  THRESHOLD_DENOM       Signature threshold denominator
 
 Examples:
-  # Create subnet with default settings
+  # Create subnet with default settings (threshold 3/4)
   $0
 
   # Create subnet with custom name
   $0 --name "Production Subnet"
 
-  # Create subnet with manual approval
-  $0 --auto-approve false
+  # Create single-node subnet with threshold 1/1
+  $0 --name "Test Subnet" --threshold-num 1 --threshold-denom 1
+
+  # Create 3-node subnet with 2/3 threshold
+  $0 --name "Dev Subnet" --threshold-num 2 --threshold-denom 3
 
 EOF
             exit 0
@@ -134,6 +155,14 @@ fi
 
 if [ -n "$AUTO_APPROVE" ]; then
     ARGS+=(-auto-approve="$AUTO_APPROVE")
+fi
+
+if [ -n "$THRESHOLD_NUM" ]; then
+    ARGS+=(-threshold-num "$THRESHOLD_NUM")
+fi
+
+if [ -n "$THRESHOLD_DENOM" ]; then
+    ARGS+=(-threshold-denom "$THRESHOLD_DENOM")
 fi
 
 # Run the subnet creation script

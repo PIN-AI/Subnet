@@ -28,13 +28,28 @@ PROJECT_ROOT="$(dirname "$DEPLOYMENT_DIR")"
 
 cd "$PROJECT_ROOT"
 
-# Check if binaries exist
-print_info "Checking for pre-compiled binaries..."
+# Auto-detect architecture
+ARCH=$(uname -m)
+if [ "$ARCH" = "x86_64" ]; then
+    TARGET_ARCH="amd64"
+elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+    TARGET_ARCH="arm64"
+else
+    print_error "Unsupported architecture: $ARCH"
+    exit 1
+fi
+
+print_info "Detected architecture: $ARCH (Docker: $TARGET_ARCH)"
+echo ""
+
+# Check if binaries exist in architecture-specific directory
+LINUX_BIN_DIR="bin/linux-${TARGET_ARCH}"
+print_info "Checking for pre-compiled binaries in $LINUX_BIN_DIR/..."
 
 REQUIRED_BINARIES=(
-    "bin/validator"
-    "bin/matcher"
-    "bin/simple-agent"
+    "${LINUX_BIN_DIR}/validator"
+    "${LINUX_BIN_DIR}/matcher"
+    "${LINUX_BIN_DIR}/simple-agent"
 )
 
 MISSING_BINARIES=()
@@ -50,11 +65,27 @@ if [ ${#MISSING_BINARIES[@]} -gt 0 ]; then
         echo "  - $binary"
     done
     echo ""
-    print_info "Please build binaries first:"
+    print_info "Please build Linux binaries first:"
     echo "  cd $PROJECT_ROOT"
-    echo "  make build"
+    echo "  make build-linux-arm64  # For Apple Silicon (M1/M2/M3)"
+    echo "  make build-linux-amd64  # For Intel Mac or x86_64 servers"
     exit 1
 fi
+
+# Check if binaries are in correct format (ELF, not Mach-O)
+print_info "Checking binary format..."
+for binary in "${REQUIRED_BINARIES[@]}"; do
+    if file "$binary" | grep -q "Mach-O"; then
+        print_error "Binary $binary is in Mach-O format (macOS)"
+        echo ""
+        echo "Docker requires Linux ELF format binaries."
+        echo "Please rebuild using:"
+        echo "  cd $PROJECT_ROOT"
+        echo "  make build-linux-arm64  # For Apple Silicon"
+        echo "  make build-linux-amd64  # For x86_64 servers"
+        exit 1
+    fi
+done
 
 print_success "All required binaries found"
 echo ""
@@ -74,8 +105,10 @@ echo ""
 cd "$DEPLOYMENT_DIR/docker"
 
 docker build \
+    --build-arg TARGETARCH=${TARGET_ARCH} \
     -f Dockerfile \
     -t pinai-subnet:latest \
+    -t pinai-subnet:linux-${TARGET_ARCH} \
     "$PROJECT_ROOT"
 
 if [ $? -eq 0 ]; then

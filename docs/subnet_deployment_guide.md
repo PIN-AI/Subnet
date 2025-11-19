@@ -170,11 +170,19 @@ CONSENSUS_TYPE=raft                      # or cometbft
 
 If you have not created a subnet yet, run:
 
+> ⚠️ **COST WARNING**: Creating a subnet costs **~0.001-0.005 ETH** in gas fees. Ensure you have at least **0.05 ETH** on Base Sepolia for subnet creation + participant registration.
+
 ```bash
 export RPC_URL="https://sepolia.base.org"
 export PRIVATE_KEY="<your-chain-key>"
 export PIN_NETWORK="base_sepolia"
 ./scripts/create-subnet.sh --name "My Test Subnet"
+
+# For single-node testing with threshold 1/1
+./scripts/create-subnet.sh --name "Test Subnet" --threshold-num 1 --threshold-denom 1
+
+# For 3-node deployment with threshold 2/3
+./scripts/create-subnet.sh --name "Dev Subnet" --threshold-num 2 --threshold-denom 3
 ```
 
 Record the returned subnet ID and contract address, then plug them into `.env`.

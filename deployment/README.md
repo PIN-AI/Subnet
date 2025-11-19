@@ -37,14 +37,29 @@ deployment/
 
 ### Step 1: Prepare Binaries
 
+**IMPORTANT: Build Linux binaries for Docker deployment**
+
 ```bash
 # From project root
 cd /Users/ty/pinai/protocol/Subnet
-make build
 
-# Verify binaries exist
+# ⚠️ For macOS users: MUST use build-linux-* targets!
+# For Apple Silicon (M1/M2/M3):
+make build-linux-arm64
+
+# For Intel Mac or x86_64 servers:
+make build-linux-amd64
+
+# Verify binaries exist and are in ELF format (not Mach-O)
 ls -lh bin/
+file bin/matcher bin/validator bin/simple-agent
+# Should show: "ELF 64-bit LSB executable" (NOT "Mach-O")
 ```
+
+**Why?**
+- `make build` on macOS produces **Mach-O** format (macOS only)
+- Docker containers need **ELF** format (Linux)
+- `make build-linux-*` cross-compiles to Linux ELF format
 
 ### Step 2: Configure Environment
 
