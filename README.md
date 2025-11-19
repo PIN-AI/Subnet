@@ -20,6 +20,41 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 - **Dual Submission**: Simultaneous blockchain and RootLayer submission for redundancy
 - **Production Ready**: Docker support, comprehensive monitoring, and production deployment guides
 
+## 🎯 Built for Flexibility, Designed for Scale
+
+**PinAI Subnet is not just a template – it's a modular framework.** Every layer is designed to be swapped, customized, or replaced while maintaining seamless compatibility with the broader PinAI network.
+
+### Your Network, Your Rules
+
+The only requirement? **Speak the protocol.** As long as your components implement the standardized gRPC interfaces and protobuf message formats, you have unlimited freedom to optimize for your use case:
+
+- **🤖 Agent Logic**: Build specialized execution engines – AI inference, video rendering, blockchain indexing, or anything your agents can compute
+- **⚖️ Consensus Mechanism**: Choose Raft for simplicity, CometBFT for Byzantine fault tolerance, or roll your own consensus algorithm
+- **💾 Storage Backend**: Pick embedded LevelDB for speed, PostgreSQL for rich queries, or S3 for infinite scale
+- **🎯 Matching Strategy**: Optimize for lowest price, best reputation, geographic proximity, or multi-dimensional scoring
+
+### Protocol-Driven Modularity
+
+```
+┌─────────────────────────────────────────────────────────┐
+│         PinAI Protocol Interface (gRPC + Protobuf)      │
+│           ✅ Standardized Message Formats               │
+│           ✅ Signature & Verification Specs             │
+│           ✅ Checkpoint Anchoring Format                │
+└─────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────┐
+│              Your Custom Implementation                 │
+│                💡 Performance Optimizations             │
+│                💡 Domain-Specific Logic                 │
+│                💡 Infrastructure Preferences            │
+└─────────────────────────────────────────────────────────┘
+```
+
+**The Result?** A subnet that's uniquely yours, yet fully interoperable with the entire PinAI ecosystem.
+
+📚 **Learn More**: [Customization Guide →](docs/subnet_deployment_guide.md#customization)
+
 ## 📚 Documentation
 
 **Choose your path:** New users start with First-Time Setup. Developers and operators can jump directly to relevant sections below.
@@ -29,6 +64,13 @@ This is a **template** for creating your own Subnet. Fork this repository to:
 ---
 
 ### 🚀 First-Time Setup (Essential, ~20 min)
+
+> ⚠️ **PREREQUISITE: Get Testnet ETH First!**
+>
+> You need **at least 0.05 ETH** on Base Sepolia testnet before proceeding:
+> - **Why**: Creating subnet + registering components requires ~0.035 ETH (stake + gas)
+> - **Get testnet ETH**: [Coinbase Faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet) or bridge from Sepolia
+> - **Verify**: Check your balance at [Base Sepolia Explorer](https://sepolia.basescan.org/)
 
 1. **[Quick Start](docs/quick_start.md)** – Choose deployment method + registration workflow
 2. **[Environment Setup](docs/environment_setup.md)** – Install Go, Docker, dependencies

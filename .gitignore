@@ -1,4 +1,8 @@
 # Build artifacts
+# Note: bin/ includes:
+#   - bin/*.* (native binaries for local development)
+#   - bin/linux-arm64/*.* (Linux ARM64 binaries for Docker)
+#   - bin/linux-amd64/*.* (Linux x86_64 binaries for Docker/servers)
 bin/
 *.test
 *.out

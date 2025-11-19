@@ -12,33 +12,39 @@ ifeq ($(ARCH),)
 	ARCH = amd64
 endif
 
+# Output directory for Linux binaries (organized by architecture)
+LINUX_BIN_DIR = bin/linux-$(ARCH)
+
 # Build Linux binaries for Docker deployment (auto-detect architecture)
 build-linux: build-linux-matcher build-linux-validator build-linux-simple-agent
-	@echo "Built Linux binaries for architecture: $(ARCH)"
+	@echo "✓ Built Linux binaries for $(ARCH) in $(LINUX_BIN_DIR)/"
 
 # Build Linux binaries for AMD64 (x86_64) - most common server architecture
 build-linux-amd64:
 	@echo "Building for Linux AMD64..."
-	@GOARCH=amd64 $(MAKE) build-linux
+	@ARCH=amd64 $(MAKE) build-linux
 
 # Build Linux binaries for ARM64 (Apple Silicon, ARM servers)
 build-linux-arm64:
 	@echo "Building for Linux ARM64..."
-	@GOARCH=arm64 $(MAKE) build-linux
+	@ARCH=arm64 $(MAKE) build-linux
 
 build-linux-matcher:
 	@echo "Building Matcher for Linux $(ARCH)..."
-	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/matcher cmd/matcher/main.go
+	@mkdir -p $(LINUX_BIN_DIR)
+	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o $(LINUX_BIN_DIR)/matcher cmd/matcher/main.go
 
 # build-linux-registry: REMOVED - Registry component deprecated
 
 build-linux-validator:
 	@echo "Building Validator for Linux $(ARCH)..."
-	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/validator cmd/validator/main.go
+	@mkdir -p $(LINUX_BIN_DIR)
+	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o $(LINUX_BIN_DIR)/validator cmd/validator/main.go
 
 build-linux-simple-agent:
 	@echo "Building Simple Agent for Linux $(ARCH)..."
-	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o bin/simple-agent cmd/simple-agent/main.go
+	@mkdir -p $(LINUX_BIN_DIR)
+	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o $(LINUX_BIN_DIR)/simple-agent cmd/simple-agent/main.go
 
 build-all:
 	@echo "Building all Go packages..."
