@@ -1,0 +1,72 @@
+# Policy configuration for subnet owner customization
+
+# Subnet identification
+subnet:
+  id: "test-subnet"
+  owner: "0x1234567890abcdef"
+
+# Validator policy configuration
+validator:
+  policy:
+    type: "verification"     # Options: default, verification, sampling, custom
+    config:
+      # Verification policy settings
+      require_all_validators: false
+      min_confidence: 0.7
+      fail_fast: false
+      weighted_scoring: true
+
+      # Component weights
+      lease_weight: 0.3
+      evidence_weight: 0.4
+      output_weight: 0.3
+
+      # Component enable/disable
+      lease_check: true
+      evidence_check: true
+      output_check: true
+
+# Matcher strategy configuration
+matcher:
+  strategy:
+    type: "weighted"         # Options: price_priority, weighted, capability, load_balanced, custom
+    config:
+      # Weight configuration for scoring
+      price_weight: 0.4
+      reputation_weight: 0.3
+      capability_weight: 0.2
+      latency_weight: 0.1
+
+      # Thresholds
+      min_score: 0.5
+      max_assignments: 1
+      default_lease_seconds: 300
+
+  # Lease configuration
+  lease:
+    default_ttl: "5m"
+    min_ttl: "1m"
+    max_ttl: "30m"
+
+# Executor configuration
+executor:
+  type: "script"            # Options: script, dummy, container, wasm
+  config:
+    work_dir: "/tmp/subnet-executor"
+    scripts_dir: "/opt/subnet/scripts"
+    enable_sandbox: true
+
+    # Resource limits
+    max_cpu_ms: 60000
+    max_memory_mb: 512
+    max_disk_mb: 100
+    max_network_bytes: 10485760
+
+    # Allowed commands for sandboxing
+    allowed_commands:
+      - "echo"
+      - "cat"
+      - "grep"
+      - "python3"
+      - "node"
+      - "jq"

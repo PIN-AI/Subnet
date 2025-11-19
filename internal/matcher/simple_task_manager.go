@@ -8,7 +8,7 @@ import (
 
 	"subnet/internal/logging"
 	pb "subnet/proto/subnet"
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 )
 
 // SimpleTaskManager simple task manager

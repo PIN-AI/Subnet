@@ -2,22 +2,34 @@ package validator
 
 import (
 	"bytes"
-	"crypto/sha256"
-	"encoding/hex"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"time"
 
-	"google.golang.org/protobuf/proto"
 	"subnet/internal/consensus"
 	"subnet/internal/crypto"
 	"subnet/internal/types"
 	pb "subnet/proto/subnet"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/proto"
 )
 
 // ProcessExecutionReport processes an execution report from an agent
 func (n *Node) ProcessExecutionReport(report *pb.ExecutionReport) (*pb.Receipt, error) {
+	if n.raftConsensus != nil {
+		return n.processExecutionReportRaft(report)
+	}
+
+	// For CometBFT mode, submit to consensus layer
+	if n.cometbftConsensus != nil {
+		return n.processExecutionReportCometBFT(report)
+	}
+
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -38,6 +50,18 @@ func (n *Node) ProcessExecutionReport(report *pb.ExecutionReport) (*pb.Receipt, 
 	score := n.scoreReport(report)
 	n.reportScores[reportID] = score
 
+	// Persist execution report to storage
+	reportBytes, err := proto.Marshal(report)
+	if err != nil {
+		n.logger.Error("Failed to marshal execution report", "error", err, "report_id", reportID)
+	} else {
+		if err := n.store.SaveExecutionReport(reportID, reportBytes); err != nil {
+			n.logger.Error("Failed to save execution report to storage", "error", err, "report_id", reportID)
+		} else {
+			n.logger.Infof("Saved execution report to storage report_id=%s", reportID)
+		}
+	}
+
 	// Create receipt
 	receipt := &pb.Receipt{
 		ReportId:    reportID,
@@ -55,11 +79,130 @@ func (n *Node) ProcessExecutionReport(report *pb.ExecutionReport) (*pb.Receipt, 
 		score,
 		len(n.pendingReports))
 
-	// Broadcast the execution report to all validators (including leader)
-	// This ensures all nodes, especially the current leader, can include this report in the next checkpoint
-	go n.broadcastExecutionReport(report)
+	// Execution reports are now propagated via Raft - no need for broadcast
+	// Raft will replicate the report to all nodes
 
 	return receipt, nil
+}
+
+func (n *Node) processExecutionReportRaft(report *pb.ExecutionReport) (*pb.Receipt, error) {
+	if report == nil {
+		return nil, fmt.Errorf("report cannot be nil")
+	}
+
+	if report.Timestamp == 0 {
+		report.Timestamp = time.Now().Unix()
+	}
+
+	reportID := n.generateReportID(report)
+
+	// Fast path: if we've already committed this report, return duplicate receipt.
+	n.mu.RLock()
+	if _, exists := n.pendingReports[reportID]; exists {
+		n.mu.RUnlock()
+		return &pb.Receipt{
+			ReportId:    reportID,
+			ValidatorId: n.id,
+			IntentId:    report.IntentId,
+			ReceivedTs:  time.Now().Unix(),
+			Status:      "duplicate",
+		}, nil
+	}
+	n.mu.RUnlock()
+
+	if n.raftConsensus.IsLeader() {
+		// Leader applies report directly through Raft.
+		if err := n.raftConsensus.ApplyExecutionReport(report, n.id); err != nil {
+			return nil, fmt.Errorf("apply execution report via raft: %w", err)
+		}
+	} else {
+		// Follower: forward to leader via validator service endpoint
+		leaderID, err := n.getLeaderIDFromRaft()
+		if err != nil {
+			return nil, fmt.Errorf("get leader ID: %w", err)
+		}
+		return n.forwardReportToLeader(leaderID, report)
+	}
+
+	receipt := &pb.Receipt{
+		ReportId:    reportID,
+		ValidatorId: n.id,
+		IntentId:    report.IntentId,
+		ReceivedTs:  time.Now().Unix(),
+		Status:      "accepted",
+	}
+	return receipt, nil
+}
+
+func (n *Node) processExecutionReportCometBFT(report *pb.ExecutionReport) (*pb.Receipt, error) {
+	if report == nil {
+		return nil, fmt.Errorf("report cannot be nil")
+	}
+
+	if report.Timestamp == 0 {
+		report.Timestamp = time.Now().Unix()
+	}
+
+	reportID := n.generateReportID(report)
+
+	// Check for duplicates
+	n.mu.RLock()
+	if _, exists := n.pendingReports[reportID]; exists {
+		n.mu.RUnlock()
+		return &pb.Receipt{
+			ReportId:    reportID,
+			ValidatorId: n.id,
+			IntentId:    report.IntentId,
+			ReceivedTs:  time.Now().Unix(),
+			Status:      "duplicate",
+		}, nil
+	}
+	n.mu.RUnlock()
+
+	// Submit to CometBFT consensus
+	if err := n.cometbftConsensus.ProposeExecutionReport(report, reportID); err != nil {
+		return nil, fmt.Errorf("propose execution report to CometBFT: %w", err)
+	}
+
+	n.logger.Infof("Proposed execution report to CometBFT report_id=%s assignment=%s intent_id=%s",
+		reportID,
+		report.AssignmentId,
+		report.IntentId)
+
+	receipt := &pb.Receipt{
+		ReportId:    reportID,
+		ValidatorId: n.id,
+		IntentId:    report.IntentId,
+		ReceivedTs:  time.Now().Unix(),
+		Status:      "accepted",
+	}
+	return receipt, nil
+}
+
+func (n *Node) forwardReportToLeader(leaderID string, report *pb.ExecutionReport) (*pb.Receipt, error) {
+	// Look up validator service endpoint for the leader
+	n.mu.RLock()
+	endpoint, ok := n.validatorEndpoints[leaderID]
+	n.mu.RUnlock()
+
+	if !ok || endpoint == "" {
+		return nil, fmt.Errorf("no validator endpoint configured for leader %s", leaderID)
+	}
+
+	conn, err := grpc.Dial(endpoint, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return nil, fmt.Errorf("dial leader %s at %s: %w", leaderID, endpoint, err)
+	}
+	defer conn.Close()
+
+	client := pb.NewValidatorServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := client.SubmitExecutionReport(ctx, report)
+	if err != nil {
+		return nil, fmt.Errorf("forward execution report to leader %s: %w", leaderID, err)
+	}
+	return resp, nil
 }
 
 // GetCheckpoint retrieves a checkpoint by epoch
@@ -155,8 +298,8 @@ func (n *Node) HandleProposal(header *pb.CheckpointHeader) error {
 		header.Epoch,
 		n.id)
 
-	// Broadcast signature
-	go n.broadcastSignature(sig)
+	// Signatures are now broadcast via Gossip (handled in handleCommittedCheckpoint)
+	// No legacy NATS broadcast needed
 
 	return nil
 }
@@ -409,11 +552,7 @@ func (n *Node) GetMetrics() *pb.ValidatorMetrics {
 // Helper methods
 
 func (n *Node) generateReportID(report *pb.ExecutionReport) string {
-	h := sha256.New()
-	h.Write([]byte(report.AssignmentId))
-	h.Write([]byte(report.AgentId))
-	h.Write([]byte(fmt.Sprintf("%d", time.Now().Unix())))
-	return hex.EncodeToString(h.Sum(nil))[:16]
+	return fmt.Sprintf("%s:%s:%s:%d", report.IntentId, report.AssignmentId, report.AgentId, report.Timestamp)
 }
 
 func (n *Node) scoreReport(report *pb.ExecutionReport) int32 {
@@ -524,43 +663,7 @@ func (n *Node) verifySignature(sig *pb.Signature) error {
 	return nil
 }
 
-func (n *Node) broadcastSignature(sig *pb.Signature) {
-	if n.broadcaster != nil {
-		if err := n.broadcaster.BroadcastSignature(sig); err != nil {
-			n.logger.Error("Failed to broadcast signature",
-				"error", err,
-				"signer", sig.SignerId)
-		} else {
-			n.logger.Debug("Broadcasted signature", "signer", sig.SignerId)
-		}
-	} else {
-		n.logger.Warn("No broadcaster configured, skipping signature broadcast")
-	}
-}
-
-func (n *Node) broadcastExecutionReport(report *pb.ExecutionReport) {
-	if n.broadcaster != nil {
-		if err := n.broadcaster.BroadcastExecutionReport(report); err != nil {
-			n.logger.Errorf("Failed to broadcast execution report intent_id=%s assignment_id=%s error=%v", report.IntentId, report.AssignmentId, err)
-		} else {
-			n.logger.Infof("Broadcasted execution report to all validators intent_id=%s assignment_id=%s agent_id=%s", report.IntentId, report.AssignmentId, report.AgentId)
-		}
-	} else {
-		n.logger.Warn("No broadcaster configured, skipping execution report broadcast")
-	}
-}
-
-func (n *Node) broadcastFinalized(header *pb.CheckpointHeader) {
-	if n.broadcaster != nil {
-		if err := n.broadcaster.BroadcastFinalized(header); err != nil {
-			n.logger.Errorf("Failed to broadcast finalized checkpoint epoch=%d error=%v", header.Epoch, err)
-		} else {
-			n.logger.Infof("Broadcasted finalized checkpoint epoch=%d signatures=%d", header.Epoch, header.Signatures.SignatureCount)
-		}
-	} else {
-		n.logger.Warn("No broadcaster configured, skipping finalized broadcast")
-	}
-}
+// Legacy NATS broadcast methods removed - now using Raft + Gossip
 
 // HandleFinalized handles a finalized checkpoint broadcast from another validator
 func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
@@ -708,4 +811,92 @@ func (n *Node) HandleFinalized(header *pb.CheckpointHeader) error {
 
 	n.mu.Unlock()
 	return nil
+}
+
+// getLeaderIDFromRaft maps the Raft leader address to the validator ID
+// Supports both IP addresses and hostnames through DNS resolution
+func (n *Node) getLeaderIDFromRaft() (string, error) {
+	leaderAddr := n.raftConsensus.LeaderAddress()
+	if leaderAddr == "" {
+		return "", fmt.Errorf("no raft leader available")
+	}
+
+	// Extract IP and port from leader address
+	leaderHost, leaderPort, err := net.SplitHostPort(leaderAddr)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse leader address %s: %w", leaderAddr, err)
+	}
+
+	// Look up the validator ID from Raft peers configuration
+	if n.config.Raft != nil && n.config.Raft.Peers != nil {
+		for _, peer := range n.config.Raft.Peers {
+			// Try exact match first (fast path)
+			if peer.Address == leaderAddr {
+				return peer.ID, nil
+			}
+
+			// Try matching by resolving hostname and comparing port
+			peerHost, peerPort, err := net.SplitHostPort(peer.Address)
+			if err != nil {
+				continue
+			}
+
+			// If ports match, try to match hosts
+			if peerPort == leaderPort {
+				// Direct IP comparison (handles both IP configs and hostname==IP cases)
+				if peerHost == leaderHost {
+					return peer.ID, nil
+				}
+
+				// Try DNS resolution if one is a hostname
+				// Resolve peer hostname to IPs
+				peerIPs, err := net.LookupHost(peerHost)
+				if err == nil {
+					// Check if leader IP matches any of the peer's IPs
+					for _, peerIP := range peerIPs {
+						if peerIP == leaderHost {
+							return peer.ID, nil
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("could not map Raft leader address %s to validator ID", leaderAddr)
+}
+
+// GetExecutionReportByID retrieves an execution report by its ID from storage
+func (n *Node) GetExecutionReportByID(reportID string) (*pb.ExecutionReport, error) {
+	reportBytes, err := n.store.GetExecutionReport(reportID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get execution report: %w", err)
+	}
+
+	var report pb.ExecutionReport
+	if err := proto.Unmarshal(reportBytes, &report); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal execution report: %w", err)
+	}
+
+	return &report, nil
+}
+
+// ListExecutionReports retrieves execution reports from storage, optionally filtered by intent ID
+func (n *Node) ListExecutionReports(intentID string, limit int) (map[string]*pb.ExecutionReport, error) {
+	reportBytesMap, err := n.store.ListExecutionReports(intentID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list execution reports: %w", err)
+	}
+
+	reports := make(map[string]*pb.ExecutionReport, len(reportBytesMap))
+	for reportID, reportBytes := range reportBytesMap {
+		var report pb.ExecutionReport
+		if err := proto.Unmarshal(reportBytes, &report); err != nil {
+			n.logger.Warn("Failed to unmarshal execution report", "report_id", reportID, "error", err)
+			continue
+		}
+		reports[reportID] = &report
+	}
+
+	return reports, nil
 }

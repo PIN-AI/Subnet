@@ -4,10 +4,11 @@
 # Identity configuration
 identity:
   matcher_id: "matcher-prod-001"
-  subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
+  subnet_id: "YOUR_SUBNET_ID_HERE"  # Replace with your subnet ID (e.g., 0x0000...0002)
 
 # Matcher private key for signing (REQUIRED)
 # This key will be used to sign both RootLayer submissions and on-chain transactions
+# SECURITY: Use a separate key, do NOT reuse validator keys!
 private_key: "your-matcher-private-key-here"  # Replace with actual key
 
 # Bidding window configuration
@@ -26,7 +27,7 @@ intent_pull_interval: 5s
 enable_chain_submit: true
 chain_rpc_url: "https://sepolia.base.org"  # Base Sepolia RPC
 chain_network: "base_sepolia"
-intent_manager_addr: "0xD04d23775D3B8e028e6104E31eb0F6c07206EB46"  # IntentManager contract address
+intent_manager_addr: "0xB2f092E696B33b7a95e1f961369Bb59611CAd093"  # IntentManager contract address (Base Sepolia, updated 2025-11-03)
 
 # Timeouts
 timeouts:

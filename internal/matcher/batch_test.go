@@ -7,7 +7,7 @@ import (
 
 	"subnet/internal/logging"
 	pb "subnet/proto/subnet"
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 )
 
 func TestSubmitBidBatch(t *testing.T) {

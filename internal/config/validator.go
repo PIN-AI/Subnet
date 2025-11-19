@@ -207,11 +207,6 @@ func (v *ConfigValidator) validateNetwork(cfg *AppConfig) {
 	v.validatePort("validator_grpc_port", cfg.Network.ValidatorGRPCPort)
 	v.validatePort("matcher_grpc_port", cfg.Network.MatcherGRPCPort)
 	v.validatePort("metrics_port", cfg.Network.MetricsPort)
-
-	// Validate URLs
-	if cfg.Network.NATSUrl != "" && !strings.HasPrefix(cfg.Network.NATSUrl, "nats://") {
-		v.warnings = append(v.warnings, fmt.Sprintf("nats_url should start with 'nats://': %s", cfg.Network.NATSUrl))
-	}
 }
 
 func (v *ConfigValidator) validatePort(name string, port string) {

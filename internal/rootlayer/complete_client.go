@@ -10,7 +10,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 
-	rootpb "rootlayer/proto"
+	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/types"
@@ -157,8 +157,8 @@ func (c *CompleteClient) SubmitValidationBundle(ctx context.Context, bundle *roo
 	return nil
 }
 
-// SubmitValidationBundleBatch submits multiple validation bundles to RootLayer in a single call
-func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, bundles []*rootpb.ValidationBundle, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error) {
+// SubmitValidationBundleBatch submits multiple validation groups to RootLayer in a single call
+func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, groups []*rootpb.ValidationBatchGroup, batchID string, partialOk bool) (*rootpb.ValidationBundleBatchResponse, error) {
 	c.mu.RLock()
 	client := c.intentPoolClient
 	c.mu.RUnlock()
@@ -167,12 +167,12 @@ func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, bundle
 		return nil, fmt.Errorf("not connected to RootLayer")
 	}
 
-	if len(bundles) == 0 {
-		return nil, fmt.Errorf("no validation bundles provided for batch submission")
+	if len(groups) == 0 {
+		return nil, fmt.Errorf("no validation groups provided for batch submission")
 	}
 
 	req := &rootpb.ValidationBundleBatchRequest{
-		Bundles:   bundles,
+		Groups:    groups,
 		BatchId:   batchID,
 		PartialOk: &partialOk,
 	}
@@ -182,16 +182,25 @@ func (c *CompleteClient) SubmitValidationBundleBatch(ctx context.Context, bundle
 		return nil, fmt.Errorf("failed to submit validation bundle batch: %w", err)
 	}
 
-	c.logger.Infof("Validation bundle batch submitted: batch_id=%s total=%d success=%d failed=%d",
-		batchID, len(bundles), resp.Success, resp.Failed)
+	// Count total items across all groups
+	totalItems := 0
+	for _, group := range groups {
+		totalItems += len(group.Items)
+	}
 
-	// Log individual failures if any
+	c.logger.Infof("Validation bundle batch submitted: batch_id=%s groups=%d items=%d success=%d failed=%d",
+		batchID, len(groups), totalItems, resp.Success, resp.Failed)
+
+	// Log failures summary if any
 	if resp.Failed > 0 {
+		failedIndices := []int{}
 		for i, result := range resp.Results {
 			if !result.Ok {
-				c.logger.Warnf("Validation bundle %d failed: %s (intent_id=%s)",
-					i, result.Msg, bundles[i].IntentId)
+				failedIndices = append(failedIndices, i)
 			}
+		}
+		if len(failedIndices) > 0 {
+			c.logger.Warnf("Validation bundle batch had %d failures at indices: %v", len(failedIndices), failedIndices)
 		}
 	}
 
@@ -255,12 +264,9 @@ func (c *CompleteClient) groupReportsByIntent(reports []*pb.ExecutionReport) map
 		// Create composite key from Intent+Assignment+Agent
 		key := fmt.Sprintf("%s:%s:%s", report.IntentId, report.AssignmentId, report.AgentId)
 		grouped[key] = append(grouped[key], report)
-
-		c.logger.Debugf("Grouping execution report: intent_id=%s assignment_id=%s agent_id=%s group_key=%s",
-			report.IntentId, report.AssignmentId, report.AgentId, key)
 	}
 
-	c.logger.Infof("Grouped execution reports into %d Intent groups", len(grouped))
+	c.logger.Infof("Grouped %d execution reports into %d Intent groups", len(reports), len(grouped))
 	return grouped
 }
 

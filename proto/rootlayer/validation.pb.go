@@ -304,6 +304,230 @@ func (x *ValidationAck) GetReceiptId() string {
 	return ""
 }
 
+// Single validation item within a batch (without signatures).
+type ValidationItem struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Target intent ID.
+	IntentId string `protobuf:"bytes,1,opt,name=intent_id,json=intentId,proto3" json:"intent_id,omitempty"`
+	// Assignment reference that produced this result.
+	AssignmentId string `protobuf:"bytes,2,opt,name=assignment_id,json=assignmentId,proto3" json:"assignment_id,omitempty"`
+	// Executing agent identifier.
+	AgentId string `protobuf:"bytes,3,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	// Execution timestamp (unix seconds).
+	ExecutedAt int64 `protobuf:"varint,4,opt,name=executed_at,json=executedAt,proto3" json:"executed_at,omitempty"`
+	// Hash of execution result payload.
+	ResultHash []byte `protobuf:"bytes,5,opt,name=result_hash,json=resultHash,proto3" json:"result_hash,omitempty"`
+	// Hash of execution proof (if any).
+	ProofHash     []byte `protobuf:"bytes,6,opt,name=proof_hash,json=proofHash,proto3" json:"proof_hash,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ValidationItem) Reset() {
+	*x = ValidationItem{}
+	mi := &file_rootlayer_validation_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValidationItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValidationItem) ProtoMessage() {}
+
+func (x *ValidationItem) ProtoReflect() protoreflect.Message {
+	mi := &file_rootlayer_validation_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValidationItem.ProtoReflect.Descriptor instead.
+func (*ValidationItem) Descriptor() ([]byte, []int) {
+	return file_rootlayer_validation_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ValidationItem) GetIntentId() string {
+	if x != nil {
+		return x.IntentId
+	}
+	return ""
+}
+
+func (x *ValidationItem) GetAssignmentId() string {
+	if x != nil {
+		return x.AssignmentId
+	}
+	return ""
+}
+
+func (x *ValidationItem) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ValidationItem) GetExecutedAt() int64 {
+	if x != nil {
+		return x.ExecutedAt
+	}
+	return 0
+}
+
+func (x *ValidationItem) GetResultHash() []byte {
+	if x != nil {
+		return x.ResultHash
+	}
+	return nil
+}
+
+func (x *ValidationItem) GetProofHash() []byte {
+	if x != nil {
+		return x.ProofHash
+	}
+	return nil
+}
+
+// Batch validation group with shared signatures (same subnet).
+type ValidationBatchGroup struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// === Shared metadata across all items ===
+	// Source subnet (32-byte 0x-prefixed hex string).
+	SubnetId string `protobuf:"bytes,1,opt,name=subnet_id,json=subnetId,proto3" json:"subnet_id,omitempty"`
+	// RootLayer reference height.
+	RootHeight uint64 `protobuf:"varint,2,opt,name=root_height,json=rootHeight,proto3" json:"root_height,omitempty"`
+	// RootLayer reference hash (0x-prefixed hex string).
+	RootHash string `protobuf:"bytes,3,opt,name=root_hash,json=rootHash,proto3" json:"root_hash,omitempty"`
+	// Which validator acted as the aggregator for this bundle.
+	AggregatorId string `protobuf:"bytes,4,opt,name=aggregator_id,json=aggregatorId,proto3" json:"aggregator_id,omitempty"`
+	// Aggregation finalized timestamp (unix seconds).
+	CompletedAt int64 `protobuf:"varint,5,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
+	// === Shared signatures (entire batch uses one set) ===
+	// Individual validator signatures over batch digest.
+	Signatures []*ValidationSignature `protobuf:"bytes,6,rep,name=signatures,proto3" json:"signatures,omitempty"`
+	// Optional bitmap for validator IDs, packed by validator index.
+	SignerBitmap []byte `protobuf:"bytes,7,opt,name=signer_bitmap,json=signerBitmap,proto3" json:"signer_bitmap,omitempty"`
+	// Total validator weight included in the signatures.
+	TotalWeight uint64 `protobuf:"varint,8,opt,name=total_weight,json=totalWeight,proto3" json:"total_weight,omitempty"`
+	// === Independent validation items ===
+	// Array of validation items (different intents, shared signatures).
+	Items []*ValidationItem `protobuf:"bytes,9,rep,name=items,proto3" json:"items,omitempty"`
+	// === Items hash (keccak256(abi.encode(items))) ===
+	// Pre-computed hash of items array used in signature generation.
+	// This field is REQUIRED and must match on-chain calculation.
+	// Added in SDK update to ensure signature verification consistency.
+	ItemsHash     []byte `protobuf:"bytes,10,opt,name=items_hash,json=itemsHash,proto3" json:"items_hash,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ValidationBatchGroup) Reset() {
+	*x = ValidationBatchGroup{}
+	mi := &file_rootlayer_validation_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ValidationBatchGroup) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ValidationBatchGroup) ProtoMessage() {}
+
+func (x *ValidationBatchGroup) ProtoReflect() protoreflect.Message {
+	mi := &file_rootlayer_validation_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ValidationBatchGroup.ProtoReflect.Descriptor instead.
+func (*ValidationBatchGroup) Descriptor() ([]byte, []int) {
+	return file_rootlayer_validation_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ValidationBatchGroup) GetSubnetId() string {
+	if x != nil {
+		return x.SubnetId
+	}
+	return ""
+}
+
+func (x *ValidationBatchGroup) GetRootHeight() uint64 {
+	if x != nil {
+		return x.RootHeight
+	}
+	return 0
+}
+
+func (x *ValidationBatchGroup) GetRootHash() string {
+	if x != nil {
+		return x.RootHash
+	}
+	return ""
+}
+
+func (x *ValidationBatchGroup) GetAggregatorId() string {
+	if x != nil {
+		return x.AggregatorId
+	}
+	return ""
+}
+
+func (x *ValidationBatchGroup) GetCompletedAt() int64 {
+	if x != nil {
+		return x.CompletedAt
+	}
+	return 0
+}
+
+func (x *ValidationBatchGroup) GetSignatures() []*ValidationSignature {
+	if x != nil {
+		return x.Signatures
+	}
+	return nil
+}
+
+func (x *ValidationBatchGroup) GetSignerBitmap() []byte {
+	if x != nil {
+		return x.SignerBitmap
+	}
+	return nil
+}
+
+func (x *ValidationBatchGroup) GetTotalWeight() uint64 {
+	if x != nil {
+		return x.TotalWeight
+	}
+	return 0
+}
+
+func (x *ValidationBatchGroup) GetItems() []*ValidationItem {
+	if x != nil {
+		return x.Items
+	}
+	return nil
+}
+
+func (x *ValidationBatchGroup) GetItemsHash() []byte {
+	if x != nil {
+		return x.ItemsHash
+	}
+	return nil
+}
+
 var File_rootlayer_validation_proto protoreflect.FileDescriptor
 
 const file_rootlayer_validation_proto_rawDesc = "" +
@@ -338,7 +562,33 @@ const file_rootlayer_validation_proto_rawDesc = "" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x10\n" +
 	"\x03msg\x18\x02 \x01(\tR\x03msg\x12\x1d\n" +
 	"\n" +
-	"receipt_id\x18\x03 \x01(\tR\treceiptIdBDZBgithub.com/pin-protocol/rootlayer/api/gen/go/rootlayer;rootlayerv1b\x06proto3"
+	"receipt_id\x18\x03 \x01(\tR\treceiptId\"\xce\x01\n" +
+	"\x0eValidationItem\x12\x1b\n" +
+	"\tintent_id\x18\x01 \x01(\tR\bintentId\x12#\n" +
+	"\rassignment_id\x18\x02 \x01(\tR\fassignmentId\x12\x19\n" +
+	"\bagent_id\x18\x03 \x01(\tR\aagentId\x12\x1f\n" +
+	"\vexecuted_at\x18\x04 \x01(\x03R\n" +
+	"executedAt\x12\x1f\n" +
+	"\vresult_hash\x18\x05 \x01(\fR\n" +
+	"resultHash\x12\x1d\n" +
+	"\n" +
+	"proof_hash\x18\x06 \x01(\fR\tproofHash\"\x97\x03\n" +
+	"\x14ValidationBatchGroup\x12\x1b\n" +
+	"\tsubnet_id\x18\x01 \x01(\tR\bsubnetId\x12\x1f\n" +
+	"\vroot_height\x18\x02 \x01(\x04R\n" +
+	"rootHeight\x12\x1b\n" +
+	"\troot_hash\x18\x03 \x01(\tR\brootHash\x12#\n" +
+	"\raggregator_id\x18\x04 \x01(\tR\faggregatorId\x12!\n" +
+	"\fcompleted_at\x18\x05 \x01(\x03R\vcompletedAt\x12A\n" +
+	"\n" +
+	"signatures\x18\x06 \x03(\v2!.rootlayer.v1.ValidationSignatureR\n" +
+	"signatures\x12#\n" +
+	"\rsigner_bitmap\x18\a \x01(\fR\fsignerBitmap\x12!\n" +
+	"\ftotal_weight\x18\b \x01(\x04R\vtotalWeight\x122\n" +
+	"\x05items\x18\t \x03(\v2\x1c.rootlayer.v1.ValidationItemR\x05items\x12\x1d\n" +
+	"\n" +
+	"items_hash\x18\n" +
+	" \x01(\fR\titemsHashBDZBgithub.com/pin-protocol/rootlayer/api/gen/go/rootlayer;rootlayerv1b\x06proto3"
 
 var (
 	file_rootlayer_validation_proto_rawDescOnce sync.Once
@@ -352,19 +602,23 @@ func file_rootlayer_validation_proto_rawDescGZIP() []byte {
 	return file_rootlayer_validation_proto_rawDescData
 }
 
-var file_rootlayer_validation_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_rootlayer_validation_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_rootlayer_validation_proto_goTypes = []any{
-	(*ValidationBundle)(nil),    // 0: rootlayer.v1.ValidationBundle
-	(*ValidationSignature)(nil), // 1: rootlayer.v1.ValidationSignature
-	(*ValidationAck)(nil),       // 2: rootlayer.v1.ValidationAck
+	(*ValidationBundle)(nil),     // 0: rootlayer.v1.ValidationBundle
+	(*ValidationSignature)(nil),  // 1: rootlayer.v1.ValidationSignature
+	(*ValidationAck)(nil),        // 2: rootlayer.v1.ValidationAck
+	(*ValidationItem)(nil),       // 3: rootlayer.v1.ValidationItem
+	(*ValidationBatchGroup)(nil), // 4: rootlayer.v1.ValidationBatchGroup
 }
 var file_rootlayer_validation_proto_depIdxs = []int32{
 	1, // 0: rootlayer.v1.ValidationBundle.signatures:type_name -> rootlayer.v1.ValidationSignature
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	1, // 1: rootlayer.v1.ValidationBatchGroup.signatures:type_name -> rootlayer.v1.ValidationSignature
+	3, // 2: rootlayer.v1.ValidationBatchGroup.items:type_name -> rootlayer.v1.ValidationItem
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_rootlayer_validation_proto_init() }
@@ -378,7 +632,7 @@ func file_rootlayer_validation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_rootlayer_validation_proto_rawDesc), len(file_rootlayer_validation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

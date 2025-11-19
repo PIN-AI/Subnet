@@ -1,3 +1,6 @@
+//go:build scripts
+// +build scripts
+
 package main
 
 import (
@@ -34,7 +37,7 @@ type Config struct {
 func main() {
 	// Command line flags
 	var (
-		configPath      = flag.String("config", "./config/config.yaml", "Path to config file")
+		configPath      = flag.String("config", "./config/blockchain.yaml", "Path to config file")
 		network         = flag.String("network", "base_sepolia", "Network name (base, base_sepolia, local)")
 		rpcURL          = flag.String("rpc", "", "RPC URL (overrides config)")
 		subnetContract  = flag.String("subnet", "", "Subnet contract address (overrides config)")
@@ -49,9 +52,9 @@ func main() {
 
 		// Staking options
 		useERC20        = flag.Bool("erc20", false, "Use ERC20 staking instead of ETH")
-		validatorStake  = flag.String("validator-stake", "0.1", "Validator stake amount in ETH")
-		matcherStake    = flag.String("matcher-stake", "0.05", "Matcher stake amount in ETH")
-		agentStake      = flag.String("agent-stake", "0.05", "Agent stake amount in ETH")
+		validatorStake  = flag.String("validator-stake", "0.01", "Validator stake amount in ETH")
+		matcherStake    = flag.String("matcher-stake", "0.01", "Matcher stake amount in ETH")
+		agentStake      = flag.String("agent-stake", "0.01", "Agent stake amount in ETH")
 
 		// Registration options
 		skipValidator   = flag.Bool("skip-validator", false, "Skip validator registration")

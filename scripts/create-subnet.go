@@ -1,3 +1,6 @@
+//go:build scripts
+// +build scripts
+
 package main
 
 import (
@@ -35,7 +38,7 @@ type Config struct {
 func main() {
 	// Command line flags
 	var (
-		configPath     = flag.String("config", "./config/config.yaml", "Path to config file")
+		configPath     = flag.String("config", "./config/blockchain.yaml", "Path to config file")
 		network        = flag.String("network", "base_sepolia", "Network name")
 		rpcURL         = flag.String("rpc", "", "RPC URL (overrides config)")
 		privateKeyHex  = flag.String("key", "", "Private key hex (overrides config)")
@@ -235,10 +238,11 @@ Transaction: %s
 Created at: %s
 
 # To register participants on this subnet:
-PIN_BASE_SEPOLIA_INTENT_MANAGER="0xD04d23775D3B8e028e6104E31eb0F6c07206EB46" \
-PIN_BASE_SEPOLIA_SUBNET_FACTORY="0x493c5B1c7Ee9eDe75bf2e57e5250E695F929A796" \
-PIN_BASE_SEPOLIA_STAKING_MANAGER="0xAc11AE66c7831A70Bea940b0AE16c967f940cB65" \
-PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER="0xe947c9C4183D583fB2E500aD05B105Fa01abE57e" \
+PIN_BASE_SEPOLIA_STAKING_MANAGER="0x7f887e88014e3AF57526B68b431bA16e6968C015" \
+PIN_BASE_SEPOLIA_AGENT_IDENTITY_REGISTRY="0x8eE140ce440AdfdD18a2671E3351beCD01d856bd" \
+PIN_BASE_SEPOLIA_SUBNET_FACTORY="0x2b5D7032297Df52ADEd7020c3B825f048Cd2df3E" \
+PIN_BASE_SEPOLIA_CHECKPOINT_MANAGER="0x6A61BA20D910576A6c0B39175A6CF98358bB4008" \
+PIN_BASE_SEPOLIA_INTENT_MANAGER="0xB2f092E696B33b7a95e1f961369Bb59611CAd093" \
 ./scripts/register.sh --subnet %s
 `,
 		hex.EncodeToString(subnetID[:]),

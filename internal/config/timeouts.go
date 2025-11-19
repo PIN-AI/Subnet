@@ -94,9 +94,6 @@ func DefaultTimeoutConfig() *TimeoutConfig {
 
 // NetworkConfig contains network and address configurations
 type NetworkConfig struct {
-	// NATS configuration
-	NATSUrl string `mapstructure:"nats_url"`
-
 	// Default ports
 	ValidatorGRPCPort string `mapstructure:"validator_grpc_port"`
 	MatcherGRPCPort   string `mapstructure:"matcher_grpc_port"`
@@ -111,7 +108,6 @@ type NetworkConfig struct {
 // DefaultNetworkConfig returns default network configurations
 func DefaultNetworkConfig() *NetworkConfig {
 	return &NetworkConfig{
-		NATSUrl:              "nats://127.0.0.1:4222",
 		ValidatorGRPCPort:    ":9090",
 		MatcherGRPCPort:      ":8090",
 		MetricsPort:          ":9095",
