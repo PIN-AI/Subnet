@@ -29,6 +29,12 @@ subnet-logs/
 .env
 .env.local
 .env.*.local
+*.pem
+*.key
+*_key
+*_private_key
+credentials.json
+secrets/
 
 # Production configuration files (keep templates only)
 config/subnet.yaml
