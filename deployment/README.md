@@ -41,7 +41,8 @@ deployment/
 
 ```bash
 # From project root
-cd /Users/ty/pinai/protocol/Subnet
+# Navigate to the Subnet project root
+cd <your-path-to-subnet-repo>
 
 # ⚠️ For macOS users: MUST use build-linux-* targets!
 # For Apple Silicon (M1/M2/M3):
