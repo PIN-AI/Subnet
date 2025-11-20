@@ -288,29 +288,23 @@ func (s *Server) Stop() error {
 
 // AddIntent adds a new intent and starts its bidding window
 func (s *Server) AddIntent(intent *rootpb.Intent) error {
-	s.logger.Infof("[DEBUG] AddIntent called for: %s", intent.IntentId)
-
 	if intent == nil || intent.IntentId == "" {
-		s.logger.Error("[DEBUG] AddIntent: intent is nil or missing intent_id")
 		return fmt.Errorf("intent is nil or missing intent_id")
 	}
 
 	now := time.Now().Unix()
 
-	s.logger.Infof("[DEBUG] AddIntent: acquiring lock for %s", intent.IntentId)
 	s.mu.Lock()
-	s.logger.Infof("[DEBUG] AddIntent: lock acquired for %s", intent.IntentId)
 
 	if _, exists := s.intents[intent.IntentId]; exists {
 		s.mu.Unlock()
-		s.logger.Infof("[DEBUG] AddIntent: intent %s already exists, returning error", intent.IntentId)
+		s.logger.Debugf("Intent %s already exists, ignoring duplicate", intent.IntentId)
 		return fmt.Errorf("intent %s already exists", intent.IntentId)
 	}
 
 	if expired, reason := s.intentExpired(intent, now); expired {
 		s.mu.Unlock()
-		s.logger.Warnf("Ignoring expired intent %s (%s, now=%d)", intent.IntentId, reason, now)
-		s.logger.Info("[DEBUG] AddIntent: intent expired, returning nil")
+		s.logger.Warnf("Ignoring expired intent %s (%s)", intent.IntentId, reason)
 		return nil
 	}
 
@@ -1095,11 +1089,9 @@ func (s *Server) pullIntentsFromRootLayer(ctx context.Context) {
 
 			// Process streaming intents
 			streamBroken := false
-			s.logger.Info("[DEBUG] Starting intent stream processing loop")
 			for !streamBroken {
 				select {
 				case <-ctx.Done():
-					s.logger.Info("[DEBUG] Context cancelled in stream processing")
 					return
 				case intent, ok := <-intentStream:
 					if !ok {
@@ -1109,16 +1101,12 @@ func (s *Server) pullIntentsFromRootLayer(ctx context.Context) {
 						break
 					}
 
-					s.logger.Infof("[DEBUG] Received intent from stream channel: %s", intent.IntentId)
 					// Add the intent to our system
 					if err := s.AddIntent(intent); err != nil {
-						s.logger.Errorf("Failed to add intent from stream: %v", err)
-					} else {
-						s.logger.Info("[DEBUG] Intent AddIntent call succeeded (no error)")
+						s.logger.Debugf("Failed to add intent from stream: %v", err)
 					}
 				}
 			}
-			s.logger.Info("[DEBUG] Exited intent stream processing loop")
 		}
 
 		// Polling fallback mode

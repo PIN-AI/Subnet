@@ -429,38 +429,33 @@ func (c *CompleteClient) StreamIntents(ctx context.Context, subnetID string) (<-
 
 	go func() {
 		defer close(intentChan)
-		c.logger.Info("[DEBUG] Intent stream goroutine started")
 
 		for {
 			select {
 			case <-ctx.Done():
-				c.logger.Info("[DEBUG] Intent stream context cancelled, exiting")
+				c.logger.Debug("Intent stream context cancelled, exiting")
 				return
 			default:
 			}
 
-			c.logger.Debug("[DEBUG] Calling stream.Recv()...")
 			// Directly receive from stream (no nested goroutine)
 			event, err := stream.Recv()
 			if err != nil {
-				c.logger.Errorf("[DEBUG] Intent stream error: %v", err)
+				c.logger.Errorf("Intent stream error: %v", err)
 				return
 			}
 
-			c.logger.Debugf("[DEBUG] Received event from stream: %+v", event)
-
 			// Extract intent from event
 			if event != nil && event.Intent != nil {
-				c.logger.Infof("[DEBUG] Forwarding intent %s to channel", event.Intent.IntentId)
 				select {
 				case intentChan <- event.Intent:
-					c.logger.Info("[DEBUG] Intent forwarded successfully")
+					// Successfully forwarded
 				case <-ctx.Done():
-					c.logger.Info("[DEBUG] Context cancelled while forwarding intent")
+					c.logger.Debug("Context cancelled while forwarding intent")
 					return
 				}
 			} else {
-				c.logger.Warn("[DEBUG] Received event with nil intent")
+				c.logger.Warn("Received event with nil intent")
 			}
 		}
 	}()
