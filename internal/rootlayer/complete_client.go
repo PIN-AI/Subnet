@@ -77,9 +77,9 @@ func (c *CompleteClient) Connect() error {
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                60 * time.Second, // 增加到60秒，降低ping频率
-			Timeout:             20 * time.Second, // 增加超时时间
-			PermitWithoutStream: false,            // 没有stream时不发ping
+			Time:                30 * time.Second, // Send keepalive ping every 30s
+			Timeout:             10 * time.Second, // Wait 10s for ping response
+			PermitWithoutStream: true,             // Send pings even with active streams
 		}),
 	}
 
@@ -429,20 +429,38 @@ func (c *CompleteClient) StreamIntents(ctx context.Context, subnetID string) (<-
 
 	go func() {
 		defer close(intentChan)
+		c.logger.Info("[DEBUG] Intent stream goroutine started")
+
 		for {
+			select {
+			case <-ctx.Done():
+				c.logger.Info("[DEBUG] Intent stream context cancelled, exiting")
+				return
+			default:
+			}
+
+			c.logger.Debug("[DEBUG] Calling stream.Recv()...")
+			// Directly receive from stream (no nested goroutine)
 			event, err := stream.Recv()
 			if err != nil {
-				c.logger.Errorf("Intent stream error: %v", err)
+				c.logger.Errorf("[DEBUG] Intent stream error: %v", err)
 				return
 			}
 
+			c.logger.Debugf("[DEBUG] Received event from stream: %+v", event)
+
 			// Extract intent from event
-			if event.Intent != nil {
+			if event != nil && event.Intent != nil {
+				c.logger.Infof("[DEBUG] Forwarding intent %s to channel", event.Intent.IntentId)
 				select {
 				case intentChan <- event.Intent:
+					c.logger.Info("[DEBUG] Intent forwarded successfully")
 				case <-ctx.Done():
+					c.logger.Info("[DEBUG] Context cancelled while forwarding intent")
 					return
 				}
+			} else {
+				c.logger.Warn("[DEBUG] Received event with nil intent")
 			}
 		}
 	}()

@@ -11,14 +11,16 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	sdk "github.com/PIN-AI/intent-protocol-contract-sdk/sdk"
 	"github.com/PIN-AI/intent-protocol-contract-sdk/sdk/addressbook"
-	rootpb "subnet/proto/rootlayer"
 	"subnet/internal/blockchain"
 	"subnet/internal/crypto"
 	"subnet/internal/logging"
 	"subnet/internal/rootlayer"
+	rootpb "subnet/proto/rootlayer"
 	pb "subnet/proto/subnet"
 )
 
@@ -33,8 +35,8 @@ type Server struct {
 	rootlayerClient rootlayer.Client
 	verifier        *blockchain.ParticipantVerifier
 	allowUnverified bool
-	sdkClient       *sdk.Client          // SDK client for on-chain operations
-	strategy        BidMatchingStrategy  // Bid matching strategy for bid selection
+	sdkClient       *sdk.Client         // SDK client for on-chain operations
+	strategy        BidMatchingStrategy // Bid matching strategy for bid selection
 
 	// Intent and bid management
 	mu              sync.RWMutex
@@ -195,21 +197,21 @@ func NewServerWithStrategy(cfg *Config, logger logging.Logger, strategy BidMatch
 	}
 
 	s := &Server{
-		cfg:                   cfg,
-		logger:                logger,
-		signer:                signer,
-		rootlayerClient:       rootlayerClient,
-		sdkClient:             sdkClient,
-		strategy:              strategy,
-		intents:               make(map[string]*IntentWithWindow),
-		bidsByIntent:          make(map[string][]*pb.Bid),
-		matchingResults:       make(map[string]*pb.MatchingResult),
+		cfg:                cfg,
+		logger:             logger,
+		signer:             signer,
+		rootlayerClient:    rootlayerClient,
+		sdkClient:          sdkClient,
+		strategy:           strategy,
+		intents:            make(map[string]*IntentWithWindow),
+		bidsByIntent:       make(map[string][]*pb.Bid),
+		matchingResults:    make(map[string]*pb.MatchingResult),
 		assignments:        make(map[string]*rootpb.Assignment),
 		pendingAssignments: make(map[string]*PendingAssignment),
 		assignmentAgents:   make(map[string]string),
 		intentStreams:      make(map[string]chan *pb.MatcherIntentUpdate),
-		agentTasks:            make(map[string]chan *pb.ExecutionTask),
-		taskStreams:           make(map[string]chan *pb.ExecutionTask),
+		agentTasks:         make(map[string]chan *pb.ExecutionTask),
+		taskStreams:        make(map[string]chan *pb.ExecutionTask),
 	}
 
 	return s, nil
@@ -286,15 +288,32 @@ func (s *Server) Stop() error {
 
 // AddIntent adds a new intent and starts its bidding window
 func (s *Server) AddIntent(intent *rootpb.Intent) error {
+	s.logger.Infof("[DEBUG] AddIntent called for: %s", intent.IntentId)
+
+	if intent == nil || intent.IntentId == "" {
+		s.logger.Error("[DEBUG] AddIntent: intent is nil or missing intent_id")
+		return fmt.Errorf("intent is nil or missing intent_id")
+	}
+
+	now := time.Now().Unix()
+
+	s.logger.Infof("[DEBUG] AddIntent: acquiring lock for %s", intent.IntentId)
 	s.mu.Lock()
+	s.logger.Infof("[DEBUG] AddIntent: lock acquired for %s", intent.IntentId)
 
 	if _, exists := s.intents[intent.IntentId]; exists {
 		s.mu.Unlock()
+		s.logger.Infof("[DEBUG] AddIntent: intent %s already exists, returning error", intent.IntentId)
 		return fmt.Errorf("intent %s already exists", intent.IntentId)
 	}
 
-	// Create intent with window
-	now := time.Now().Unix()
+	if expired, reason := s.intentExpired(intent, now); expired {
+		s.mu.Unlock()
+		s.logger.Warnf("Ignoring expired intent %s (%s, now=%d)", intent.IntentId, reason, now)
+		s.logger.Info("[DEBUG] AddIntent: intent expired, returning nil")
+		return nil
+	}
+
 	window := &IntentWithWindow{
 		Intent:           intent,
 		BiddingStartTime: now,
@@ -305,13 +324,10 @@ func (s *Server) AddIntent(intent *rootpb.Intent) error {
 
 	s.intents[intent.IntentId] = window
 	s.bidsByIntent[intent.IntentId] = make([]*pb.Bid, 0)
+	s.mu.Unlock()
 
 	s.logger.Infof("Added intent %s with bidding window %d seconds",
 		intent.IntentId, s.cfg.BiddingWindowSec)
-
-	// Unlock before broadcasting to avoid deadlock
-	// (broadcastIntentUpdate needs to acquire read lock)
-	s.mu.Unlock()
 
 	// Notify all streams about new intent
 	s.broadcastIntentUpdate(intent.IntentId, "NEW_INTENT")
@@ -355,8 +371,8 @@ func (s *Server) checkAndCloseWindows() {
 			// Trigger matching
 			s.performMatching(intentID)
 
-			// Notify streams
-			s.broadcastIntentUpdate(intentID, "WINDOW_CLOSED")
+			// Notify streams (already holding lock)
+			s.broadcastIntentUpdateLocked(intentID, "WINDOW_CLOSED")
 		}
 	}
 }
@@ -372,16 +388,44 @@ func (s *Server) performMatching(intentID string) {
 		return
 	}
 
-	s.logger.Infof("Performing matching for intent %s with %d bids using strategy: %s",
-		intentID, len(bids), s.strategy.Name())
+	s.logger.Info("Performing matching for intent",
+		"intent_id", intentID,
+		"bids_count", len(bids),
+		"strategy", s.strategy.Name())
+
+	// Log bid details for debugging
+	for i, bid := range bids {
+		agentAddr := "unknown"
+		if metadata, ok := bid.Metadata["chain_address"]; ok {
+			agentAddr = metadata
+		}
+		s.logger.Debug("Bid received",
+			"bid_num", i+1,
+			"agent_id", bid.AgentId,
+			"price", bid.Price,
+			"chain_address", agentAddr)
+	}
 
 	// Use strategy to select winner and runner-ups
 	winner, runnerUps, err := s.strategy.SelectWinner(window.Intent, bids)
 	if err != nil {
-		s.logger.Errorf("Matching strategy failed for intent %s: %v", intentID, err)
+		s.logger.Error("Matching strategy failed",
+			"intent_id", intentID,
+			"error", err.Error())
 		window.Matched = true
 		return
 	}
+
+	// Log winner details
+	winnerChainAddr := "unknown"
+	if metadata, ok := winner.Metadata["chain_address"]; ok {
+		winnerChainAddr = metadata
+	}
+	s.logger.Info("Winner selected for matching",
+		"agent_id", winner.AgentId,
+		"price", winner.Price,
+		"chain_address", winnerChainAddr,
+		"bid_id", winner.BidId)
 
 	// Extract runner-up IDs
 	runnerUpIDs := make([]string, 0, len(runnerUps))
@@ -419,8 +463,8 @@ func (s *Server) performMatching(intentID string) {
 	s.logger.Infof("Intent %s matched to agent %s (bid: %s, price: %d)",
 		intentID, winner.AgentId, winner.BidId, winner.Price)
 
-	// Notify about matching
-	s.broadcastIntentUpdate(intentID, "MATCHED")
+	// Notify about matching (already holding lock)
+	s.broadcastIntentUpdateLocked(intentID, "MATCHED")
 }
 
 // createAssignment creates an assignment from the winning bid
@@ -502,15 +546,18 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 	if s.cfg.EnableChainSubmit && s.sdkClient != nil {
 		chainTxHash, err := s.submitAssignmentToChainSync(assignmentID, intentID, winningBid.BidId, agentChainAddress, assignmentSignature)
 		if err != nil {
-			s.logger.Errorf("CRITICAL: Failed to submit assignment to blockchain, aborting assignment: %v", err)
-			// Mark intent as failed or retry matching
-			window := s.intents[intentID]
-			if window != nil {
-				window.Matched = false // Allow re-matching
-			}
+			s.logger.Error("CRITICAL: Assignment blockchain submission failed, aborting assignment",
+				"assignment_id", assignmentID,
+				"intent_id", intentID,
+				"agent_id", winningBid.AgentId,
+				"error", err.Error())
+
+			s.handleAssignmentFailureLocked(intentID, assignmentID, "blockchain_submission")
 			return
 		}
-		s.logger.Infof("Assignment %s submitted to blockchain, tx: %s", assignmentID, chainTxHash)
+		s.logger.Info("Assignment submitted to blockchain successfully",
+			"assignment_id", assignmentID,
+			"tx_hash", chainTxHash)
 	}
 
 	// Step 2: Submit to RootLayer (required for validators to query assignment)
@@ -520,14 +567,26 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 		defer cancel()
 
 		if err := s.rootlayerClient.SubmitAssignment(ctx, rootAssignment); err != nil {
-			s.logger.Errorf("Failed to submit assignment to RootLayer: %v", err)
-			// Continue anyway - agent can still execute, but validation may fail
-			// TODO: Consider retry mechanism or abort strategy
-		} else {
-			s.logger.Infof("Assignment %s submitted to RootLayer successfully", assignmentID)
+			s.logger.Error("CRITICAL: Assignment RootLayer submission failed, aborting assignment",
+				"assignment_id", assignmentID,
+				"intent_id", intentID,
+				"agent_id", winningBid.AgentId,
+				"error", err.Error(),
+				"reason", "validators cannot query assignment without RootLayer data")
+
+			s.handleAssignmentFailureLocked(intentID, assignmentID, "rootlayer_submission", err)
+			return
 		}
+		s.logger.Info("Assignment submitted to RootLayer successfully",
+			"assignment_id", assignmentID)
 	} else {
-		s.logger.Warnf("RootLayer client not available, skipping assignment submission to RootLayer")
+		s.logger.Warn("CRITICAL: RootLayer client not available, aborting assignment",
+			"assignment_id", assignmentID,
+			"intent_id", intentID,
+			"reason", "validators cannot query assignment without RootLayer")
+
+		s.handleAssignmentFailureLocked(intentID, assignmentID, "missing_rootlayer_client")
+		return
 	}
 
 	// Step 3: Send task to agent (sync) - agent can also poll for tasks
@@ -535,15 +594,20 @@ func (s *Server) createAssignment(intentID string, winningBid *pb.Bid) {
 }
 
 // broadcastIntentUpdate sends update to all listening streams
+// broadcastIntentUpdate sends update to all listening streams (acquires lock)
 func (s *Server) broadcastIntentUpdate(intentID, updateType string) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.broadcastIntentUpdateLocked(intentID, updateType)
+}
+
+// broadcastIntentUpdateLocked sends update to all listening streams (caller must hold lock)
+func (s *Server) broadcastIntentUpdateLocked(intentID, updateType string) {
 	update := &pb.MatcherIntentUpdate{
 		IntentId:   intentID,
 		UpdateType: updateType,
 		Timestamp:  time.Now().Unix(),
 	}
-
-	s.mu.RLock()
-	defer s.mu.RUnlock()
 
 	s.logger.Debugf("Broadcasting intent update: intent_id=%s update_type=%s streams=%d",
 		intentID, updateType, len(s.intentStreams))
@@ -1003,6 +1067,8 @@ func (s *Server) pullIntentsFromRootLayer(ctx context.Context) {
 	retryDelay := 5 * time.Second
 	maxRetryDelay := 60 * time.Second
 	pollingInterval := 15 * time.Second
+	streamRestoreInterval := time.Minute
+	pollingRequestTimeout := 10 * time.Second
 	streamingMode := true
 
 	s.logger.Info("Started pulling intents from RootLayer")
@@ -1029,9 +1095,11 @@ func (s *Server) pullIntentsFromRootLayer(ctx context.Context) {
 
 			// Process streaming intents
 			streamBroken := false
+			s.logger.Info("[DEBUG] Starting intent stream processing loop")
 			for !streamBroken {
 				select {
 				case <-ctx.Done():
+					s.logger.Info("[DEBUG] Context cancelled in stream processing")
 					return
 				case intent, ok := <-intentStream:
 					if !ok {
@@ -1041,27 +1109,37 @@ func (s *Server) pullIntentsFromRootLayer(ctx context.Context) {
 						break
 					}
 
+					s.logger.Infof("[DEBUG] Received intent from stream channel: %s", intent.IntentId)
 					// Add the intent to our system
 					if err := s.AddIntent(intent); err != nil {
 						s.logger.Errorf("Failed to add intent from stream: %v", err)
+					} else {
+						s.logger.Info("[DEBUG] Intent AddIntent call succeeded (no error)")
 					}
 				}
 			}
+			s.logger.Info("[DEBUG] Exited intent stream processing loop")
 		}
 
 		// Polling fallback mode
 		if !streamingMode {
 			s.logger.Infof("Using polling mode (interval: %v)", pollingInterval)
-			ticker := time.NewTicker(pollingInterval)
-			defer ticker.Stop()
+			pollTicker := time.NewTicker(pollingInterval)
+			restoreTicker := time.NewTicker(streamRestoreInterval)
 
+		pollingLoop:
 			for {
 				select {
 				case <-ctx.Done():
+					pollTicker.Stop()
+					restoreTicker.Stop()
 					return
-				case <-ticker.C:
-					// Try to get pending intents via polling
-					intents, err := s.rootlayerClient.GetPendingIntents(ctx, subnetID)
+				case <-pollTicker.C:
+					// Bound RootLayer polling so we don't freeze this loop forever
+					pollCtx, pollCancel := context.WithTimeout(ctx, pollingRequestTimeout)
+					intents, err := s.rootlayerClient.GetPendingIntents(pollCtx, subnetID)
+					pollCancel()
+
 					if err != nil {
 						s.logger.Warnf("Failed to poll intents: %v", err)
 						continue
@@ -1074,16 +1152,15 @@ func (s *Server) pullIntentsFromRootLayer(ctx context.Context) {
 						}
 					}
 
-					// Periodically try to restore streaming
-					if time.Now().Unix()%60 == 0 { // Every ~60 seconds
-						s.logger.Info("Attempting to restore streaming mode...")
-						streamingMode = true
-						ticker.Stop()
-						goto retry
-					}
+				case <-restoreTicker.C:
+					// Periodically try to restore streaming regardless of poll tick alignment
+					s.logger.Info("Attempting to restore streaming mode...")
+					streamingMode = true
+					pollTicker.Stop()
+					restoreTicker.Stop()
+					break pollingLoop
 				}
 			}
-		retry:
 		}
 	}
 }
@@ -1133,9 +1210,30 @@ func (s *Server) submitAssignmentToChainSync(assignmentID, intentID, bidID, agen
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	s.logger.Infof("Submitting assignment %s to blockchain...", assignmentID)
+	s.logger.Info("Submitting assignment to blockchain",
+		"assignment_id", assignmentID,
+		"intent_id", intentID,
+		"agent", agentID)
+
 	tx, err := s.sdkClient.Assignment.AssignIntentsBySignatures(ctx, []sdk.SignedAssignment{signedAssignment})
 	if err != nil {
+		// Log blockchain submission failure with structured fields
+		s.logger.Error("Blockchain assignment submission failed",
+			"assignment_id", assignmentID,
+			"intent_id", intentID,
+			"bid_id", bidID,
+			"agent_address", agentID,
+			"matcher_address", s.signer.GetAddress(),
+			"signature_len", len(signature),
+			"error", err.Error())
+
+		// Add diagnostic hint for common errors
+		if strings.Contains(err.Error(), "execution reverted") {
+			s.logger.Warn("Transaction reverted - check agent registration and stake status",
+				"agent_address", agentID,
+				"hint", "verify with: cast call <INTENT_MANAGER> 'getAgent(address)' "+agentID)
+		}
+
 		return "", fmt.Errorf("blockchain submission failed: %w", err)
 	}
 
@@ -1147,6 +1245,86 @@ func (s *Server) submitAssignmentToChainSync(assignmentID, intentID, bidID, agen
 	// If you need to wait for confirmation, add: bind.WaitMined(ctx, s.sdkClient.Backend, tx)
 
 	return txHash, nil
+}
+
+// handleAssignmentFailureLocked cleans up state after assignment submission failure.
+// MUST be called while holding s.mu (createAssignment already does this).
+func (s *Server) handleAssignmentFailureLocked(intentID, assignmentID, stage string, errDetails ...error) {
+	now := time.Now().Unix()
+	window := s.intents[intentID]
+
+	if len(errDetails) > 0 {
+		if status.Code(errDetails[0]) == codes.InvalidArgument {
+			// InvalidArgument typically indicates RootLayer rejected the payload (e.g., expired intent)
+			s.logger.Warn("RootLayer returned InvalidArgument during assignment submission",
+				"intent_id", intentID,
+				"assignment_id", assignmentID,
+				"stage", stage,
+				"error", errDetails[0].Error())
+		}
+	}
+
+	if window != nil {
+		if expired, reason := s.intentExpired(window.Intent, now); expired {
+			s.logger.Warn("Dropping expired intent after assignment failure",
+				"intent_id", intentID,
+				"stage", stage,
+				"reason", reason)
+			s.dropIntentLocked(intentID)
+		} else {
+			s.logger.Warn("Re-opening bidding window after assignment failure",
+				"intent_id", intentID,
+				"stage", stage)
+			s.resetIntentWindowLocked(intentID)
+		}
+	}
+
+	s.cleanupPendingAssignmentLocked(assignmentID)
+}
+
+// intentExpired determines if the intent has exceeded either deadline or intent_expiration.
+func (s *Server) intentExpired(intent *rootpb.Intent, now int64) (bool, string) {
+	if intent == nil {
+		return false, ""
+	}
+
+	if intent.IntentExpiration > 0 && now >= intent.IntentExpiration {
+		return true, fmt.Sprintf("intent_expiration=%d (UTC %s)", intent.IntentExpiration, time.Unix(intent.IntentExpiration, 0).UTC().Format(time.RFC3339))
+	}
+
+	if intent.Deadline > 0 && now >= intent.Deadline {
+		return true, fmt.Sprintf("deadline=%d (UTC %s)", intent.Deadline, time.Unix(intent.Deadline, 0).UTC().Format(time.RFC3339))
+	}
+
+	return false, ""
+}
+
+// resetIntentWindowLocked re-opens the bidding window for a retry. Caller must hold s.mu.
+func (s *Server) resetIntentWindowLocked(intentID string) {
+	window, exists := s.intents[intentID]
+	if !exists {
+		return
+	}
+
+	now := time.Now().Unix()
+	window.WindowClosed = false
+	window.Matched = false
+	window.BiddingStartTime = now
+	window.BiddingEndTime = now + int64(s.cfg.BiddingWindowSec)
+	delete(s.matchingResults, intentID)
+}
+
+// dropIntentLocked removes all matcher state for an intent. Caller must hold s.mu.
+func (s *Server) dropIntentLocked(intentID string) {
+	delete(s.intents, intentID)
+	delete(s.bidsByIntent, intentID)
+	delete(s.matchingResults, intentID)
+}
+
+// cleanupPendingAssignmentLocked removes pending assignment bookkeeping for aborted flows.
+func (s *Server) cleanupPendingAssignmentLocked(assignmentID string) {
+	delete(s.pendingAssignments, assignmentID)
+	delete(s.assignmentAgents, assignmentID)
 }
 
 // submitAssignmentToChain submits assignment to blockchain asynchronously (legacy, for background retry)
