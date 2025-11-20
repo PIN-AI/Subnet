@@ -147,7 +147,7 @@ echo "  Public:  $PUBKEY"
 echo ""
 
 # 3. Create subnet with threshold 1/1 (for single node)
-./scripts/create-subnet.sh \
+PRIVATE_KEY=$PRIVKEY ./scripts/create-subnet.sh \
   --name "Test Subnet Single Node" \
   --threshold-num 1 \
   --threshold-denom 1
