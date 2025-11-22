@@ -200,13 +200,6 @@ cp .env.example .env
 
 📚 **Complete guide**: See [Quick Start](docs/quick_start.md) for key generation, registration, and deployment options.
 
-## Protobuf Regeneration
-
-```bash
-make proto
-```
-
-This regenerates Go protobuf code from the proto definitions. The generated files are already included in the repository.
 
 ## Security Notes
 
