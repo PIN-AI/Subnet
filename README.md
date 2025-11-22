@@ -1,8 +1,34 @@
 # PinAI Subnet Template
 
-**Production-ready Subnet template** for building custom intent execution networks on PinAI protocol. This implementation coordinates matcher and validator services with built-in batch submission support for high-throughput operations.
+**Production-ready Subnet template** for building custom intent execution networks on PinAI protocol.
 
-## 🚀 What is This?
+## 🌐 What is a Subnet?
+
+A **Subnet** is the execution layer in the PinAI protocol where tasks get done. Think of it as a decentralized task marketplace:
+
+```
+User submits Intent (task + budget)
+        ↓
+   [Matcher] ─── Collects bids from Agents, selects winner
+        ↓
+    [Agent] ─── Executes the task, submits result
+        ↓
+  [Validator] ─── Verifies result, reaches consensus, anchors to blockchain
+        ↓
+User receives verified result
+```
+
+**Key Roles:**
+
+| Role | What it does | Analogy |
+|------|--------------|---------|
+| **Matcher** | Coordinates task assignment, runs auctions | Auction house |
+| **Agent** | Executes tasks (AI inference, compute, etc.) | Service provider |
+| **Validator** | Verifies results, ensures honesty | Referee |
+
+---
+
+## 🚀 What is This Repo?
 
 This is a **template** for creating your own Subnet. Fork this repository to:
 - Build specialized intent execution networks (e.g., image processing, data computation, AI inference)
@@ -92,15 +118,32 @@ The only requirement? **Speak the protocol.** As long as your components impleme
 
 ### 🔧 Customize & Develop
 
-**Understanding the System:**
-- [Architecture Overview](docs/architecture.md) – Component design and data flow
-- [Consensus Modes](docs/consensus_modes.md) – Raft+Gossip vs CometBFT comparison
-- [Consensus Data Format](docs/consensus_data_format_compatibility.md) – Internal data structures
+> 💡 **This is a Template** – Fork this repo and customize everything to fit your use case!
 
-**Customization Guides:**
+**🤖 For Agent Developers (Service Providers):**
+
+Want to provide services on an existing subnet? You only need to develop an Agent – no infrastructure required.
+
+| Resource | Description |
+|----------|-------------|
+| [Agent SDK (Go/Python)](https://github.com/PIN-AI/subnet-sdk) | Build your own Agent |
+| [Quick Start](https://github.com/PIN-AI/subnet-sdk/blob/main/docs/quick-start.md) | Get your first Agent running in 5 minutes |
+| [Tutorial](https://github.com/PIN-AI/subnet-sdk/blob/main/docs/tutorial.md) | Complete development guide |
+
+Your Agent can implement any business logic: AI inference, data processing, blockchain indexing, etc.
+
+**🏗️ For Subnet Operators (Infrastructure):**
+
+Running your own subnet? Customize these components:
+
 - [Matcher Strategy](docs/subnet_deployment_guide.md#matcher-strategy-customization) – Custom bid matching logic
 - [Validator Logic](docs/subnet_deployment_guide.md#validator-logic-customization) – Custom validation rules
-- [Agent SDK](https://github.com/PIN-AI/subnet-sdk) – Build agents using the Go/Python SDKs (separate repository)
+- [Consensus Modes](docs/consensus_modes.md) – Choose Raft+Gossip or CometBFT
+
+**📖 Understanding the System:**
+
+- [Architecture Overview](docs/architecture.md) – Component design and data flow
+- [Consensus Data Format](docs/consensus_data_format_compatibility.md) – Internal data structures
 
 ---
 
@@ -133,42 +176,7 @@ The only requirement? **Speak the protocol.** As long as your components impleme
 cd Subnet
 make build       # builds matcher, validator, mock-rootlayer, simple-agent
 make test        # go test ./...
-make proto       # regenerate Go protobufs from ../pin_protocol
 ```
-
-## Logs and Debugging
-
-After starting the subnet, logs are written to `./subnet-logs/`:
-
-```
-subnet-logs/
-├── matcher.log        # Intent ingestion, bid matching
-├── validator-1.log    # Consensus, validation, checkpoint
-├── validator-2.log
-├── validator-3.log
-├── agent.log          # Task execution, results
-└── rootlayer.log      # RootLayer mock (if used)
-```
-
-**View logs:**
-```bash
-# Watch all logs
-tail -f subnet-logs/*.log
-
-# Watch specific service
-tail -f subnet-logs/matcher.log
-tail -f subnet-logs/validator-1.log
-
-# Search for events
-grep "Received intent" subnet-logs/matcher.log
-grep "ValidationBundle" subnet-logs/validator-*.log
-
-# Docker logs
-docker compose logs -f
-docker compose logs -f validator-1
-```
-
-📚 **Complete debugging guide**: See [`docs/quick_start.md`](docs/quick_start.md#-log-files-and-debugging) for log patterns, tracing intents, and troubleshooting common issues.
 
 You can also build individual binaries:
 
@@ -181,121 +189,16 @@ go build -o bin/simple-agent   ./cmd/simple-agent
 
 ## Running the Services
 
-### Quick Start (Recommended)
-
-Use the automated startup script:
-
 ```bash
-# Copy and configure environment
+# 1. Configure environment
 cp .env.example .env
-# Edit .env and fill in VALIDATOR_KEYS and VALIDATOR_PUBKEYS (see the "Validator Keys" section below)
+# Edit .env with your keys (see docs/quick_start.md)
 
-# Start complete subnet (matcher + validators + agent)
+# 2. Start subnet
 ./scripts/start-subnet.sh
 ```
 
-### Manual Service Startup (Advanced)
-
-For development and debugging:
-
-```bash
-# Terminal 1 – Matcher
-./bin/matcher -grpc :8090 -http :8091
-
-# Terminal 2 – Validator
-# Option 1: Use hierarchical config files (recommended)
-./bin/validator --subnet-config config/subnet.yaml --validator-config config/validator-1.yaml --key <your_private_key_hex>
-
-# Option 2: Use command-line parameters only (advanced)
-./bin/validator \
-  -id validator-1 \
-  -key <your_private_key_hex> \
-  -grpc 9090 \
-  -subnet-id 0x0000000000000000000000000000000000000000000000000000000000000003 \
-  -validators 1 \
-  -threshold-num 1 \
-  -threshold-denom 1 \
-  -validator-pubkeys "validator-1:<your_public_key_hex>" \
-  -rootlayer-endpoint 3.17.208.238:9001 \
-  -enable-rootlayer
-
-# IMPORTANT for multi-node deployment:
-# - Do NOT use config file for multiple validators (port conflicts)
-# - Use ./scripts/start-subnet.sh which automatically handles port allocation
-# - Or create separate config files (config/validator-1.yaml, validator-2.yaml, etc.)
-#
-# Note: Command-line parameters override config file values
-
-# Optional – Demo agent (uses subnet-sdk/go internally)
-./bin/simple-agent -matcher localhost:8090 -subnet-id 0x... -id my-agent -name MyAgent
-```
-
-Refer to `docs/scripts_guide.md` for automation details. Production agents should use the separate SDK repositories at https://github.com/PIN-AI/subnet-sdk (Go and Python implementations).
-
-### Validator Keys
-
-Each validator requires an ECDSA key pair for signing consensus messages:
-- **Private key**: 64 hexadecimal characters (kept secret, used for signing)
-- **Public key**: 130 hexadecimal characters starting with `04` (shared with other validators)
-
-**Generate keys for 3 validators:**
-
-```bash
-# 1. Build the derive-pubkey tool (if not already built)
-make build
-
-# 2. Generate private keys
-PRIVKEY1=$(openssl rand -hex 32)
-PRIVKEY2=$(openssl rand -hex 32)
-PRIVKEY3=$(openssl rand -hex 32)
-
-# 3. Derive public keys from private keys
-PUBKEY1=$(./bin/derive-pubkey "$PRIVKEY1")
-PUBKEY2=$(./bin/derive-pubkey "$PRIVKEY2")
-PUBKEY3=$(./bin/derive-pubkey "$PRIVKEY3")
-
-# 4. Display for verification
-echo "Validator 1:"
-echo "  Private: $PRIVKEY1"
-echo "  Public:  $PUBKEY1"
-echo ""
-echo "Validator 2:"
-echo "  Private: $PRIVKEY2"
-echo "  Public:  $PUBKEY2"
-echo ""
-echo "Validator 3:"
-echo "  Private: $PRIVKEY3"
-echo "  Public:  $PUBKEY3"
-```
-
-**Populate `.env` with comma-separated lists:**
-
-```bash
-VALIDATOR_KEYS="$PRIVKEY1,$PRIVKEY2,$PRIVKEY3"
-VALIDATOR_PUBKEYS="$PUBKEY1,$PUBKEY2,$PUBKEY3"
-```
-
-**Key Format Requirements:**
-- ✅ Private key: Exactly 64 hex characters (0-9, a-f)
-- ✅ Public key: Exactly 130 hex characters starting with `04`
-- ✅ No `0x` prefix needed
-- ✅ Keys must match the order: first private key → first public key
-
-**Troubleshooting:**
-- "derive-pubkey: command not found" → Run `make build` first
-- "Error decoding private key" → Check private key is exactly 64 hex characters
-- Keys don't work → Ensure VALIDATOR_KEYS and VALIDATOR_PUBKEYS are in the same order
-
-**Security:**
-- ⚠️ Use test-only keys with NO real funds
-- ⚠️ Never commit `.env` to git (already in `.gitignore`)
-- ⚠️ Each validator must have a unique private key
-
-📚 See [`docs/quick_start.md`](docs/quick_start.md) for complete key generation walkthrough.
-
-### On-Chain Participant Verification
-
-The matcher and validator can optionally verify participants against the Subnet contract. Set the `blockchain` section in `config/blockchain.yaml` or the `CHAIN_*` environment variables (`CHAIN_ENABLED`, `CHAIN_RPC_URL`, `SUBNET_CONTRACT_ADDRESS`, `CHAIN_ENABLE_FALLBACK`, `ALLOW_UNVERIFIED_AGENTS`) to enable it. Helper scripts `scripts/create-subnet.sh` and `scripts/register.sh` handle blockchain operations using the SDK.
+📚 **Complete guide**: See [Quick Start](docs/quick_start.md) for key generation, registration, and deployment options.
 
 ## Protobuf Regeneration
 
