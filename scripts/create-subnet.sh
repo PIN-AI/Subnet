@@ -27,7 +27,8 @@ NC='\033[0m' # No Color
 CONFIG_FILE="${PROJECT_ROOT}/config/blockchain.yaml"
 NETWORK="${NETWORK:-base_sepolia}"
 RPC_URL="${RPC_URL:-https://sepolia.base.org}"
-PRIVATE_KEY="${PRIVATE_KEY}"
+# Use PRIVATE_KEY if set, otherwise fallback to PRIVKEY (from tutorials), then TEST_PRIVATE_KEY
+PRIVATE_KEY="${PRIVATE_KEY:-${PRIVKEY:-${TEST_PRIVATE_KEY}}}"
 SUBNET_NAME="${SUBNET_NAME:-My Test Subnet}"
 AUTO_APPROVE="${AUTO_APPROVE:-true}"
 

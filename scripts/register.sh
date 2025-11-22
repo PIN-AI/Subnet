@@ -28,7 +28,8 @@ CONFIG_FILE="${PROJECT_ROOT}/config/blockchain.yaml"
 NETWORK="${NETWORK:-base_sepolia}"
 RPC_URL="${RPC_URL:-https://sepolia.base.org}"
 SUBNET_CONTRACT="${SUBNET_CONTRACT}"
-PRIVATE_KEY="${PRIVATE_KEY}"
+# Use PRIVATE_KEY if set, otherwise fallback to PRIVKEY (from tutorials), then TEST_PRIVATE_KEY
+PRIVATE_KEY="${PRIVATE_KEY:-${PRIVKEY:-${TEST_PRIVATE_KEY}}}"
 DOMAIN="${DOMAIN:-validator.example.com}"
 
 # Fixed smart contract addresses for Base Sepolia (updated 2025-11-03)

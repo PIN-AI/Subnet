@@ -1,5 +1,11 @@
 # 🚀 PinAI Subnet - Quick Start
 
+**📍 Prerequisites:** Complete [Environment Setup](environment_setup.md) first (install Go, Docker, protoc, etc.)
+
+**Time to complete:** ~15 minutes (after environment setup)
+
+---
+
 ## 🤔 Which Guide Should I Follow?
 
 **Quick decision table:**
@@ -17,6 +23,184 @@
 
 ---
 
+## 📦 Project Setup
+
+Before starting deployment, clone the repository and build the project:
+
+### 1. Clone the Repository
+
+```bash
+# Clone Subnet repository
+git clone https://github.com/PIN-AI/Subnet.git
+cd Subnet
+```
+
+### 2. Install Go Dependencies
+
+```bash
+# Download and install Go module dependencies
+go mod download
+
+# Verify dependencies
+go mod verify
+```
+
+### 3. Install Go Protocol Buffer Plugins
+
+```bash
+# Install protoc-gen-go (for Protocol Buffers)
+go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+
+# Install protoc-gen-go-grpc (for gRPC)
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+# Verify installations
+which protoc-gen-go
+which protoc-gen-go-grpc
+```
+
+### 4. Build All Binaries
+
+```bash
+# Build all components using Makefile
+make build
+
+# This creates binaries in ./bin/:
+# - matcher
+# - validator
+# - mock-rootlayer
+# - simple-agent
+# - derive-pubkey
+# - create-subnet
+# - register-participants
+```
+
+### 5. Verify Build
+
+```bash
+# Check built binaries
+ls -lh bin/
+
+# Test running a binary
+./bin/matcher --help
+./bin/validator --help
+```
+
+---
+
+## 🚀 Single Node Quick Start (5 minutes)
+
+**Want to test quickly? Copy-paste this complete workflow:**
+
+This creates a single-node subnet with threshold 1/1 - perfect for testing and development.
+
+### ⚠️ **Prerequisites: Get Testnet ETH First!**
+
+**You need Base Sepolia testnet ETH before proceeding:**
+
+- **Required**: At least **0.05 ETH** on Base Sepolia testnet
+- **Why**:
+  - Create subnet: ~0.005 ETH (gas)
+  - Register components: 3 × 0.01 ETH stake + gas = ~0.033 ETH
+
+**Get testnet ETH:**
+
+1. **Option 1: Coinbase Faucet** (Recommended)
+   - Visit: https://www.coinbase.com/faucets/base-ethereum-goerli-faucet
+   - Connect wallet and request testnet ETH
+
+2. **Option 2: Bridge from Sepolia**
+   - Get Sepolia ETH from https://sepoliafaucet.com
+   - Bridge to Base Sepolia: https://bridge.base.org
+
+3. **Verify your balance:**
+   ```bash
+   # Check on block explorer (replace with your address)
+   open https://sepolia.basescan.org/address/0xYourAddress
+   ```
+
+> 💡 **Tip**: Generate your private key first, derive the address, then fund it before proceeding.
+
+---
+
+```bash
+# Navigate to project directory
+cd Subnet
+
+# 1. Build tools (if not already done)
+make build
+
+# 2. Generate validator key
+PRIVKEY=$(openssl rand -hex 32)
+PUBKEY=$(./bin/derive-pubkey "$PRIVKEY")
+
+# Get your wallet address
+ADDRESS=$(cast wallet address $PRIVKEY 2>/dev/null || echo "Install foundry to see address")
+echo "Your Address: $ADDRESS"
+echo "⚠️  FUND THIS ADDRESS WITH 0.05+ ETH ON BASE SEPOLIA BEFORE CONTINUING!"
+echo "   Check balance: https://sepolia.basescan.org/address/$ADDRESS"
+read -p "Press Enter after funding..."
+
+echo "Generated validator key:"
+echo "  Private: $PRIVKEY"
+echo "  Public:  $PUBKEY"
+echo ""
+
+# 3. Create subnet with threshold 1/1 (for single node)
+PRIVATE_KEY=$PRIVKEY ./scripts/create-subnet.sh \
+  --name "Test Subnet Single Node" \
+  --threshold-num 1 \
+  --threshold-denom 1
+
+# 📝 SAVE the output: Subnet ID and Contract Address
+# Example output:
+#   Subnet ID: 0x0000000000000000000000000000000000000000000000000000000000000008
+#   Contract Address: 0x340B34AeE852A64360596eBf14039f76419e0bA7
+
+# 4. Register components (replace with your values from step 3)
+SUBNET_CONTRACT="<paste_contract_address_here>"
+PRIVATE_KEY="$PRIVKEY" ./scripts/register.sh --subnet "$SUBNET_CONTRACT"
+
+# 5. Configure .env
+# Copy from template (contains all fixed network settings)
+cp .env.example .env
+
+# Edit .env and update these fields:
+#   NUM_VALIDATORS=1
+#   VALIDATOR_KEYS=<paste from step 2>
+#   VALIDATOR_PUBKEYS=<paste from step 2>
+#   TEST_PRIVATE_KEY=<paste from step 2>
+#   SUBNET_ID=<paste from step 3>
+#
+# Quick edit: nano .env
+
+# 6. Start subnet
+./scripts/start-subnet.sh
+```
+
+**What happens:**
+- ✅ Creates subnet with 1/1 threshold (1 signature needed from 1 validator)
+- ✅ Registers Validator, Matcher, and Agent
+- ✅ Configures single-node environment
+- ✅ Starts all services
+
+**Verify it's running:**
+```bash
+# Check processes
+ps aux | grep -E "bin/(matcher|validator|simple-agent)" | grep -v grep
+
+# View logs
+tail -f subnet-logs/*.log
+```
+
+**Stop services:**
+```bash
+pkill -f 'bin/matcher|bin/validator|bin/simple-agent'
+```
+
+> 💡 **Next steps:** Once you verify single-node works, see [Multi-Node Setup](#option-2-traditional-deployment) for production deployment.
+
+---
 ## 🚀 Single Node Quick Start (5 minutes)
 
 **Want to test quickly? Copy-paste this complete workflow:**
@@ -91,16 +275,17 @@ SUBNET_CONTRACT="<paste_contract_address_here>"
 PRIVATE_KEY="$PRIVKEY" ./scripts/register.sh --subnet "$SUBNET_CONTRACT"
 
 # 5. Configure .env
-cat >> .env <<EOF
+# Copy from template (contains all fixed network settings)
+cp .env.example .env
 
-# Single Node Configuration - $(date)
-NUM_VALIDATORS=1
-VALIDATOR_KEYS=$PRIVKEY
-VALIDATOR_PUBKEYS=$PUBKEY
-TEST_PRIVATE_KEY=$PRIVKEY
-SUBNET_ID=<paste_subnet_id_here>
-SUBNET_CONTRACT=$SUBNET_CONTRACT
-EOF
+# Edit .env and update these fields:
+#   NUM_VALIDATORS=1
+#   VALIDATOR_KEYS=<paste from step 2>
+#   VALIDATOR_PUBKEYS=<paste from step 2>
+#   TEST_PRIVATE_KEY=<paste from step 2>
+#   SUBNET_ID=<paste from step 3>
+#
+# Quick edit: nano .env
 
 # 6. Start subnet
 ./scripts/start-subnet.sh

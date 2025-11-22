@@ -12,7 +12,7 @@
 - Install required tools (openssl, protoc, make)
 
 **Next steps:**
-- ✅ After setup → Choose deployment: [Docker](../deployment/README.md) or [Manual](subnet_deployment_guide.md)
+- ✅ After setup → Continue to [Quick Start Guide](quick_start.md) for deployment
 
 ---
 
@@ -24,10 +24,9 @@ Complete guide for setting up your development environment for PinAI Subnet.
 - [Core Dependencies](#core-dependencies)
 - [Optional Tools](#optional-tools)
 - [Installation Instructions](#installation-instructions)
-- [Project Setup](#project-setup)
-- [Configuration](#configuration)
 - [Verification](#verification)
 - [Troubleshooting](#troubleshooting)
+- [Next Steps](#next-steps)
 
 ---
 
@@ -288,215 +287,44 @@ sudo usermod -aG docker $USER
 
 ---
 
-## Project Setup
-
-### 1. Clone the Repository
-
-```bash
-# Clone Subnet repository
-git clone https://github.com/PIN-AI/Subnet.git
-cd Subnet
-```
-
-### 2. Install Go Dependencies
-
-```bash
-# Download and install Go module dependencies
-go mod download
-
-# Verify dependencies
-go mod verify
-```
-
-### 3. Install Go Protocol Buffer Plugins
-
-```bash
-# Install protoc-gen-go (for Protocol Buffers)
-go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-
-# Install protoc-gen-go-grpc (for gRPC)
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-
-# Verify installations
-which protoc-gen-go
-which protoc-gen-go-grpc
-```
-
-### 4. Build All Binaries
-
-```bash
-# Build all components using Makefile
-make build
-
-# This creates binaries in ./bin/:
-# - matcher
-# - validator
-# - mock-rootlayer
-# - simple-agent
-```
-
-### 5. Verify Build
-
-```bash
-# Check built binaries
-ls -lh bin/
-
-# Test running a binary
-./bin/matcher --help
-./bin/validator --help
-```
-
----
-
-## Configuration
-
-### 1. Obtain Testnet ETH
-
-> ⚠️ **REQUIRED BEFORE PROCEEDING**: You need **at least 0.05 ETH** on Base Sepolia testnet.
-
-**Why you need testnet ETH:**
-- Create subnet: ~0.005 ETH (gas fees)
-- Register Validator: 0.01 ETH stake + ~0.001 ETH gas
-- Register Matcher: 0.01 ETH stake + ~0.001 ETH gas
-- Register Agent: 0.01 ETH stake + ~0.001 ETH gas
-- **Total required**: ≥ **0.05 ETH** on Base Sepolia
-
-**Steps:**
-
-1. **Get a wallet**:
-   - Create with MetaMask or use existing wallet
-   - Save your private key securely
-
-2. **Get testnet ETH**:
-   - **Option 1 (Recommended)**: [Coinbase Faucet](https://www.coinbase.com/faucets/base-ethereum-goerli-faucet)
-   - **Option 2**: Bridge from Sepolia to Base Sepolia using [official bridge](https://bridge.base.org/)
-   - **Option 3**: Request from [Base Discord](https://discord.gg/buildonbase) #faucet channel
-
-3. **Verify balance**:
-   ```bash
-   # Check your balance at Base Sepolia Explorer
-   # https://sepolia.basescan.org/address/YOUR_ADDRESS
-   ```
-
-4. **Save configuration**:
-   ```bash
-   # Create .env file (DO NOT commit this!)
-   cat > .env << 'EOF'
-   PRIVATE_KEY=your_private_key_here
-   RPC_URL=https://sepolia.base.org
-   NETWORK=base_sepolia
-   EOF
-
-   # Secure the file
-   chmod 600 .env
-   ```
-
-### 2. Configure RootLayer Connection
-
-```bash
-# Set RootLayer endpoints (example - adjust for your deployment)
-export ROOTLAYER_GRPC="3.17.208.238:9001"
-export ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1"
-
-# Or add to your .env file
-echo "ROOTLAYER_GRPC=3.17.208.238:9001" >> .env
-echo "ROOTLAYER_HTTP=http://3.17.208.238:8081/api/v1" >> .env
-```
-
-### 3. Create Configuration Files
-
-The subnet uses a hierarchical configuration system:
-
-```bash
-# Copy configuration templates
-cp config/subnet.yaml.template config/subnet.yaml
-cp config/validator.yaml.template config/validator-1.yaml
-cp config/blockchain.yaml.template config/blockchain.yaml
-
-# Edit subnet-wide configuration
-nano config/subnet.yaml
-
-# Edit validator-specific configuration
-nano config/validator-1.yaml
-
-# Edit blockchain configuration (for create-subnet.sh and register.sh)
-nano config/blockchain.yaml
-```
-
-**Minimal config/subnet.yaml** (shared across all validators):
-```yaml
-subnet_id: "0x0000000000000000000000000000000000000000000000000000000000000003"
-
-rootlayer:
-  http_url: "http://3.17.208.238:8081/api/v1"
-  grpc_endpoint: "3.17.208.238:9001"
-
-blockchain:
-  rpc_url: "https://sepolia.base.org"
-  subnet_contract: "0xYOUR_SUBNET_CONTRACT"
-
-consensus:
-  checkpoint_interval: 10
-  signature_threshold_numerator: 2
-  signature_threshold_denominator: 3
-```
-
-**Minimal config/validator-1.yaml** (validator-specific):
-```yaml
-identity:
-  validator_id: "validator-1"
-
-network:
-  grpc_port: ":9090"
-  http_port: ":9091"
-```
-
-**Note**: Raft peers and Gossip seeds are auto-populated from the `--validator-pubkeys` flag at startup. See `docs/subnet_deployment_guide.md` for complete configuration guide.
-
----
-
 ## Verification
 
-### Test Your Setup
+After installation, verify that all tools are correctly installed:
 
 ```bash
-# 1. Verify Go works
-go version
-go env GOPATH
+# 1. Verify Go
+go version  # Should show go1.24.0 or later
+go env GOPATH  # Should show your GOPATH
 
-# 2. Verify protoc works
-protoc --version
+# 2. Verify Protocol Buffers
+protoc --version  # Should show libprotoc 3.20.0 or later
 
-# 3. Verify binaries run
-./bin/matcher --help
-./bin/validator --help
+# 3. Verify Git
+git --version  # Should show git 2.30.0 or later
 
-# 4. Run unit tests
-make test
-# or
-go test ./...
+# 4. Verify Docker (if installed)
+docker --version
+docker compose version
 
-# 5. Build protocol buffers
-make proto
+# 5. Verify Go plugins are in PATH
+which protoc-gen-go
+which protoc-gen-go-grpc
 
-# 6. Check Go module status
-go mod verify
-go mod tidy
+# If not found, install Go protobuf plugins:
+go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 ```
 
-### Run Quick E2E Test
-
-```bash
-# Set required environment variables
-export SUBNET_ID="0x0000000000000000000000000000000000000000000000000000000000000003"
-export ROOTLAYER_GRPC="3.17.208.238:9001"
-export ROOTLAYER_HTTP="http://3.17.208.238:8081/api/v1"
-
-# Run E2E test (non-interactive mode)
-./scripts/start-subnet.sh --no-interactive
-
-# Check for success
-echo $?  # Should be 0
+**Expected output**:
+```
+go version go1.24.0 darwin/arm64
+GOPATH=/Users/username/go
+libprotoc 24.4
+git version 2.39.0
+Docker version 24.0.0
+Docker Compose version v2.20.0
+/Users/username/go/bin/protoc-gen-go
+/Users/username/go/bin/protoc-gen-go-grpc
 ```
 
 ---
@@ -600,47 +428,6 @@ make build
 
 ---
 
-### Network/Blockchain Issues
-
-**Problem**: Cannot connect to RPC endpoint
-
-**Solution**:
-```bash
-# Test RPC connection
-curl -X POST \
-  -H "Content-Type: application/json" \
-  --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-  https://sepolia.base.org
-
-# Try alternative RPC
-export RPC_URL="https://base-sepolia.g.alchemy.com/v2/YOUR_API_KEY"
-
-# Check if RPC requires API key
-# Get free API key from:
-# - Alchemy: https://www.alchemy.com/
-# - Infura: https://infura.io/
-# - QuickNode: https://www.quicknode.com/
-```
-
----
-
-**Problem**: Insufficient funds for gas
-
-**Solution**:
-```bash
-# Check balance
-# Use block explorer: https://sepolia.basescan.org/
-
-# Get testnet ETH
-# - Base Sepolia Faucet: https://www.coinbase.com/faucets
-# - Or bridge from Sepolia ETH
-
-# Verify wallet address
-go run scripts/derive-pubkey.go $PRIVATE_KEY
-```
-
----
-
 ### Docker Issues
 
 **Problem**: `permission denied` for Docker commands
@@ -660,193 +447,58 @@ docker ps
 
 ---
 
-**Problem**: Port already in use
+**Problem**: Docker daemon not running
 
 **Solution**:
 ```bash
-# Find what's using the port
-lsof -i :8090  # Matcher
-lsof -i :9200  # Validator
-lsof -i :7400  # Validator Raft
-lsof -i :7950  # Validator Gossip
+# Linux: Start Docker service
+sudo systemctl start docker
+sudo systemctl enable docker
 
-# Kill the process
-kill -9 <PID>
+# macOS/Windows: Start Docker Desktop application
 
-# Or stop Docker container
+# Verify Docker is running
 docker ps
-docker stop <container_name>
-
-# Or change port in configuration
-```
-
----
-
-## Environment Variables Reference
-
-### Required for Development
-
-```bash
-# Go
-export PATH=$PATH:/usr/local/go/bin
-export GOPATH=$HOME/go
-export PATH=$PATH:$GOPATH/bin
-
-# Protocol Buffers
-export PATH=$PATH:$HOME/.local/bin  # If installed locally
-
-# Project-specific
-export SUBNET_ID="0x..."
-export ROOTLAYER_GRPC="host:port"
-export ROOTLAYER_HTTP="http://host:port"
-```
-
-### Required for Blockchain Operations
-
-```bash
-# Wallet
-export PRIVATE_KEY="0x..."
-export RPC_URL="https://sepolia.base.org"
-export NETWORK="base_sepolia"
-
-# Contracts
-export PIN_BASE_SEPOLIA_INTENT_MANAGER="0x..."
-export PIN_BASE_SEPOLIA_SUBNET_FACTORY="0x..."
-```
-
-### Optional
-
-```bash
-# Testing
-export ENABLE_CHAIN_SUBMIT="true"
-export CHAIN_RPC_URL="https://sepolia.base.org"
 ```
 
 ---
 
 ## Next Steps
 
-After completing environment setup:
+✅ **Environment setup complete!**
 
-1. **Create a Subnet**:
-   ```bash
-   ./scripts/create-subnet.sh --help
-   ```
+Now you're ready to deploy your subnet. Choose your deployment path:
 
-2. **Register Participants**:
-   ```bash
-   ./scripts/register.sh --help
-   ```
+### Option 1: Quick Start (Recommended)
+Follow the [Quick Start Guide](quick_start.md) to:
+- Clone the repository
+- Get testnet ETH
+- Create your subnet
+- Register components
+- Start your first validator
 
-3. **Run E2E Test**:
-   ```bash
-   ./scripts/start-subnet.sh --help
-   ```
+**Time to complete**: ~15 minutes
 
-4. **Read Documentation**:
-   - [Subnet Deployment Guide](./subnet_deployment_guide.md)
-   - [Scripts Guide](./scripts_guide.md)
-   - [Architecture Overview](./architecture.md)
+### Option 2: Detailed Manual Deployment
+For advanced users who want full control, see the [Subnet Deployment Guide](subnet_deployment_guide.md):
+- Manual command-line deployment
+- Custom configuration
+- Multi-validator setup
+- Production deployment
 
-5. **Join Community**:
-   - GitHub: https://github.com/PIN-AI/Subnet
-   - Discord: [link]
-   - Documentation: [link]
+**Time to complete**: ~30-45 minutes
 
----
+### Option 3: Docker Deployment
+For containerized deployment, see the [Docker Deployment Guide](../deployment/README.md):
+- Deploy with Docker Compose
+- Quick testing and development
+- Simplified networking
 
-## Development Workflow
-
-Typical development workflow after setup:
-
-```bash
-# 1. Make code changes
-vim internal/matcher/server.go
-
-# 2. Rebuild affected components
-make build
-
-# 3. Run tests
-go test ./internal/matcher/...
-
-# 4. Test locally
-./scripts/start-subnet.sh
-
-# 5. Check for issues
-go vet ./...
-go fmt ./...
-
-# 6. Commit changes
-git add .
-git commit -m "feat: improve matcher bidding logic"
-```
+**Time to complete**: ~10 minutes
 
 ---
 
-## Performance Tuning
-
-### For Production Deployment
-
-1. **Increase file descriptor limits**:
-   ```bash
-   ulimit -n 65536
-   # Make permanent in /etc/security/limits.conf
-   ```
-
-2. **Optimize Go runtime**:
-   ```bash
-   export GOMAXPROCS=$(nproc)  # Use all CPU cores
-   export GOGC=50  # More aggressive GC
-   ```
-
-3. **Monitor resources**:
-   ```bash
-   # Install monitoring tools
-   sudo apt install htop iotop nethogs
-
-   # Monitor processes
-   htop
-   ```
-
----
-
-## Security Best Practices
-
-1. **Never commit private keys** to version control
-2. **Use environment variables** for sensitive data
-3. **Set restrictive file permissions**: `chmod 600 config/*.yaml`
-4. **Use separate wallets** for testing and production
-5. **Keep dependencies updated**: `go get -u ./...`
-6. **Use firewall rules** to restrict access
-7. **Enable TLS** for production gRPC endpoints
-
----
-
-## Getting Help
-
-If you encounter issues:
-
-1. Check [Troubleshooting](#troubleshooting) section
-2. Review [Scripts Guide](./scripts_guide.md)
-3. Search GitHub Issues: https://github.com/PIN-AI/Subnet/issues
-4. Ask in Discord: [link]
-5. Create a new issue with:
-   - Operating system and version
-   - Go version (`go version`)
-   - Error messages (full output)
-   - Steps to reproduce
-
----
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `make test`
-5. Format code: `go fmt ./...`
-6. Submit a pull request
-
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for detailed guidelines.
+**Need help?** Check:
+- [Quick Start Guide](quick_start.md) - Step-by-step deployment
+- [Subnet Deployment Guide](subnet_deployment_guide.md) - Advanced deployment options
+- [FAQ](../deployment/FAQ.md) - Common questions

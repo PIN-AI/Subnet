@@ -26,15 +26,23 @@
 
 1. [Overview](#overview)
 2. [Validator Key Management](#validator-key-management)
-3. [Quick Deployment](#quick-deployment)
-4. [Manual Validator Startup](#manual-validator-startup)
-5. [Intent Execution Flow & Observability](#intent-execution-flow--observability)
-6. [Custom Development Guide](#custom-development-guide)
+3. [Configuration System](#configuration-system)
+4. [Environment Variables Reference](#environment-variables-reference)
+5. [Manual Validator Startup](#manual-validator-startup)
+6. [Intent Execution Flow & Observability](#intent-execution-flow--observability)
+7. [Custom Development Guide](#custom-development-guide)
    - [Matcher Strategy Customization](#matcher-strategy-customization)
    - [Validator Logic Customization](#validator-logic-customization)
    - [Agent Executor Customization](#agent-executor-customization)
-7. [Production Deployment](#production-deployment)
-8. [Troubleshooting](#troubleshooting)
+8. [Production Deployment](#production-deployment)
+   - [Configuration Checklist](#configuration-checklist)
+   - [Security Checklist](#security-checklist)
+   - [Security Best Practices](#security-best-practices)
+   - [Performance Tuning](#performance-tuning)
+   - [Docker Deployment](#docker-deployment)
+9. [Troubleshooting](#troubleshooting)
+   - [Network/Blockchain Issues](#networkblockchain-issues)
+   - [Port Issues](#port-issues)
 
 ---
 
@@ -128,99 +136,7 @@ VALIDATOR_PUBKEYS="pubkey1,pubkey2,pubkey3"
 
 ---
 
-## Quick Deployment
-
-### Prerequisites
-
-```bash
-# Install dependencies
-go version        # >= 1.21 required
-docker --version  # Optional for Docker-based flows
-
-# Clone repository
-git clone https://github.com/PIN-AI/Subnet
-cd Subnet
-
-# Build binaries once
-make build
-```
-
-### Step 1: Prepare environment
-
-Copy the template and fill in secrets:
-
-```bash
-cp .env.example .env
-```
-
-Populate at least:
-
-```bash
-TEST_PRIVATE_KEY=<matcher_signing_key>
-VALIDATOR_KEYS="key1,key2,key3"          # From the generator above
-VALIDATOR_PUBKEYS="pubkey1,pubkey2,pubkey3"
-SUBNET_ID=0x0000...0002                  # From scripts/create-subnet.sh
-ROOTLAYER_GRPC=3.17.208.238:9001
-ROOTLAYER_HTTP=http://3.17.208.238:8081
-NUM_VALIDATORS=3
-CONSENSUS_TYPE=raft                      # or cometbft
-```
-
-> `.env` is gitignored. For production, source values from a secure secret store instead of plaintext files.
-
-If you have not created a subnet yet, run:
-
-> ⚠️ **COST WARNING**: Creating a subnet costs **~0.001-0.005 ETH** in gas fees. Ensure you have at least **0.05 ETH** on Base Sepolia for subnet creation + participant registration.
-
-```bash
-export RPC_URL="https://sepolia.base.org"
-export PRIVATE_KEY="<your-chain-key>"
-export PIN_NETWORK="base_sepolia"
-./scripts/create-subnet.sh --name "My Test Subnet"
-
-# For single-node testing with threshold 1/1
-./scripts/create-subnet.sh --name "Test Subnet" --threshold-num 1 --threshold-denom 1
-
-# For 3-node deployment with threshold 2/3
-./scripts/create-subnet.sh --name "Dev Subnet" --threshold-num 2 --threshold-denom 3
-```
-
-Record the returned subnet ID and contract address, then plug them into `.env`.
-
-### Step 2: Launch everything
-
-```bash
-./scripts/start-subnet.sh
-```
-
-The launcher:
-
-- Builds binaries if needed
-- Starts matcher, validators, and optionally the sample agent
-- Stores logs in `./subnet-logs/`
-- Uses the validator keys and subnet configuration from `.env`
-
-Set `TEST_MODE=true` to keep processes in the foreground for easier debugging.
-
-### Step 3: Submit a test intent
-
-```bash
-./bin/submit-intent-signed \
-  --subnet-id "$SUBNET_ID" \
-  --intent-type "e2e-test" \
-  --params '{"task":"ping"}' \
-  --amount 100000000000000
-```
-
-Tail logs to confirm the flow:
-
-```bash
-tail -f subnet-logs/matcher.log \
-         subnet-logs/validator-1.log \
-         subnet-logs/agent.log
-```
-
-You should see bids arriving, a winner selected, the agent executing, and validators processing reports. See [Intent Execution Flow & Observability](#intent-execution-flow--observability) for expected log snippets.
+> 💡 **Want to get started quickly?** See the [Quick Start Guide](quick_start.md) for a streamlined deployment workflow. This guide focuses on manual deployment and advanced configuration.
 
 ---
 
@@ -416,6 +332,22 @@ Still supported for backward compatibility:
 
 See template files in `config/` directory for detailed configuration options and examples.
 
+---
+
+## Environment Variables Reference
+
+For a comprehensive list of all environment variables with detailed explanations, security notes, and usage examples, see [`.env.example`](../.env.example).
+
+Key variables required for deployment:
+- **Validator Keys**: `VALIDATOR_KEYS`, `VALIDATOR_PUBKEYS` (generated in [Validator Key Management](#validator-key-management))
+- **Subnet Configuration**: `SUBNET_ID`, `NUM_VALIDATORS`, `CONSENSUS_TYPE`
+- **RootLayer**: `ROOTLAYER_GRPC`, `ROOTLAYER_HTTP`
+- **Blockchain**: `RPC_URL`, `PRIVATE_KEY`, smart contract addresses
+
+> 💡 **Tip**: Copy `.env.example` to `.env` and fill in your values. All fixed network settings and contract addresses are already configured.
+
+---
+
 ## Manual Validator Startup
 
 Use manual startup when you need to tweak ports, run validators on separate machines, or debug consensus behaviour.
@@ -587,6 +519,8 @@ If you see “transaction success” but no data, check the agent log for execut
 
 Once these components are customized, follow the deployment steps above to roll them out.
 
+---
+
 ## Production Deployment
 
 ### Configuration Checklist
@@ -631,86 +565,51 @@ Once these components are customized, follow the deployment steps above to roll 
 - [ ] Configure monitoring and alerts
 - [ ] Set up auto-restart (systemd/Kubernetes)
 
-### Docker Deployment Example
+### Security Best Practices
 
-**Validator Dockerfile:**
+1. **Never commit private keys** to version control
+2. **Use environment variables** for sensitive data
+3. **Set restrictive file permissions**: `chmod 600 config/*.yaml`
+4. **Use separate wallets** for testing and production
+5. **Keep dependencies updated**: `go get -u ./...`
+6. **Use firewall rules** to restrict access
+7. **Enable TLS** for production gRPC endpoints
 
-```dockerfile
-FROM golang:1.21-alpine AS builder
-WORKDIR /app
-COPY . .
-RUN go build -o validator ./cmd/validator
+### Performance Tuning
 
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
-COPY --from=builder /app/validator /usr/local/bin/
-COPY config/subnet.yaml /etc/subnet/
-COPY config/validator-1.yaml /etc/subnet/
+#### For Production Deployment
 
-CMD ["validator", \
-     "--subnet-config", "/etc/subnet/subnet.yaml", \
-     "--validator-config", "/etc/subnet/validator-1.yaml"]
-```
+1. **Increase file descriptor limits**:
+   ```bash
+   ulimit -n 65536
+   # Make permanent in /etc/security/limits.conf
+   ```
 
-**Docker Compose:**
+2. **Optimize Go runtime**:
+   ```bash
+   export GOMAXPROCS=$(nproc)  # Use all CPU cores
+   export GOGC=50  # More aggressive GC
+   ```
 
-```yaml
-version: '3.8'
+3. **Monitor resources**:
+   ```bash
+   # Install monitoring tools
+   sudo apt install htop iotop nethogs
 
-services:
-  validator-1:
-    build:
-      context: .
-      dockerfile: Dockerfile.validator
-    volumes:
-      - ./config/subnet.yaml:/etc/subnet/subnet.yaml:ro
-      - ./config/validator-1.yaml:/etc/subnet/validator-1.yaml:ro
-    environment:
-      - VALIDATOR_PRIVATE_KEY=${VALIDATOR_1_KEY}
-    command: >
-      validator
-      --subnet-config /etc/subnet/subnet.yaml
-      --validator-config /etc/subnet/validator-1.yaml
-      --key ${VALIDATOR_1_KEY}
+   # Monitor processes
+   htop
+   ```
 
-  validator-2:
-    build:
-      context: .
-      dockerfile: Dockerfile.validator
-    volumes:
-      - ./config/subnet.yaml:/etc/subnet/subnet.yaml:ro
-      - ./config/validator-2.yaml:/etc/subnet/validator-2.yaml:ro
-    environment:
-      - VALIDATOR_PRIVATE_KEY=${VALIDATOR_2_KEY}
-    command: >
-      validator
-      --subnet-config /etc/subnet/subnet.yaml
-      --validator-config /etc/subnet/validator-2.yaml
-      --key ${VALIDATOR_2_KEY}
+### Docker Deployment
 
-  validator-3:
-    build:
-      context: .
-      dockerfile: Dockerfile.validator
-    volumes:
-      - ./config/subnet.yaml:/etc/subnet/subnet.yaml:ro
-      - ./config/validator-3.yaml:/etc/subnet/validator-3.yaml:ro
-    environment:
-      - VALIDATOR_PRIVATE_KEY=${VALIDATOR_3_KEY}
-    command: >
-      validator
-      --subnet-config /etc/subnet/subnet.yaml
-      --validator-config /etc/subnet/validator-3.yaml
-      --key ${VALIDATOR_3_KEY}
-```
+For containerized deployment with Docker and Docker Compose, see the complete [Docker Deployment Guide](../deployment/README.md).
 
-Start:
-
-```bash
-docker-compose up -d
-```
-
-**Note:** The new configuration system automatically populates Raft peers and Gossip seeds from `subnet.yaml`, simplifying multi-validator deployments.
+The Docker deployment guide includes:
+- Pre-built Docker images
+- Multi-validator docker-compose configuration
+- Network configuration and port mappings
+- Volume management for persistent data
+- Troubleshooting for Docker-specific issues
 
 ---
 
@@ -723,7 +622,72 @@ docker-compose up -d
 | Unknown validator/public key | Validator rejects reports or agents | Ensure every node shares the same ordered `validator_id:pubkey` map from [Validator Key Management](#validator-key-management). |
 | “Transaction success” but no output | Agent claims success but nothing in validator log | Follow the [Intent Execution Flow & Observability](#intent-execution-flow--observability) checklist and inspect `subnet-logs/agent.log` + `subnet-logs/validator-*.log` for `Processed execution report`. |
 | Bundles never finalize | Validators keep collecting reports without submission | Verify quorum (`threshold_num/threshold_denom`), Raft peer connectivity, and Gossip ports. Enable debug logs if signatures stop at < threshold. |
-| Validators stuck joining | Repeated Raft bootstrap or “node already exists” | Ensure only the first node uses `--raft-bootstrap`, delete stale `raft-data` dirs when changing IDs, and keep `--validator-pubkeys` identical across nodes. |
+| Validators stuck joining | Repeated Raft bootstrap or "node already exists" | Ensure only the first node uses `--raft-bootstrap`, delete stale `raft-data` dirs when changing IDs, and keep `--validator-pubkeys` identical across nodes. |
+
+### Network/Blockchain Issues
+
+**Problem**: Cannot connect to RPC endpoint
+
+**Solution**:
+```bash
+# Test RPC connection
+curl -X POST \
+  -H "Content-Type: application/json" \
+  --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
+  https://sepolia.base.org
+
+# Try alternative RPC
+export RPC_URL="https://base-sepolia.g.alchemy.com/v2/YOUR_API_KEY"
+
+# Check if RPC requires API key
+# Get free API key from:
+# - Alchemy: https://www.alchemy.com/
+# - Infura: https://infura.io/
+# - QuickNode: https://www.quicknode.com/
+```
+
+---
+
+**Problem**: Insufficient funds for gas
+
+**Solution**:
+```bash
+# Check balance
+# Use block explorer: https://sepolia.basescan.org/
+
+# Get testnet ETH
+# - Base Sepolia Faucet: https://www.coinbase.com/faucets
+# - Or bridge from Sepolia ETH
+
+# Verify wallet address
+go run scripts/derive-pubkey.go $PRIVATE_KEY
+```
+
+---
+
+### Port Issues
+
+**Problem**: Port already in use
+
+**Solution**:
+```bash
+# Find what's using the port
+lsof -i :8090  # Matcher
+lsof -i :9200  # Validator
+lsof -i :7400  # Validator Raft
+lsof -i :7950  # Validator Gossip
+
+# Kill the process
+kill -9 <PID>
+
+# Or stop Docker container
+docker ps
+docker stop <container_name>
+
+# Or change port in configuration
+```
+
+---
 
 Useful commands:
 
