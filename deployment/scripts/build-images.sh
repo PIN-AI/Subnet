@@ -28,18 +28,40 @@ PROJECT_ROOT="$(dirname "$DEPLOYMENT_DIR")"
 
 cd "$PROJECT_ROOT"
 
-# Auto-detect architecture
-ARCH=$(uname -m)
-if [ "$ARCH" = "x86_64" ]; then
-    TARGET_ARCH="amd64"
-elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
-    TARGET_ARCH="arm64"
-else
-    print_error "Unsupported architecture: $ARCH"
-    exit 1
-fi
+# Check for architecture parameter
+TARGET_ARCH="${1:-}"
 
-print_info "Detected architecture: $ARCH (Docker: $TARGET_ARCH)"
+if [ -n "$TARGET_ARCH" ]; then
+    # User specified architecture - validate it
+    if [ "$TARGET_ARCH" != "amd64" ] && [ "$TARGET_ARCH" != "arm64" ]; then
+        print_error "Invalid architecture: $TARGET_ARCH"
+        echo ""
+        echo "Usage: $0 [amd64|arm64]"
+        echo ""
+        echo "  amd64  - Build for x86_64 servers (most AWS EC2, Intel servers)"
+        echo "  arm64  - Build for ARM servers (AWS Graviton, Apple Silicon)"
+        echo "  (none) - Auto-detect based on current machine"
+        exit 1
+    fi
+    print_info "Using specified architecture: $TARGET_ARCH"
+else
+    # No parameter - auto-detect architecture
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "x86_64" ]; then
+        TARGET_ARCH="amd64"
+    elif [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then
+        TARGET_ARCH="arm64"
+    else
+        print_error "Unsupported architecture: $ARCH"
+        echo ""
+        echo "Please specify target architecture manually:"
+        echo "  $0 amd64   # For x86_64 servers"
+        echo "  $0 arm64   # For ARM servers"
+        exit 1
+    fi
+    print_info "Auto-detected architecture: $ARCH (Docker: $TARGET_ARCH)"
+    print_warning "To build for a different architecture, run: $0 [amd64|arm64]"
+fi
 echo ""
 
 # Check if binaries exist in architecture-specific directory
@@ -99,12 +121,15 @@ done
 echo ""
 
 # Build Docker image
-print_info "Building Docker image: pinai-subnet:latest"
+print_info "Building Docker image: pinai-subnet:latest (platform: linux/${TARGET_ARCH})"
 echo ""
 
 cd "$DEPLOYMENT_DIR/docker"
 
+# Use --platform to ensure correct architecture for cross-platform builds
+# This is essential when building on Apple Silicon for x86_64 servers
 docker build \
+    --platform linux/${TARGET_ARCH} \
     --build-arg TARGETARCH=${TARGET_ARCH} \
     -f Dockerfile \
     -t pinai-subnet:latest \
