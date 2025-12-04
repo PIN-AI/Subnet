@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: all build test proto clean
+.PHONY: all build test proto clean docker-amd64 docker-arm64 docker-export-amd64 docker-export-arm64
 
 all: build
 
@@ -45,6 +45,40 @@ build-linux-simple-agent:
 	@echo "Building Simple Agent for Linux $(ARCH)..."
 	@mkdir -p $(LINUX_BIN_DIR)
 	@CGO_ENABLED=0 GOOS=linux GOARCH=$(ARCH) go build -o $(LINUX_BIN_DIR)/simple-agent cmd/simple-agent/main.go
+
+# =============================================================================
+# Docker image targets
+# =============================================================================
+# These targets build Docker images for specific architectures.
+# Use these when deploying to servers with different architecture than your dev machine.
+#
+# Example: On Apple Silicon Mac, deploy to x86_64 AWS EC2:
+#   make docker-amd64
+#   make docker-export-amd64
+#
+# Example: On Apple Silicon Mac, deploy to AWS Graviton (ARM):
+#   make docker-arm64
+#   make docker-export-arm64
+
+# Build Docker image for AMD64 (x86_64) - most common server architecture
+docker-amd64: build-linux-amd64
+	@echo "Building Docker image for amd64 (x86_64)..."
+	@cd deployment && ./scripts/build-images.sh amd64
+
+# Build Docker image for ARM64 - AWS Graviton, Apple Silicon
+docker-arm64: build-linux-arm64
+	@echo "Building Docker image for arm64..."
+	@cd deployment && ./scripts/build-images.sh arm64
+
+# Build and export Docker image for AMD64 (one command for deployment)
+docker-export-amd64: docker-amd64
+	@echo "Exporting Docker image for amd64..."
+	@cd deployment && ./scripts/export-images.sh
+
+# Build and export Docker image for ARM64 (one command for deployment)
+docker-export-arm64: docker-arm64
+	@echo "Exporting Docker image for arm64..."
+	@cd deployment && ./scripts/export-images.sh
 
 build-all:
 	@echo "Building all Go packages..."

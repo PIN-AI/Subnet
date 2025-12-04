@@ -33,34 +33,31 @@ deployment/
 ### Prerequisites
 
 - Docker and Docker Compose installed
-- Pre-compiled binaries in `../bin/` directory
+- Go 1.21+ (for building binaries)
 
-### Step 1: Prepare Binaries
+### Step 1: Build Docker Images
 
-**IMPORTANT: Build Linux binaries for Docker deployment**
+**IMPORTANT: Choose based on TARGET SERVER architecture, not your development machine!**
 
 ```bash
-# From project root
 # Navigate to the Subnet project root
 cd <your-path-to-subnet-repo>
 
-# ⚠️ For macOS users: MUST use build-linux-* targets!
-# For Apple Silicon (M1/M2/M3):
-make build-linux-arm64
+# ⚠️ One command to build binaries + Docker image:
 
-# For Intel Mac or x86_64 servers:
-make build-linux-amd64
+# For x86_64 servers (most AWS EC2, Intel servers):
+make docker-amd64
 
-# Verify binaries exist and are in ELF format (not Mach-O)
-ls -lh bin/
-file bin/matcher bin/validator bin/simple-agent
-# Should show: "ELF 64-bit LSB executable" (NOT "Mach-O")
+# For ARM servers (AWS Graviton, ARM-based servers):
+make docker-arm64
+
+# ❌ DO NOT USE: make build (produces macOS format, won't work in Docker)
 ```
 
-**Why?**
+**Why cross-compile?**
 - `make build` on macOS produces **Mach-O** format (macOS only)
 - Docker containers need **ELF** format (Linux)
-- `make build-linux-*` cross-compiles to Linux ELF format
+- `make docker-*` cross-compiles to Linux ELF format and builds the Docker image
 
 ### Step 2: Configure Environment
 
@@ -70,13 +67,7 @@ cp ../.env.example .env
 nano .env  # Edit configuration
 ```
 
-### Step 3: Build Docker Images
-
-```bash
-./scripts/build-images.sh
-```
-
-### Step 4: Deploy
+### Step 3: Deploy
 
 ```bash
 ./scripts/deploy.sh
@@ -94,20 +85,28 @@ nano .env  # Edit configuration
 ### Export Images for Distribution
 
 ```bash
+# Export (includes architecture in filename)
 ./scripts/export-images.sh
-# Creates: pinai-subnet-images.tar.gz
+# Creates: pinai-subnet-dist-amd64-YYYYMMDD-HHMMSS.tar.gz (or arm64)
+
+# Or use one-command export (build + export):
+make docker-export-amd64   # For x86_64 servers
+make docker-export-arm64   # For ARM servers
 ```
 
 ### Deploy on Target Server
 
 ```bash
-# Transfer files
-scp pinai-subnet-images.tar.gz .env ubuntu@server:/opt/pinai/
-scp -r config scripts ubuntu@server:/opt/pinai/
+# Transfer the distribution package
+scp pinai-subnet-dist-amd64-*.tar.gz ubuntu@server:/opt/pinai/
 
 # On target server
 cd /opt/pinai
-docker load < pinai-subnet-images.tar.gz
+tar xzf pinai-subnet-dist-amd64-*.tar.gz
+cd pinai-subnet-dist-amd64-*/
+./install.sh
+cp .env.example .env
+nano .env  # Configure
 ./scripts/deploy.sh
 ```
 

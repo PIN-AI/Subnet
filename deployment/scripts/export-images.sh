@@ -32,16 +32,23 @@ if ! docker images pinai-subnet:latest | grep -q pinai-subnet; then
     print_error "Docker image 'pinai-subnet:latest' not found"
     echo ""
     echo "Please build the image first:"
-    echo "  ./scripts/build-images.sh"
+    echo "  ./scripts/build-images.sh [amd64|arm64]"
     echo ""
     exit 1
 fi
 
-# Output file
-TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-OUTPUT_FILE="pinai-subnet-${TIMESTAMP}.tar.gz"
+# Get architecture from the image
+IMAGE_ARCH=$(docker inspect pinai-subnet:latest --format '{{.Architecture}}')
+if [ -z "$IMAGE_ARCH" ]; then
+    print_warning "Could not detect image architecture, using 'unknown'"
+    IMAGE_ARCH="unknown"
+fi
 
-print_info "Exporting image: pinai-subnet:latest"
+# Output file with architecture in name
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+OUTPUT_FILE="pinai-subnet-${IMAGE_ARCH}-${TIMESTAMP}.tar.gz"
+
+print_info "Exporting image: pinai-subnet:latest (architecture: $IMAGE_ARCH)"
 echo ""
 
 # Save image
@@ -67,7 +74,7 @@ echo ""
 # Create distribution package
 print_info "Creating distribution package..."
 
-DIST_DIR="pinai-subnet-dist-${TIMESTAMP}"
+DIST_DIR="pinai-subnet-dist-${IMAGE_ARCH}-${TIMESTAMP}"
 mkdir -p "$DIST_DIR"
 
 # Copy necessary files
@@ -133,8 +140,9 @@ echo "======================================"
 echo ""
 echo "📦 Package: $DIST_TARBALL"
 echo "📏 Size: $DIST_SIZE"
+echo "🖥️  Architecture: $IMAGE_ARCH"
 echo ""
-echo "🚀 Deployment on target server:"
+echo "🚀 Deployment on target server ($IMAGE_ARCH):"
 echo ""
 echo "   # Transfer file"
 echo "   scp $DIST_TARBALL user@server:/opt/"

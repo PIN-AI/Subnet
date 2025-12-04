@@ -7,7 +7,7 @@
 ## 📋 Prerequisites
 
 - Docker & Docker Compose installed
-- Pre-compiled binaries (or distribution package)
+- Go 1.21+ (for building binaries on development machine)
 - Server with 8GB+ RAM recommended
 
 ---
@@ -18,22 +18,24 @@
 
 ```bash
 # On development machine
-# Navigate to the Subnet project root
 cd <your-path-to-subnet-repo>
 
-# ⚠️ IMPORTANT: Compile LINUX binaries for Docker!
-# For Apple Silicon (M1/M2/M3):
-make build-linux-arm64
+# ⚠️ IMPORTANT: Choose based on TARGET SERVER architecture!
+# (Not your development machine architecture)
 
-# For Intel Mac or x86_64 servers:
-make build-linux-amd64
+# For x86_64 servers (most AWS EC2, Intel servers):
+make docker-amd64
+
+# For ARM servers (AWS Graviton, ARM-based servers):
+make docker-arm64
 
 # ❌ DO NOT USE: make build
 # (produces macOS Mach-O format, won't work in Docker)
 
-# Build Docker image
-cd deployment
-./scripts/build-images.sh
+# Alternative: Manual steps
+# make build-linux-amd64              # Step 1: Build Linux binaries
+# cd deployment
+# ./scripts/build-images.sh amd64    # Step 2: Build Docker image
 ```
 
 ### Step 2: Configure Environment
@@ -67,29 +69,30 @@ Done! 🎉
 ### Create Distribution Package
 
 ```bash
-# On development machine
-cd deployment
-./scripts/export-images.sh
+# On development machine - one command to build + export:
+make docker-export-amd64   # For x86_64 servers (most AWS EC2)
+# OR
+make docker-export-arm64   # For ARM servers (AWS Graviton)
 
-# Creates: pinai-subnet-dist-YYYYMMDD-HHMMSS.tar.gz
+# Creates: pinai-subnet-dist-amd64-YYYYMMDD-HHMMSS.tar.gz (or arm64)
 ```
 
 ### Deploy on Target Server
 
 ```bash
-# Transfer package
-scp pinai-subnet-dist-*.tar.gz user@server:/opt/
+# Transfer package (example for amd64)
+scp pinai-subnet-dist-amd64-*.tar.gz user@server:/opt/
 
 # On target server
 cd /opt
-tar xzf pinai-subnet-dist-*.tar.gz
-cd pinai-subnet-dist-*/
+tar xzf pinai-subnet-dist-amd64-*.tar.gz
+cd pinai-subnet-dist-amd64-*/
 
 # Install
 ./install.sh
 
 # Configure
-cp ../.env.example .env
+cp .env.example .env
 nano .env
 
 # Deploy
@@ -194,17 +197,18 @@ docker compose -f docker/docker-compose.yml restart matcher
 ### Update Binaries
 
 ```bash
-# On development machine
-make build
-cd deployment
-./scripts/build-images.sh
-./scripts/export-images.sh
+# On development machine (choose target architecture):
+make docker-export-amd64   # For x86_64 servers
+# OR
+make docker-export-arm64   # For ARM servers
 
 # Transfer to production
 scp pinai-subnet-dist-*.tar.gz user@server:/opt/
 
 # On production
-cd /opt/pinai-subnet-dist-*/
+cd /opt
+tar xzf pinai-subnet-dist-*.tar.gz
+cd pinai-subnet-dist-*/
 ./install.sh
 docker compose -f docker/docker-compose.yml down
 docker compose -f docker/docker-compose.yml up -d
